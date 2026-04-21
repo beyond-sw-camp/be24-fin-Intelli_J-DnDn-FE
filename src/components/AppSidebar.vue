@@ -18,6 +18,7 @@ import {
   CalendarRange,
   CalendarDays,
   CloudSun,
+  Truck,
   Upload,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/authStore'
@@ -73,6 +74,11 @@ const scheduleNavAll = [
     path: '/site/schedule',
     label: '공정 지표보고',
     icon: CalendarDays,
+  },
+  {
+    path: '/site/gate',
+    label: '중장비 입출차',
+    icon: Truck,
   },
   {
     path: '/site/work-plan',
