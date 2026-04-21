@@ -1,380 +1,346 @@
 <template>
-  <div class="login-page" :style="{ backgroundImage: `url(${bgImage})` }">
-    <div class="overlay"></div>
+  <div class="login-page">
+    <div class="login-shell">
+      <section class="visual-panel">
+        <div class="visual-overlay"></div>
+      </section>
 
-    <div class="login-container">
-      <div class="brand-section">
-        <h1 class="brand-title">DnDn</h1>
-      </div>
+      <section class="form-panel">
+        <div class="form-wrap">
+          <header class="form-header">
+            <img :src="leftLogoSrc" alt="DnDn logo" class="form-logo" />
+            <p class="helper-text">Demo account: admin / admin</p>
+          </header>
 
-      <div class="login-card">
-        <div class="card-header">
-          <h2>로그인</h2>
-          <p>현장 운영 시스템에 접속하세요</p>
+          <form class="login-form" @submit.prevent="handleLogin">
+            <div class="field-group">
+              <label for="userId">ID</label>
+              <input
+                id="userId"
+                v-model="form.userId"
+                type="text"
+                autocomplete="username"
+                placeholder="Enter your ID"
+              />
+            </div>
+
+            <div class="field-group">
+              <label for="password">Password</label>
+              <input
+                id="password"
+                v-model="form.password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="Enter your password"
+              />
+            </div>
+
+            <div class="meta-row">
+              <button type="button" class="text-action" @click="clearAccount">Clear</button>
+            </div>
+
+            <div class="action-row">
+              <button type="submit" class="primary-action">
+                Login <span aria-hidden="true">&gt;</span>
+              </button>
+            </div>
+          </form>
+
+          <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
         </div>
-
-        <form class="login-form" @submit.prevent="handleLogin">
-          <div class="input-group">
-            <label for="userId">아이디</label>
-            <input
-              id="userId"
-              v-model="loginForm.userId"
-              type="text"
-              placeholder="아이디를 입력하세요"
-            />
-          </div>
-
-          <div class="input-group">
-            <label for="password">비밀번호</label>
-            <input
-              id="password"
-              v-model="loginForm.password"
-              type="password"
-              placeholder="비밀번호를 입력하세요"
-            />
-          </div>
-
-          <div class="form-options">
-            <label class="remember-me">
-              <input type="checkbox" v-model="rememberMe" />
-              <span>로그인 상태 유지</span>
-            </label>
-
-            <button type="button" class="text-btn">비밀번호 찾기</button>
-          </div>
-
-          <button type="submit" class="login-btn">로그인</button>
-        </form>
-
-        <div class="divider"></div>
-
-        <div class="bottom-actions">
-          <button type="button" class="outline-btn">현장 관리자 문의</button>
-          <button type="button" class="outline-btn">작업자 최초 등록</button>
-        </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import bgImage from '@/assets/hanwha-bg.png'
+import leftLogoSrc from '@/assets/dndn-logo.png'
+
+const DEFAULT_USER_ID = 'admin'
+const DEFAULT_PASSWORD = 'admin'
 
 const router = useRouter()
-const auth = useAuthStore()
+const authStore = useAuthStore()
 
-const loginForm = reactive({
-  userId: '',
-  password: '',
+const form = reactive({
+  userId: DEFAULT_USER_ID,
+  password: DEFAULT_PASSWORD,
 })
 
-const rememberMe = ref(false)
+const errorMessage = ref('')
 
-const loginError = ref('')
+const pageBackground = computed(
+  () =>
+    `linear-gradient(90deg, rgba(12, 24, 36, 0.5) 0%, rgba(31, 45, 58, 0.36) 46%, rgba(255, 255, 255, 0.2) 100%), linear-gradient(180deg, rgba(15, 23, 42, 0.14) 0%, rgba(15, 23, 42, 0.26) 100%), url(${bgImage})`,
+)
 
-function handleLogin() {
-  loginError.value = ''
-  if (auth.login(loginForm.userId, loginForm.password)) {
-    router.push({ path: '/site/dashboard' })
+watch(
+  () => authStore.isAuthenticated,
+  (isAuthenticated) => {
+    if (isAuthenticated) {
+      router.push('/site/dashboard')
+    }
+  },
+  { immediate: true },
+)
+
+const clearAccount = () => {
+  form.userId = ''
+  form.password = ''
+  errorMessage.value = ''
+}
+
+const handleLogin = () => {
+  const userId = form.userId.trim()
+  const password = form.password.trim()
+  if (authStore.login(userId, password)) {
+    errorMessage.value = ''
+    router.push('/site/dashboard')
     return
   }
-  loginError.value = '아이디 또는 비밀번호가 올바르지 않습니다. (admin / admin)'
+  errorMessage.value = 'Invalid account. Use admin / admin.'
 }
 </script>
 
 <style scoped>
+:global(*) {
+  box-sizing: border-box;
+}
+
+:global(body) {
+  margin: 0;
+  font-family: 'Pretendard', 'Noto Sans KR', sans-serif;
+  background: #f4f4f4;
+  color: #1e293b;
+}
+
+button,
+input {
+  font: inherit;
+}
+
 .login-page {
-  position: relative;
   min-height: 100vh;
-  background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
+  background-size: cover;
+  background-image: v-bind(pageBackground);
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(320px, 41%) 1fr;
+  background: transparent;
+}
+
+.visual-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 38px 42px 34px;
   overflow: hidden;
+}
+
+.visual-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 46, 85, 0.12), rgba(0, 46, 85, 0)),
+    radial-gradient(circle at 16% 18%, rgba(20, 184, 166, 0.08), transparent 30%);
+}
+
+.form-panel {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: 48px 32px;
+  background: transparent;
 }
 
-.overlay {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    120deg,
-    rgba(12, 24, 40, 0.72) 0%,
-    rgba(12, 24, 40, 0.58) 38%,
-    rgba(230, 90, 30, 0.18) 100%
-  );
-  backdrop-filter: blur(2px);
-}
-.brand-section {
-  color: #fff;
-  padding: 24px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-.login-container {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  max-width: 1240px;
-  display: grid;
-  grid-template-columns: 1.2fr 0.9fr;
-  gap: 36px;
-  align-items: center;
-}
-
-.brand-sub {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  opacity: 0.85;
-  margin-bottom: 16px;
-}
-
-.brand-title {
-  font-size: 56px;
-  font-weight: 800;
-  line-height: 1.05;
-  margin: 0 0 20px;
-  color: #ffffff;
-}
-
-.brand-desc {
-  max-width: 560px;
-  font-size: 18px;
-  line-height: 1.7;
-  color: rgba(255, 255, 255, 0.9);
-  margin-bottom: 28px;
-}
-
-.brand-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.brand-tags span {
-  padding: 10px 16px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #fff;
-  font-size: 14px;
+.form-wrap {
+  width: min(100%, 500px);
+  padding: 22px 36px 34px;
+  border: 1px solid rgba(226, 232, 240, 0.78);
+  border-radius: 24px;
+  background: rgba(238, 240, 243, 0.86);
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14);
   backdrop-filter: blur(8px);
 }
 
-.login-card {
-  background: rgba(255, 255, 255, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 28px;
-  padding: 36px 32px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(20px);
+.form-header {
+  width: 100%;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: end;
+  column-gap: 18px;
+  margin-bottom: 12px;
 }
 
-.card-header {
-  margin-bottom: 28px;
+.form-logo {
+  display: block;
+  width: 200px;
+  margin: 0;
+  object-fit: contain;
+  justify-self: start;
+  transform: translate(-68px, 14px);
 }
 
-.card-header h2 {
-  font-size: 32px;
-  font-weight: 800;
-  color: #111827;
-  margin-bottom: 8px;
+.form-header p {
+  margin: 0;
+  font-size: 12px;
+  color: #7d8796;
 }
 
-.card-header p {
-  font-size: 15px;
-  color: #6b7280;
+.helper-text {
+  margin: 0 0 10px;
+  justify-self: end;
+  text-align: right;
+  color: #1d6df2;
+  line-height: 1;
 }
 
 .login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
+  margin-top: 0;
 }
 
-.input-group {
+.field-group {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.input-group label {
-  font-size: 14px;
-  font-weight: 700;
-  color: #374151;
+.field-group + .field-group {
+  margin-top: 18px;
 }
 
-.input-group input {
-  height: 52px;
-  border-radius: 14px;
-  border: 1px solid #d1d5db;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 0 16px;
-  font-size: 15px;
-  color: #111827;
+.field-group label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.field-group input {
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid #d9e2ec;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1e293b;
   outline: none;
-  transition: all 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
-.input-group input:focus {
-  border-color: #f37321;
-  box-shadow: 0 0 0 4px rgba(243, 115, 33, 0.14);
+.field-group input::placeholder {
+  color: #a0aec0;
 }
 
-.form-options {
+.field-group input:focus {
+  border-color: #1d6df2;
+  box-shadow: 0 0 0 3px rgba(29, 109, 242, 0.12);
+}
+
+.meta-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 2px;
-  margin-bottom: 4px;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
-.remember-me {
+.action-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: #4b5563;
-  cursor: pointer;
+  justify-content: flex-end;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #edf2f7;
+  margin-top: 18px;
 }
 
-.text-btn {
+.text-action {
+  padding: 0;
   border: none;
   background: transparent;
-  color: #f37321;
-  font-size: 14px;
-  font-weight: 700;
+  color: #4b5563;
+  font-size: 12px;
   cursor: pointer;
 }
 
-.login-btn {
-  height: 54px;
+.primary-action {
+  min-width: 100px;
+  height: 32px;
+  padding: 0 16px;
   border: none;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #f37321, #ea580c);
-  color: #fff;
-  font-size: 16px;
-  font-weight: 800;
-  cursor: pointer;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-  box-shadow: 0 14px 24px rgba(234, 88, 12, 0.26);
-}
-
-.login-btn:hover {
-  transform: translateY(-1px);
-}
-
-.login-error {
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  color: #b91c1c;
-  font-size: 13px;
+  border-radius: 4px;
+  background: #1d6df2;
+  color: #ffffff;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 1.45;
-}
-
-.divider {
-  position: relative;
-  margin: 24px 0 18px;
-  text-align: center;
-}
-
-.divider::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  border-top: 1px solid #e5e7eb;
-}
-
-.divider span {
-  position: relative;
-  display: inline-block;
-  padding: 0 12px;
-  background: rgba(255, 255, 255, 0.88);
-  color: #9ca3af;
-  font-size: 13px;
-}
-
-.bottom-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.outline-btn {
-  height: 48px;
-  border-radius: 14px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #374151;
-  font-size: 14px;
-  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.outline-btn:hover {
-  border-color: #f37321;
-  color: #f37321;
+.error-message {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: #dc2626;
 }
 
-@media (max-width: 1024px) {
-  .login-container {
+@media (max-width: 960px) {
+  .login-shell {
     grid-template-columns: 1fr;
-    max-width: 720px;
   }
 
-  .brand-section {
-    padding-bottom: 0;
+  .visual-panel {
+    min-height: 360px;
   }
 
-  .brand-title {
-    font-size: 42px;
+  .form-panel {
+    padding: 36px 24px 44px;
   }
 
-  .brand-desc {
-    font-size: 16px;
+  .form-wrap {
+    padding: 26px 28px 30px;
   }
 }
 
 @media (max-width: 640px) {
-  .login-page {
-    padding: 18px;
+  .visual-panel {
+    padding: 24px 20px 20px;
   }
 
-  .login-card {
-    padding: 28px 20px;
-    border-radius: 22px;
+  .form-logo {
+    width: 148px;
   }
 
-  .brand-title {
-    font-size: 34px;
-  }
-
-  .bottom-actions {
+  .form-header {
     grid-template-columns: 1fr;
+    align-items: flex-start;
+    row-gap: 10px;
   }
 
-  .form-options {
+  .helper-text {
+    margin-bottom: 0;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .form-logo {
+    transform: none;
+  }
+
+  .action-row {
     flex-direction: column;
     align-items: flex-start;
-    gap: 10px;
+  }
+
+  .primary-action {
+    width: 100%;
   }
 }
 </style>
