@@ -82,6 +82,12 @@ const router = createRouter({
       meta: meta('공정 지표보고'),
     },
     {
+      path: '/site/gate',
+      name: 'HeavyEquipmentGate',
+      component: () => import('../views/schedule/HeavyEquipmentGateView.vue'),
+      meta: meta('중장비 입출차'),
+    },
+    {
       path: '/site/work-plan',
       name: 'siteWorkPlan',
       component: () => import('../views/schedule/WorkPlanView.vue'),
