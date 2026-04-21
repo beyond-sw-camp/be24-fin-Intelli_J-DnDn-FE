@@ -4,7 +4,13 @@ import {
   Calendar,
   Printer,
   Send,
+  Cloud,
+  CloudFog,
+  CloudLightning,
   CloudRain,
+  CloudSnow,
+  CloudSun,
+  SunMedium,
   Wind,
   Plus,
   X,
@@ -77,6 +83,8 @@ const deletingId = ref(null)
 const weather = ref({
   am: { label: '기상정보 없음' },
   pm: { label: '기상정보 없음' },
+  rainProbability: '정보 없음',
+  windSpeed: '정보 없음',
   notes: '기상 브리핑 정보가 없습니다.',
 })
 
@@ -104,6 +112,11 @@ const dateTitle = computed(() => {
   return `${y}년 ${m}월 ${d}일${T.titleSuffix}`
 })
 
+const amWeatherVisual = computed(() => getWeatherVisual(weather.value.am.label))
+const pmWeatherVisual = computed(() => getWeatherVisual(weather.value.pm.label))
+const isViewingToday = computed(() => reportDate.value === getTodayDateText())
+
+
 function mapRow(item) {
   return {
     id: item.idx,
@@ -120,6 +133,239 @@ function mapRow(item) {
 
 function isDoneStatus(status) {
   return status === T.statusDone
+}
+
+function moveToTodayReport() {
+  reportDate.value = getTodayDateText()
+}
+
+function isSelectedHistoryDate(date) {
+  return reportDate.value === date
+}
+
+function getNestedValue(source, path) {
+  return path.split('.').reduce((current, key) => current?.[key], source)
+}
+
+function pickFirstValue(source, paths) {
+  for (const path of paths) {
+    const value = getNestedValue(source, path)
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value
+    }
+  }
+  return null
+}
+
+function extractNumber(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  const matched = String(value ?? '').match(/-?\d+(?:\.\d+)?/)
+  return matched ? Number(matched[0]) : null
+}
+
+function formatRainProbability(value) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return '정보 없음'
+  }
+
+  if (typeof value === 'string' && value.includes('%')) {
+    return value.trim()
+  }
+
+  const numericValue = extractNumber(value)
+  return numericValue === null ? '정보 없음' : `${numericValue}%`
+}
+
+function formatWindSpeed(value) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return '정보 없음'
+  }
+
+  if (typeof value === 'string' && /m\/?s/i.test(value)) {
+    return value.trim()
+  }
+
+  const numericValue = extractNumber(value)
+  return numericValue === null ? '정보 없음' : `${numericValue}m/s`
+}
+
+function normalizeWeatherLabel(label) {
+  return String(label || '').replace(/\s+/g, '').toLowerCase()
+}
+
+function getWeatherVisual(label) {
+  const normalized = normalizeWeatherLabel(label)
+
+  if (!normalized || normalized.includes('없음')) {
+    return {
+      icon: Cloud,
+      cardClass: 'border-slate-200 bg-slate-50/80',
+      labelClass: 'text-slate-600',
+      iconWrapClass: 'bg-white/90 text-slate-500',
+    }
+  }
+
+  if (
+    ['천둥', '번개', '뇌우', '호우', '폭우', '폭풍'].some((keyword) => normalized.includes(keyword))
+  ) {
+    return {
+      icon: CloudLightning,
+      cardClass: 'border-violet-100 bg-violet-50/80',
+      labelClass: 'text-violet-700',
+      iconWrapClass: 'bg-white/90 text-violet-600',
+    }
+  }
+
+  if (['눈', '진눈깨비', '우박'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: CloudSnow,
+      cardClass: 'border-cyan-100 bg-cyan-50/80',
+      labelClass: 'text-cyan-700',
+      iconWrapClass: 'bg-white/90 text-cyan-600',
+    }
+  }
+
+  if (['비', '소나기', '강수', '이슬비', '장대비'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: CloudRain,
+      cardClass: 'border-sky-100 bg-sky-50/80',
+      labelClass: 'text-sky-700',
+      iconWrapClass: 'bg-white/90 text-sky-600',
+    }
+  }
+
+  if (['강풍', '돌풍'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: Wind,
+      cardClass: 'border-slate-200 bg-slate-50/80',
+      labelClass: 'text-slate-700',
+      iconWrapClass: 'bg-white/90 text-slate-600',
+    }
+  }
+
+  if (['맑', '쾌청', '화창'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: SunMedium,
+      cardClass: 'border-amber-100 bg-amber-50/80',
+      labelClass: 'text-amber-700',
+      iconWrapClass: 'bg-white/90 text-amber-500',
+    }
+  }
+
+  if (
+    ['구름많', '구름조금', '구름', '부분흐림', '가끔구름'].some((keyword) =>
+      normalized.includes(keyword),
+    )
+  ) {
+    return {
+      icon: CloudSun,
+      cardClass: 'border-blue-100 bg-blue-50/80',
+      labelClass: 'text-blue-700',
+      iconWrapClass: 'bg-white/90 text-blue-600',
+    }
+  }
+
+  if (['안개', '박무', '연무', '황사', '미세먼지'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: CloudFog,
+      cardClass: 'border-slate-200 bg-slate-50/80',
+      labelClass: 'text-slate-700',
+      iconWrapClass: 'bg-white/90 text-slate-600',
+    }
+  }
+
+  if (['흐림', '흐리고', '흐린'].some((keyword) => normalized.includes(keyword))) {
+    return {
+      icon: Cloud,
+      cardClass: 'border-slate-200 bg-slate-50/80',
+      labelClass: 'text-slate-700',
+      iconWrapClass: 'bg-white/90 text-slate-600',
+    }
+  }
+
+  return {
+    icon: Cloud,
+    cardClass: 'border-forena-100 bg-forena-50/70',
+    labelClass: 'text-forena-700',
+    iconWrapClass: 'bg-white/90 text-forena-600',
+  }
+}
+
+
+function splitSentences(text) {
+  return String(text || '')
+    .split(/(?<=[.!?。！？])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+}
+
+function isWeatherSummarySentence(sentence) {
+  const normalized = String(sentence || '').replace(/\s+/g, '')
+  const summaryKeywords = [
+    '오늘',
+    '금일',
+    '오전',
+    '오후',
+    '날씨',
+    '기상',
+    '맑',
+    '흐림',
+    '구름',
+    '비',
+    '눈',
+    '소나기',
+    '강수',
+    '풍속',
+    '바람',
+    '기온',
+    '체감',
+    '온도',
+  ]
+  const issueKeywords = [
+    '특보',
+    '주의',
+    '경보',
+    '통제',
+    '해제',
+    '권고',
+    '중지',
+    '제한',
+    '유의',
+    '대응',
+    '위험',
+    '점검',
+    '안전',
+    '예정',
+    '조치',
+    '협조',
+  ]
+
+  const hasSummaryKeyword = summaryKeywords.some((keyword) => normalized.includes(keyword))
+  const hasIssueKeyword = issueKeywords.some((keyword) => normalized.includes(keyword))
+
+  return hasSummaryKeyword && !hasIssueKeyword
+}
+
+function sanitizeWeatherNotes(notes) {
+  const sentences = splitSentences(notes)
+  if (sentences.length === 0) {
+    return '기상 브리핑 정보가 없습니다.'
+  }
+
+  let startIndex = 0
+  while (startIndex < sentences.length && isWeatherSummarySentence(sentences[startIndex])) {
+    startIndex += 1
+  }
+
+  const cleaned = sentences.slice(startIndex).join(' ')
+  if (cleaned) {
+    return cleaned
+  }
+
+  return '기상 특이사항이 없습니다.'
 }
 
 async function loadWorkRows() {
@@ -158,16 +404,40 @@ async function loadTodayWeather() {
 
     const data = await response.json()
 
+    const rainProbability = pickFirstValue(data, [
+      'precipitationProbability',
+      'rainProbability',
+      'todayRainProbability',
+      'rainPercent',
+      'pop',
+      'analysis.precipitationProbability',
+      'rain.value',
+    ])
+
+    const windSpeed = pickFirstValue(data, [
+      'windSpeed',
+      'maxWindSpeed',
+      'todayWindSpeed',
+      'avgWindSpeed',
+      'wsd',
+      'analysis.maxWindSpeed',
+      'wind.value',
+    ])
+
     weather.value = {
       am: { label: data.amLabel || '기상정보 없음' },
       pm: { label: data.pmLabel || '기상정보 없음' },
-      notes: data.notes || '기상 브리핑 정보가 없습니다.',
+      rainProbability: formatRainProbability(rainProbability),
+      windSpeed: formatWindSpeed(windSpeed),
+      notes: sanitizeWeatherNotes(data.notes),
     }
   } catch (error) {
     console.error(error)
     weather.value = {
       am: { label: '기상정보 없음' },
       pm: { label: '기상정보 없음' },
+      rainProbability: '정보 없음',
+      windSpeed: '정보 없음',
       notes: '기상 브리핑 정보를 불러오지 못했습니다.',
     }
   }
@@ -337,8 +607,10 @@ async function sendReportMail() {
               {{ dateTitle }}
             </h1>
 
-            <input v-model="reportDate" type="date"
-              class="w-fit rounded-xl border border-forena-200 px-3 py-2 text-sm text-forena-800 focus:border-flare-400 focus:outline-none focus:ring-2 focus:ring-flare-200/50" />
+            <div class="flex flex-wrap items-center gap-2">
+              <input v-model="reportDate" type="date"
+                class="w-fit rounded-xl border border-forena-200 px-3 py-2 text-sm text-forena-800 focus:border-flare-400 focus:outline-none focus:ring-2 focus:ring-flare-200/50" />
+            </div>
           </div>
         </div>
 
@@ -379,27 +651,63 @@ async function sendReportMail() {
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
       <h2 class="border-b border-forena-100 pb-3 text-sm font-bold text-forena-900">{{ T.weatherTitle }}</h2>
-      <div class="mt-4 grid gap-3 sm:grid-cols-2">
-        <div class="rounded-xl border border-sky-100 bg-sky-50/60 p-4">
-          <p class="text-[11px] font-bold uppercase tracking-wide text-sky-700">{{ T.am }}</p>
-          <div class="mt-2 flex items-center gap-2">
-            <CloudRain class="h-8 w-8 text-sky-600" />
-            <span class="text-sm font-semibold text-forena-900">{{ weather.am.label }}</span>
+
+      <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-xl p-4" :class="amWeatherVisual.cardClass">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-[11px] font-bold uppercase tracking-wide" :class="amWeatherVisual.labelClass">{{ T.am }}</p>
+              <p class="mt-2 break-keep text-base font-semibold text-forena-900">{{ weather.am.label }}</p>
+            </div>
+            <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm" :class="amWeatherVisual.iconWrapClass">
+              <component :is="amWeatherVisual.icon" class="h-5 w-5" />
+            </span>
+          </div>
+        </div>
+
+        <div class="rounded-xl p-4" :class="pmWeatherVisual.cardClass">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-[11px] font-bold uppercase tracking-wide" :class="pmWeatherVisual.labelClass">{{ T.pm }}</p>
+              <p class="mt-2 break-keep text-base font-semibold text-forena-900">{{ weather.pm.label }}</p>
+            </div>
+            <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl shadow-sm" :class="pmWeatherVisual.iconWrapClass">
+              <component :is="pmWeatherVisual.icon" class="h-5 w-5" />
+            </span>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-cyan-100 bg-cyan-50/70 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-[11px] font-bold uppercase tracking-wide text-cyan-700">금일 비 올 확률</p>
+              <p class="mt-2 text-base font-semibold text-forena-900">{{ weather.rainProbability }}</p>
+            </div>
+            <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/80 text-cyan-600 shadow-sm">
+              <CloudRain class="h-5 w-5" />
+            </span>
           </div>
         </div>
 
         <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
-          <p class="text-[11px] font-bold uppercase tracking-wide text-slate-600">{{ T.pm }}</p>
-          <div class="mt-2 flex items-center gap-2">
-            <Wind class="h-8 w-8 text-slate-600" />
-            <span class="text-sm font-semibold text-forena-900">{{ weather.pm.label }}</span>
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-[11px] font-bold uppercase tracking-wide text-slate-600">풍속</p>
+              <p class="mt-2 text-base font-semibold text-forena-900">{{ weather.windSpeed }}</p>
+            </div>
+            <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/80 text-slate-600 shadow-sm">
+              <Wind class="h-5 w-5" />
+            </span>
           </div>
         </div>
       </div>
 
-      <p class="mt-4 rounded-xl border border-forena-100 bg-forena-50/40 p-4 text-sm leading-relaxed text-forena-800">
-        {{ weather.notes }}
-      </p>
+      <div class="mt-4 rounded-xl border border-forena-100 bg-forena-50/40 p-4">
+        <p class="text-[11px] font-bold uppercase tracking-wide text-forena-600">기상 브리핑</p>
+        <p class="mt-2 text-sm leading-relaxed text-forena-800">
+          {{ weather.notes }}
+        </p>
+      </div>
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
@@ -490,9 +798,19 @@ async function sendReportMail() {
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-4">
-        <History class="h-4 w-4 text-forena-700" />
-        <h2 class="text-sm font-bold text-forena-900">{{ T.historyTitle }}</h2>
+      <div class="flex items-center justify-between gap-3 border-b border-forena-100 px-5 py-4">
+        <div class="flex items-center gap-2">
+          <History class="h-4 w-4 text-forena-700" />
+          <h2 class="text-sm font-bold text-forena-900">{{ T.historyTitle }}</h2>
+        </div>
+
+        <button
+          v-if="!isViewingToday"
+          type="button"
+          class="inline-flex items-center rounded-lg border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-700 transition hover:bg-forena-50 hover:text-forena-800"
+          @click="moveToTodayReport">
+          오늘로 돌아가기
+        </button>
       </div>
 
       <div v-if="historyRows.length === 0" class="px-5 py-6 text-sm text-forena-500">
@@ -501,19 +819,33 @@ async function sendReportMail() {
 
       <div v-else class="divide-y divide-forena-100">
         <div v-for="history in historyRows" :key="history.reportDate"
-          class="flex flex-col gap-2 px-5 py-4 md:flex-row md:items-center md:justify-between">
+          class="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-center md:justify-between"
+          :class="isSelectedHistoryDate(history.reportDate) ? 'bg-forena-50/40' : ''">
           <div>
-            <p class="text-sm font-bold text-forena-900">{{ history.reportDate }}</p>
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm font-bold text-forena-900">{{ history.reportDate }}</p>
+              <span
+                v-if="isSelectedHistoryDate(history.reportDate)"
+                class="inline-flex items-center rounded-full border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-bold text-forena-700">
+                현재 보고 있는 일보
+              </span>
+            </div>
             <p class="mt-1 text-xs text-forena-600">
               작업 {{ history.workCount }}건 · 완료 {{ history.completedCount }}건 · 총 인원 {{ history.totalPersonnel }}명
             </p>
           </div>
 
-          <button type="button"
-            class="self-start rounded-lg border border-forena-200 bg-white px-3 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
-            @click="reportDate = history.reportDate">
-            이 날짜 보기
-          </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              v-if="!isSelectedHistoryDate(history.reportDate)"
+              type="button"
+              class="self-start rounded-lg border border-forena-200 bg-white px-3 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
+              @click="reportDate = history.reportDate">
+              이 날짜 보기
+            </button>
+
+
+          </div>
         </div>
       </div>
     </div>
