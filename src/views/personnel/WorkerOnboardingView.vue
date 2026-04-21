@@ -86,62 +86,6 @@ const T = {
   excelSoon: '엑셀 일괄 등록 기능을 준비 중입니다.',
 }
 
-// 뱃지의 형식과 각 위치의 뱃지 이름 설정
-// 뱃지 톤 옵션 (상태별로 매핑되는 색상)
-const badgeToneOptions = [
-  { value: 'success', label: '성공(녹색)' },
-  { value: 'danger', label: '위험(적색)' },
-  { value: 'warning', label: '경고(황색)' },
-  { value: 'info', label: '정보(청색)' },
-  { value: 'neutral', label: '중립(회색)' },
-]
-
-const partnerFilterOptions = [
-  { value: '', label: T.partnerAll },
-  { value: '태양건설', label: '태양건설' },
-  { value: '우주산업', label: '우주산업' },
-  { value: '개인', label: '개인' },
-]
-// 혈액형 타입 select 옵션
-const bloodOptions = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
-
-// 안전 교육 상태 select 옵션
-const safetyCheckOptions = [
-  { key: 'safeCompleted', label: '이수 완료' },
-  { key: 'safeNotCompleted', label: '미이수' },
-]
-
-// 작업자 상태 select 옵션
-const workerStatusOptions = [
-  { key: 'deployable', label: '투입 가능' },
-  { key: 'review', label: '검토 중' },
-  { key: 'nodoc', label: '서류 미제출' },
-  { key: 'limit', label: '투입 제한' },
-]
-
-// 위의 key 부분을 가지고 각 상태에 맞는 텍스트와 톤을 반환하는 함수
-// 서류 제출에 대한 뱃지의 key에 따른 텍스트와 톤을 반환하는 함수
-function statusMetaFromKey(key) {
-  const map = {
-    deployable: { text: '투입 가능', tone: 'success' },
-    review: { text: '검토 중', tone: 'info' },
-    nodoc: { text: '서류 미제출', tone: 'warning' },
-    limit: { text: '투입 제한', tone: 'danger' },
-  }
-  return map[key] || map.review
-}
-
-// 안전 교육 상태에 대한 뱃지의 key에 따른 텍스트와 톤을 반환하는 함수
-function safetyMetaFromKey(key) {
-  const map = {
-    safeCompleted: { text: '이수 완료', tone: 'success' },
-    safeNotCompleted: { text: '미이수', tone: 'danger' },
-  }
-  // 키가 없으면 기본적으로 '미이수' 처리를 하거나 기존 값을 유지
-  return map[key] || { text: '미이수', tone: 'danger' }
-}
-
-
 function emptyEditForm() {
   return {
     id: null,
@@ -153,11 +97,9 @@ function emptyEditForm() {
     birth: '',
     joinDate: '',
     emergency: '',
-    safetyKey: 'safeNotCompleted',
-    safetyTone: 'success',
-    docsText: '',
-    docsTone: 'neutral',
-    statusKey: 'review',
+    safetyKey: '',
+    docsKey: '',
+    statusKey: '',
   }
 }
 
@@ -173,9 +115,9 @@ const workers = ref([
     birth: '1982.05.12',
     joinDate: '2024.03.10',
     emergency: '010-1111-2222 (배우자)',
-    safety: { text: '이수완료', tone: 'success' },
-    docs: { text: '완료', tone: 'neutral' },
-    status: { text: '투입 가능', tone: 'success' },
+    safety: { key: 'safeCompleted', text: '이수완료', tone: 'success' },
+    docs: { key: 'complete', text: '완료', tone: 'neutral' },
+    status: { key: 'deployable', text: '투입 가능', tone: 'success' },
     statusKey: 'deployable',
   },
   {
@@ -224,6 +166,69 @@ const workers = ref([
     statusKey: 'limit',
   },
 ])
+//////////////////////////////////////////////////////////////
+
+// 뱃지의 형식과 각 위치의 뱃지 이름 설정
+// 뱃지 톤 옵션 (상태별로 매핑되는 색상)
+const badgeToneOptions = [
+  { value: 'success', label: '성공(녹색)' },
+  { value: 'danger', label: '위험(적색)' },
+  { value: 'warning', label: '경고(황색)' },
+  { value: 'info', label: '정보(청색)' },
+  { value: 'neutral', label: '중립(회색)' },
+]
+
+// 협력사 필터 select 옵션
+const partnerFilterOptions = [
+  { value: '', label: T.partnerAll },
+  { value: '태양건설', label: '태양건설' },
+  { value: '우주산업', label: '우주산업' },
+  { value: '개인', label: '개인' },
+]
+// 혈액형 타입 select 옵션
+const bloodOptions = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']
+//////////////////////////////////////////////////////////////
+
+// 안전 교육 상태 select 옵션
+const safetyCheckOptions = {
+  safeCompleted: { text: '이수 완료', tone: 'success' },
+  safeNotCompleted: { text: '미이수', tone: 'danger' },
+}
+
+// 안전 교육 상태에 대한 뱃지의 key에 따른 텍스트와 톤을 반환하는 함수
+function safetyMetaFromKey(key) {
+  // 키가 없으면 기본적으로 '미이수' 처리를 하거나 기존 값을 유지
+  return safetyCheckOptions[key] || safetyCheckOptions.safeNotCompleted
+}
+//////////////////////////////////////////////////////////////
+
+// 작업자 상태 select 옵션
+const workerStatusOptions = {
+  deployable: { text: '투입 가능', tone: 'success' },
+  review: { text: '검토 중', tone: 'info' },
+  nodoc: { text: '서류 미제출', tone: 'warning' },
+  limit: { text: '투입 제한', tone: 'danger' },
+}
+
+// 서류 제출에 대한 뱃지의 key에 따른 텍스트와 톤을 반환하는 함수
+function statusMetaFromKey(key) {
+  return workerStatusOptions[key] || workerStatusOptions.review
+}
+//////////////////////////////////////////////////////////////
+
+// 필요 서류 상태 select 옵션
+const docsStatusOptions = {
+    complete: { text: '완료', tone: 'neutral' },
+    review: { text: '검토 중', tone: 'info' },
+    nodoc: { text: '미제출', tone: 'warning' },
+  }
+
+// 필요 서류에 대한 뱃지의 key에 따른 텍스트와 톤을 반환하는 함수
+function docsMetaFromKey(key) {
+  return docsStatusOptions[key] || docsStatusOptions.review
+}
+
+///////////////////////////////////////////////////////////////////
 
 const searchQuery = ref('')
 const partnerFilter = ref('')
@@ -305,6 +310,7 @@ function goList() {
   selectedWorker.value = null
 }
 
+// 뱃지의 톤에 따른 클래스 반환
 function badgeToneClass(tone) {
   if (tone === 'success') return 'bg-emerald-50 text-emerald-800 ring-emerald-200/80'
   if (tone === 'danger') return 'bg-rose-50 text-rose-800 ring-rose-200/80'
@@ -395,9 +401,7 @@ function openEditWorkerModal(worker) {
     joinDate: worker.joinDate,
     emergency: worker.emergency,
     safetyKey: worker.safety.key,
-    safetyTone: worker.safety.tone,
-    docsText: worker.docs.text,
-    docsTone: worker.docs.tone,
+    docsKey: worker.docs.key,
     statusKey: worker.statusKey,
   }
   showEditModal.value = true
@@ -431,9 +435,9 @@ function submitEditWorker() {
     birth: (f.birth || '').trim() || '—',
     joinDate: (f.joinDate || '').trim() || '—',
     emergency: (f.emergency || '').trim() || '—',
-    safety: { text: sa.text, tone: sa.tone },
-    docs: { text: (f.docsText || '').trim() || '—', tone: f.docsTone },
-    status: { text: st.text, tone: st.tone },
+    safety: { key: f.safetyKey, text: sa.text, tone: sa.tone },
+    docs: { key: f.docsKey, text: docsMetaFromKey(f.docsKey).text, tone: docsMetaFromKey(f.docsKey).tone },
+    status: { key: f.statusKey, text: st.text, tone: st.tone },
     statusKey: f.statusKey,
   }
   workers.value = workers.value.map((w) => (w.id === f.id ? updated : w))
@@ -1239,8 +1243,8 @@ function submitOnboard() {
                     v-model="editForm.statusKey"
                     class="w-full rounded-xl border border-forena-200 bg-forena-50/30 px-3 py-2.5 text-sm font-semibold text-forena-900 outline-none focus:border-flare-400 focus:bg-white focus:ring-2 focus:ring-flare-400/20"
                   >
-                    <option v-for="s in workerStatusOptions" :key="s.key" :value="s.key">
-                      {{ s.label }}
+                    <option v-for="(val, key) in workerStatusOptions" :key="key" :value="key">
+                      {{ val.text }}
                     </option>
                   </select>
                 </div>
@@ -1249,12 +1253,12 @@ function submitOnboard() {
                     <label class="mb-1.5 block text-[11px] font-bold text-forena-600">{{
                       T.labelSafetyState
                     }}</label>
-                    <select
+                  <select
                     v-model="editForm.safetyKey"
                     class="w-full rounded-xl border border-forena-200 bg-forena-50/30 px-3 py-2.5 text-sm font-semibold text-forena-900 outline-none focus:border-flare-400 focus:bg-white focus:ring-2 focus:ring-flare-400/20"
                   >
-                    <option v-for="s in safetyCheckOptions" :key="s.key" :value="s.key">
-                      {{ s.label }}
+                    <option v-for="(val, key) in safetyCheckOptions" :key="key" :value="key">
+                      {{ val.text }}
                     </option>
                   </select>
                   </div>
@@ -1263,11 +1267,14 @@ function submitOnboard() {
                     <label class="mb-1.5 block text-[11px] font-bold text-forena-600">{{
                       T.labelDocsState
                     }}</label>
-                    <input
-                      v-model="editForm.docsText"
-                      type="text"
-                      class="w-full rounded-xl border border-forena-200 bg-forena-50/30 px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:bg-white focus:ring-2 focus:ring-flare-400/20"
-                    />
+                     <select
+                    v-model="editForm.docsKey"
+                    class="w-full rounded-xl border border-forena-200 bg-forena-50/30 px-3 py-2.5 text-sm font-semibold text-forena-900 outline-none focus:border-flare-400 focus:bg-white focus:ring-2 focus:ring-flare-400/20"
+                  >
+                    <option v-for="(val, key) in docsStatusOptions" :key="key" :value="key">
+                      {{ val.text }}
+                    </option>
+                  </select>
                   </div>
                 </div>
               </div>
