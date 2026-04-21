@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Map as MapIcon,
   Trash2,
+  X,
 } from 'lucide-vue-next'
 
 // 1. 게이트별 상태 데이터 (Gate 1 ~ 7)
@@ -26,35 +27,180 @@ const gates = ref([
 const selectedGateId = ref(1)
 const isAddMode = ref(false)
 const selectedGate = computed(() => gates.value.find((g) => g.id === selectedGateId.value))
+const recommendedGate = computed(() => {
+  if (!selectedGate.value || getGateCongestionLevel(selectedGate.value) !== 'critical') return null
+
+  const availableGates = gates.value.filter(
+    (gate) => gate.id !== selectedGate.value.id && getGateCongestionLevel(gate) === 'smooth',
+  )
+
+  if (!availableGates.length) return null
+
+  return availableGates.reduce((closestGate, gate) => {
+    const closestDistance = Math.hypot(closestGate.x - selectedGate.value.x, closestGate.y - selectedGate.value.y)
+    const currentDistance = Math.hypot(gate.x - selectedGate.value.x, gate.y - selectedGate.value.y)
+
+    return currentDistance < closestDistance ? gate : closestGate
+  })
+})
 const mapRef = ref(null)
 const draggingGateId = ref(null)
 const suppressClickGateId = ref(null)
 const dragMoved = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 const lastDragPoint = ref({ x: 0, y: 0 })
+const todayEquipments = ref([
+  {
+    id: 1,
+    name: 'CAT 320 굴착기',
+    type: '굴착기',
+    status: '작업중',
+    gate: 'Gate 5 (토목)',
+    partner: '동남건기',
+    instruction: 'WI-2025-014',
+  },
+  {
+    id: 2,
+    name: 'HYUNDAI 25T 덤프트럭',
+    type: '덤프트럭',
+    status: '대기',
+    gate: 'Gate 4 (자재)',
+    partner: '한빛로지스',
+    instruction: 'WI-2025-018',
+  },
+  {
+    id: 3,
+    name: 'VOLVO 휠로더 L90',
+    type: '휠로더',
+    status: '작업중',
+    gate: 'Gate 2 (서측)',
+    partner: '서진중기',
+    instruction: 'WI-2025-021',
+  },
+  {
+    id: 4,
+    name: 'KOBELCO 크레인 50T',
+    type: '크레인',
+    status: '입차예정',
+    gate: 'Gate 1 (정문)',
+    partner: '대흥크레인',
+    instruction: 'WI-2025-025',
+  },
+])
 
 const DRAG_THRESHOLD_PX = 5
 
-// 2. 중장비 밀집도에 따른 색상 계산 (5대 이상이면 위험)
-const getStatusColor = (count) => {
-  if (count >= 10) return 'text-rose-500 bg-rose-50 border-rose-200' // 매우 혼잡
-  if (count >= 5) return 'text-orange-500 bg-orange-50 border-orange-200' // 혼잡
-  return 'text-emerald-500 bg-emerald-50 border-emerald-200' // 원활
+const getActiveMachines = (gate) => gate.machines.filter(Boolean).length
+
+const getGateCapacity = (gate) => {
+  const activeMachines = gate.machines.filter(Boolean).length
+
+  if (activeMachines > 0) return activeMachines * 5 + Math.floor((gate.manpower - 2) / 2) * 3
+  return Math.floor(gate.manpower / 2) * 3
 }
 
-const getMarkerColor = (count) => {
-  if (count >= 5) return 'bg-rose-500 shadow-rose-200'
-  return 'bg-emerald-500 shadow-emerald-200'
+const getGateCongestionLevel = (gate) => {
+  const capacity = getGateCapacity(gate)
+
+  if (gate.vehicles <= capacity) return 'smooth'
+  if (gate.vehicles <= capacity + 3) return 'busy'
+  return 'critical'
+}
+
+const isInefficientGate = (gate) => gate.machines.length > 0 && gate.vehicles <= 5 && getActiveMachines(gate) === 2
+
+const getStatusColor = (gate) => {
+  switch (getGateCongestionLevel(gate)) {
+    case 'critical':
+      return 'text-rose-500 bg-rose-50 border-rose-200'
+    case 'busy':
+      return 'text-amber-500 bg-amber-50 border-amber-200'
+    default:
+      return 'text-blue-500 bg-blue-50 border-blue-200'
+  }
+}
+
+const getEquipStatusClass = (status) => {
+  switch (status) {
+    case '작업중':
+      return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+    case '대기':
+      return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'
+    case '입차예정':
+      return 'bg-violet-50 text-violet-700 ring-1 ring-violet-200'
+    default:
+      return 'bg-slate-100 text-slate-700 ring-1 ring-slate-200'
+  }
+}
+
+const getMarkerColor = (gate) => {
+  switch (getGateCongestionLevel(gate)) {
+    case 'critical':
+      return 'bg-rose-500 shadow-rose-200'
+    case 'busy':
+      return 'bg-amber-500 shadow-amber-200'
+    default:
+      return 'bg-blue-500 shadow-blue-200'
+  }
+}
+
+const getGateStatusLabel = (gate) => {
+  switch (getGateCongestionLevel(gate)) {
+    case 'critical':
+      return '매우 혼잡'
+    case 'busy':
+      return '혼잡'
+    default:
+      return '원활'
+  }
+}
+
+const getGateNotice = (gate) => {
+  const activeMachines = getActiveMachines(gate)
+
+  if (gate.machines.length > 0 && activeMachines === 0) {
+    return {
+      containerClass: 'bg-blue-50 text-blue-700',
+      message: '모든 설비 OFF: 현재 인력 세척 모드로 동작 중입니다. (인원 2명당 트럭 3대 수용)',
+    }
+  }
+
+  if (isInefficientGate(gate)) {
+    return {
+      containerClass: 'bg-amber-50 text-amber-700',
+      message: '진입 차량 대비 세척 기계가 과하게 가동 중입니다. 기계 1대를 OFF하여 전력을 절감하세요.',
+    }
+  }
+
+  if (getGateCongestionLevel(gate) === 'critical') {
+    return {
+      containerClass: 'bg-amber-50 text-amber-700',
+      message: "혼잡도가 '높음'일 경우 세척 기계 2대를 모두 가동하고 배치 인원을 6명 이상으로 유지하는 것을 권장합니다.",
+    }
+  }
+
+  return {
+    containerClass: 'bg-blue-50 text-blue-700',
+    message: '현재 최적의 상태로 운영 중입니다.',
+  }
 }
 
 // 3. 인원 및 기계 제어 함수
 const updateManpower = (val) => {
-  if (selectedGate.value.manpower + val < 0) return
+  if (selectedGate.value.manpower + val < 2) return
   selectedGate.value.manpower += val
 }
 
 const toggleMachine = (index) => {
   selectedGate.value.machines[index] = !selectedGate.value.machines[index]
+}
+
+const addMachine = () => {
+  selectedGate.value.machines.push(false)
+}
+
+const removeMachine = (index) => {
+  selectedGate.value.machines.splice(index, 1)
 }
 
 const addCustomGate = (event) => {
@@ -215,10 +361,14 @@ const onGateClick = (gateId, event) => {
           @click="onGateClick(gate.id, $event)"
         >
           <div
-            class="flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-lg transition-colors"
-            :class="[getMarkerColor(gate.vehicles), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : '']"
+            class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-lg transition-colors"
+            :class="[getMarkerColor(gate), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : '']"
           >
             <Truck class="h-5 w-5" />
+            <AlertCircle
+              v-if="isInefficientGate(gate)"
+              class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
+            />
           </div>
           <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100">
             G{{ gate.id }} ({{ gate.vehicles }}대)
@@ -239,38 +389,62 @@ const onGateClick = (gateId, event) => {
                 <Trash2 class="h-4 w-4" />
               </button>
             </div>
-            <span class="rounded-full px-3 py-1 text-xs font-bold border" :class="getStatusColor(selectedGate.vehicles)">
-              {{ selectedGate.vehicles >= 5 ? '혼잡' : '원활' }}
+            <span class="rounded-full px-3 py-1 text-xs font-bold border" :class="getStatusColor(selectedGate)">
+              {{ getGateStatusLabel(selectedGate) }}
             </span>
           </div>
 
           <div class="mt-6">
             <div class="flex items-center justify-between text-sm font-bold text-forena-500 uppercase tracking-wider">
               <span>현재 진입 중장비</span>
-              <span :class="selectedGate.vehicles >= 5 ? 'text-rose-500' : 'text-emerald-500'">{{ selectedGate.vehicles }}대</span>
+              <span :class="getStatusColor(selectedGate).split(' ')[0]">{{ selectedGate.vehicles }}대</span>
             </div>
             <div class="mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
               <div
                 class="h-full transition-all duration-500"
-                :class="selectedGate.vehicles >= 5 ? 'bg-rose-500' : 'bg-emerald-500'"
+                :class="getMarkerColor(selectedGate)"
                 :style="{ width: Math.min((selectedGate.vehicles / 20) * 100, 100) + '%' }"
               ></div>
             </div>
           </div>
 
           <div class="mt-8">
-            <h3 class="flex items-center gap-2 text-sm font-bold text-forena-900">
-              <Settings2 class="h-4 w-4 text-flare-600" />
-              세척 설비 가동 (2대)
-            </h3>
-            <div class="mt-3 grid grid-cols-2 gap-3">
+            <div class="flex items-center justify-between">
+              <h3 class="flex items-center gap-2 text-sm font-bold text-forena-900">
+                <Settings2 class="h-4 w-4 text-flare-600" />
+                세척 설비 가동 ({{ selectedGate.machines.length }}대)
+              </h3>
+              <button
+                type="button"
+                class="bg-slate-100 text-slate-600 rounded-lg p-1 hover:bg-slate-200"
+                @click="addMachine"
+              >
+                <span class="text-sm font-bold leading-none">+</span>
+              </button>
+            </div>
+
+            <div
+              v-if="selectedGate.machines.length === 0"
+              class="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800"
+            >
+              ⚠️ 현재 인력 세척 모드로 가동 중입니다. (배치 인원 2명당 트럭 3대 수용 가능)
+            </div>
+
+            <div v-else class="mt-3 grid grid-cols-2 gap-3">
               <button
                 v-for="(on, idx) in selectedGate.machines"
                 :key="idx"
                 @click="toggleMachine(idx)"
-                class="flex flex-col items-center gap-2 rounded-2xl border p-4 transition-all"
+                class="relative flex flex-col items-center gap-2 rounded-2xl border p-4 transition-all"
                 :class="on ? 'border-flare-200 bg-flare-50 text-flare-700' : 'border-slate-100 bg-slate-50 text-slate-400'"
               >
+                <button
+                  type="button"
+                  class="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100"
+                  @click.stop="removeMachine(idx)"
+                >
+                  <X class="h-3 w-3" />
+                </button>
                 <component :is="on ? Power : PowerOff" class="h-6 w-6" />
                 <span class="text-[10px] font-bold">{{ idx + 1 }}번 기계 {{ on ? 'ON' : 'OFF' }}</span>
               </button>
@@ -292,11 +466,75 @@ const onGateClick = (gateId, event) => {
             </div>
           </div>
 
-          <div class="mt-6 flex items-start gap-2 rounded-xl bg-amber-50 p-3 text-[10px] text-amber-700">
+          <div class="mt-6 flex items-start gap-2 rounded-xl p-3 text-[10px]" :class="getGateNotice(selectedGate).containerClass">
             <AlertCircle class="h-3 w-3 shrink-0" />
-            <p>혼잡도가 '높음'일 경우 세척 기계 2대를 모두 가동하고 배치 인원을 6명 이상으로 유지하는 것을 권장합니다.</p>
+            <p>{{ getGateNotice(selectedGate).message }}</p>
+          </div>
+
+          <div
+            v-if="recommendedGate"
+            class="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-800 shadow-sm"
+          >
+            <p class="text-sm font-semibold">⚠️ 현재 게이트가 매우 혼잡합니다.</p>
+            <p class="mt-2 text-sm font-bold text-blue-900">
+              가장 가까운 우회 경로: {{ recommendedGate.name }} (현재 진입: {{ recommendedGate.vehicles }}대)
+            </p>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="w-full rounded-3xl border border-forena-100 bg-white p-6 shadow-card ring-1 ring-forena-50">
+      <div class="flex flex-col gap-3 border-b border-forena-50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-3">
+          <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-forena-700 to-forena-900 text-white shadow-md">
+            <Truck class="h-5 w-5" />
+          </span>
+          <div>
+            <h2 class="text-lg font-bold text-forena-900">금일 투입 중장비 현황</h2>
+            <p class="text-sm text-forena-500">작업 지시서 자재/장비 데이터 연동 전 임시 표시 목록</p>
+          </div>
+        </div>
+        <span class="inline-flex w-fit items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 ring-1 ring-sky-200">
+          지시서 연동 예정
+        </span>
+      </div>
+
+      <div class="mt-6 overflow-x-auto">
+        <table class="min-w-full divide-y divide-forena-100 text-sm">
+          <thead>
+            <tr class="text-left text-xs font-bold uppercase tracking-[0.18em] text-forena-500">
+              <th class="px-4 py-3">장비명 / 유형</th>
+              <th class="px-4 py-3">배정 게이트</th>
+              <th class="px-4 py-3">협력사</th>
+              <th class="px-4 py-3">관련 지시서</th>
+              <th class="px-4 py-3">현재 상태</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-forena-50">
+            <tr v-for="equipment in todayEquipments" :key="equipment.id" class="transition-colors hover:bg-slate-50/80">
+              <td class="px-4 py-4">
+                <div class="font-bold text-forena-900">{{ equipment.name }}</div>
+                <div class="mt-1 text-xs font-medium text-forena-500">{{ equipment.type }}</div>
+              </td>
+              <td class="px-4 py-4 font-medium text-forena-700">{{ equipment.gate }}</td>
+              <td class="px-4 py-4 text-forena-700">{{ equipment.partner }}</td>
+              <td class="px-4 py-4">
+                <a href="#" class="font-semibold text-sky-700 underline decoration-sky-300 underline-offset-4">
+                  {{ equipment.instruction }}
+                </a>
+              </td>
+              <td class="px-4 py-4">
+                <span
+                  class="inline-flex items-center rounded-full px-3 py-1 text-xs font-bold"
+                  :class="getEquipStatusClass(equipment.status)"
+                >
+                  {{ equipment.status }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
