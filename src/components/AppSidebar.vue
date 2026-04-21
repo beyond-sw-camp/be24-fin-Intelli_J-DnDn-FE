@@ -19,6 +19,7 @@ import {
   CalendarDays,
   CloudSun,
   Upload,
+  ShieldCheck,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -66,6 +67,7 @@ const personnelNavAll = [
   { path: '/site/staffing', label: '인력 배치', icon: MapPin },
   { path: '/site/man-days', label: '공수 관리', icon: Calculator },
   { path: '/hr/partners', label: '협력사 관리', icon: Handshake },
+  { path: '/system/admins', label: '시스템 관리자', icon: ShieldCheck },
 ]
 
 const scheduleNavAll = [

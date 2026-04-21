@@ -11,6 +11,7 @@ export function pathAllowedForRole(role, fullPath) {
   if (path === '/') return false
   if (path.startsWith('/site/')) return true
   if (path.startsWith('/hr/')) return true
+  if (path.startsWith('/system/')) return true
   return false
 }
 
