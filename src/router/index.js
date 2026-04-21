@@ -137,6 +137,12 @@ const router = createRouter({
       component: () => import('../views/personnel/AccountListView.vue'),
       meta: meta('계정 관리'),
     },
+    {
+      path: '/system/admins',
+      name: 'systemAdmins',
+      component: () => import('../views/system/SystemAdminListView.vue'),
+      meta: meta('시스템 관리자'),
+    },
 
     { path: '/SiteManagement', redirect: '/site/dashboard' },
     { path: '/SiteManagement/:id', redirect: '/site/dashboard' },
