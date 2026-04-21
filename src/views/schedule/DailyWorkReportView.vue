@@ -4,7 +4,13 @@ import {
   Calendar,
   Printer,
   Send,
+  Cloud,
+  CloudFog,
+  CloudLightning,
   CloudRain,
+  CloudSnow,
+  CloudSun,
+  SunMedium,
   Wind,
   Plus,
   X,
@@ -157,6 +163,26 @@ async function loadTodayWeather() {
     if (!response.ok) throw new Error('금일 기상 조회 실패')
 
     const data = await response.json()
+
+    const rainProbability = pickFirstValue(data, [
+      'precipitationProbability',
+      'rainProbability',
+      'todayRainProbability',
+      'rainPercent',
+      'pop',
+      'analysis.precipitationProbability',
+      'rain.value',
+    ])
+
+    const windSpeed = pickFirstValue(data, [
+      'windSpeed',
+      'maxWindSpeed',
+      'todayWindSpeed',
+      'avgWindSpeed',
+      'wsd',
+      'analysis.maxWindSpeed',
+      'wind.value',
+    ])
 
     weather.value = {
       am: { label: data.amLabel || '기상정보 없음' },
