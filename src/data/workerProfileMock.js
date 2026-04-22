@@ -1,5 +1,96 @@
 /** 예시 작업자 상세 프로필 (작업자 관리 / 출입근태 연동) */
 
+/** 데모용 PDF (미리보기·다운로드) */
+export const DEMO_WORKER_DOCUMENT_PDF_URL =
+  'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'
+
+/** 공통: 1.0공수 근무일 */
+function dayFull(date, zone, site = '강남 A공구', clockIn = '06:50', clockOut = '17:10') {
+  return { date, zone, clockIn, clockOut, manDays: 1.0, site }
+}
+
+function dayHalf(date, zone, site = '강남 A공구') {
+  return { date, zone, clockIn: '06:50', clockOut: '12:30', manDays: 0.5, site }
+}
+
+function dayNone(date, zone, site = '-') {
+  return { date, zone, clockIn: '-', clockOut: '-', manDays: 0, site }
+}
+
+/** 워커1: 당월 누적 18.5 = 17일×1.0 + 3일×0.5 (2025-10) */
+const w1Rows = [
+  dayFull('2025-10-31', 'A구역 (지하주차장)'),
+  dayFull('2025-10-30', 'A구역 (지하주차장)'),
+  dayFull('2025-10-29', 'A구역 (지하주차장)'),
+  dayFull('2025-10-28', 'A구역 (지하주차장)'),
+  dayFull('2025-10-27', 'A구역 (지하주차장)'),
+  dayHalf('2025-10-24', 'A구역 (지하주차장)'),
+  dayFull('2025-10-23', 'A구역 (지하주차장)'),
+  dayFull('2025-10-21', 'A구역 (지하주차장)'),
+  dayFull('2025-10-20', 'A구역 (지하주차장)'),
+  dayHalf('2025-10-17', 'A구역 (지하주차장)'),
+  dayFull('2025-10-16', 'A구역 (지하주차장)'),
+  dayFull('2025-10-14', 'A구역 (지하주차장)'),
+  dayFull('2025-10-13', 'A구역 (지하주차장)'),
+  dayHalf('2025-10-10', 'A구역 (지하주차장)'),
+  dayFull('2025-10-09', 'A구역 (지하주차장)'),
+  dayFull('2025-10-07', 'A구역 (지하주차장)'),
+  dayFull('2025-10-06', 'A구역 (지하주차장)'),
+  dayFull('2025-10-03', 'A구역 (지하주차장)'),
+  dayFull('2025-10-02', 'A구역 (지하주차장)'),
+  dayFull('2025-10-01', 'A구역 (지하주차장)'),
+]
+
+/** 워커2: 당월 누적 14.0 = 14일×1.0 */
+const w2Rows = [
+  dayFull('2025-10-31', 'C구역'),
+  dayFull('2025-10-30', 'C구역'),
+  dayFull('2025-10-29', 'C구역'),
+  dayFull('2025-10-28', 'C구역'),
+  dayFull('2025-10-27', 'C구역'),
+  dayFull('2025-10-24', 'C구역'),
+  dayFull('2025-10-23', 'C구역'),
+  dayFull('2025-10-22', 'C구역'),
+  dayFull('2025-10-21', 'C구역'),
+  dayFull('2025-10-20', 'C구역'),
+  dayFull('2025-10-17', 'C구역'),
+  dayFull('2025-10-16', 'C구역'),
+  dayFull('2025-10-15', 'C구역'),
+  dayFull('2025-10-14', 'C구역', '강남 A공구', '07:05', '17:00'),
+]
+
+/** 워커3: 당월 누적 10.5 = 10×1.0 + 1×0.5 (판교) */
+const w3Rows = [
+  dayFull('2025-10-31', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-30', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-29', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-28', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-27', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-24', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-23', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-22', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-21', '업무동', '판교 DC', '06:45', '17:00'),
+  dayFull('2025-10-20', '업무동', '판교 DC', '06:45', '17:00'),
+  dayHalf('2025-10-14', '업무동', '판교 DC'),
+  dayNone('2025-10-13', '업무동'),
+]
+
+/** 워커4: 당월 누적 12.0 = 12×1.0 */
+const w4Rows = [
+  dayFull('2025-10-31', '외부 비계'),
+  dayFull('2025-10-30', '외부 비계'),
+  dayFull('2025-10-29', '외부 비계'),
+  dayFull('2025-10-28', '외부 비계'),
+  dayFull('2025-10-27', '외부 비계'),
+  dayFull('2025-10-24', '외부 비계'),
+  dayFull('2025-10-23', '외부 비계'),
+  dayFull('2025-10-22', '외부 비계'),
+  dayFull('2025-10-21', '외부 비계'),
+  dayFull('2025-10-20', '외부 비계'),
+  dayFull('2025-10-17', '외부 비계'),
+  dayFull('2025-10-16', '외부 비계'),
+]
+
 export const workerProfilesById = {
   1: {
     id: 1,
@@ -19,36 +110,18 @@ export const workerProfilesById = {
         title: '기초안전보건교육 이수증',
         status: '이수완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '기초안전보건교육_이수증.pdf',
       },
       {
         title: '신분증 사본 및 통장 사본',
         status: '완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '신분증_통장사본.pdf',
       },
     ],
-    attendanceRows: [
-      {
-        date: '2025-10-14',
-        clockIn: '06:50',
-        clockOut: '17:10',
-        manDays: 1.0,
-        site: '강남 A공구',
-      },
-      {
-        date: '2025-10-13',
-        clockIn: '06:48',
-        clockOut: '17:05',
-        manDays: 1.0,
-        site: '강남 A공구',
-      },
-      {
-        date: '2025-10-12',
-        clockIn: '06:52',
-        clockOut: '17:00',
-        manDays: 1.0,
-        site: '강남 A공구',
-      },
-    ],
+    attendanceRows: w1Rows,
     zoneHistory: [
       {
         date: '2025-10-01',
@@ -83,29 +156,18 @@ export const workerProfilesById = {
         title: '기초안전보건교육 이수증',
         status: '이수완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '기초안전보건교육_이수증.pdf',
       },
       {
         title: '개인정보동의 서약',
         status: '제출 대기',
         statusVariant: 'pending',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '개인정보동의_서약.pdf',
       },
     ],
-    attendanceRows: [
-      {
-        date: '2025-10-14',
-        clockIn: '07:05',
-        clockOut: '-',
-        manDays: 0,
-        site: '강남 A공구',
-      },
-      {
-        date: '2025-10-13',
-        clockIn: '07:00',
-        clockOut: '17:15',
-        manDays: 1.0,
-        site: '강남 A공구',
-      },
-    ],
+    attendanceRows: w2Rows,
     zoneHistory: [{ date: '2025-10-01', zone: 'C구역', note: '임시' }],
     sanctions: [],
   },
@@ -127,22 +189,13 @@ export const workerProfilesById = {
         title: '기초안전보건교육 이수증',
         status: '이수완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '기초안전보건교육_이수증.pdf',
       },
     ],
-    attendanceRows: [
-      {
-        date: '2025-10-14',
-        clockIn: '06:45',
-        clockOut: '16:00',
-        manDays: 0.5,
-        site: '판교 DC',
-      },
-      { date: '2025-10-13', clockIn: '-', clockOut: '-', manDays: 0, site: '-' },
-    ],
+    attendanceRows: w3Rows,
     zoneHistory: [{ date: '2025-09-01', zone: '업무동', note: '전사' }],
-    sanctions: [
-      { date: '2025-09-10', type: '제재', description: '무단속직 3일' },
-    ],
+    sanctions: [{ date: '2025-09-10', type: '제재', description: '무단속직 3일' }],
   },
   4: {
     id: 4,
@@ -162,22 +215,18 @@ export const workerProfilesById = {
         title: '기초안전보건교육 이수증',
         status: '이수완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '기초안전보건교육_이수증.pdf',
       },
       {
         title: '신분증 사본',
         status: '완료',
         statusVariant: 'done',
+        fileUrl: DEMO_WORKER_DOCUMENT_PDF_URL,
+        storedFileName: '신분증_사본.pdf',
       },
     ],
-    attendanceRows: [
-      {
-        date: '2025-10-14',
-        clockIn: '06:55',
-        clockOut: '17:00',
-        manDays: 1.0,
-        site: '강남 A공구',
-      },
-    ],
+    attendanceRows: w4Rows,
     zoneHistory: [{ date: '2025-10-05', zone: '외부 비계', note: '일일' }],
     sanctions: [{ date: '2025-10-01', type: '주의', description: '투입 제한 상태' }],
   },
