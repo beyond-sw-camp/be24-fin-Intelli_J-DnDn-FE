@@ -94,7 +94,7 @@ spec:
       steps {
         container('kubectl'){
           script {
-              sh "kubectl set image deployment/dndn-frontend dndn-frontend=${IMAGE_NAME}:${IMAGE_TAG}"
+              sh "kubectl set image deployment/dndn-frontend frontend=${IMAGE_NAME}:${IMAGE_TAG}"
               sh "kubectl rollout restart deployment/dndn-frontend"
           }
         }
