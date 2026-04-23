@@ -152,6 +152,7 @@ router.beforeEach((to) => {
 
   if (to.path === '/login') {
     if (auth.isAuthenticated) {
+      if (auth.stayOnLogin) return true
       return { path: '/site/dashboard' }
     }
     return true
@@ -161,7 +162,10 @@ router.beforeEach((to) => {
     return { path: '/login' }
   }
 
-  if (!pathAllowedForRole(auth.role, to.path)) {
+  if (!pathAllowedForRole(auth.role, to.path, auth.accessScope)) {
+    if (auth.stayOnLogin) {
+      return { path: '/site/dashboard', query: to.query }
+    }
     return { path: '/login' }
   }
   return true
