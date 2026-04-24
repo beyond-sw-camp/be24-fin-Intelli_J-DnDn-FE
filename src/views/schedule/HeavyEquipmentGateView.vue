@@ -14,15 +14,9 @@ import {
   X,
 } from 'lucide-vue-next'
 
-// 1. 게이트별 상태 데이터 (Gate 1 ~ 7)
+// 1. 게이트별 상태 데이터 (초기 기본 게이트 1개 유지)
 const gates = ref([
-  { id: 1, name: 'Gate 1 (정문)', x: 15, y: 80, vehicles: 8, machines: [true, true], manpower: 6, waitingTrucks: 0 },
-  { id: 2, name: 'Gate 2 (서측)', x: 10, y: 40, vehicles: 2, machines: [true, false], manpower: 4, waitingTrucks: 0 },
-  { id: 3, name: 'Gate 3 (북측)', x: 45, y: 15, vehicles: 12, machines: [false, false], manpower: 4, waitingTrucks: 0 },
-  { id: 4, name: 'Gate 4 (자재)', x: 80, y: 20, vehicles: 3, machines: [true, true], manpower: 6, waitingTrucks: 0 },
-  { id: 5, name: 'Gate 5 (토목)', x: 90, y: 60, vehicles: 15, machines: [true, true], manpower: 8, waitingTrucks: 0 },
-  { id: 6, name: 'Gate 6 (후문)', x: 70, y: 85, vehicles: 1, machines: [true, false], manpower: 4, waitingTrucks: 0 },
-  { id: 7, name: 'Gate 7 (비상)', x: 50, y: 55, vehicles: 0, machines: [false, false], manpower: 2, waitingTrucks: 0 },
+  { id: 1, name: 'Gate 1 (정문)', x: 15, y: 80, vehicles: 0, machines: [true, true], manpower: 6 },
 ])
 
 const selectedGateId = ref(1)
@@ -218,7 +212,6 @@ const addCustomGate = (event) => {
     vehicles: 0,
     machines: [false, false],
     manpower: 2,
-    waitingTrucks: 0,
   })
 
   selectedGateId.value = nextId
@@ -310,28 +303,13 @@ const onGateClick = (gateId, event) => {
     </div>
 
     <div class="grid gap-6 lg:grid-cols-3">
-      <div
-        ref="mapRef"
-        class="lg:col-span-2 overflow-hidden rounded-3xl border border-forena-100 shadow-card relative min-h-[500px]"
-        :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''"
-        :style="{
-          backgroundImage: `url(${siteLayout})`,
-          backgroundSize: 'contain',
-          backgroundRepeat: 'no-repeat',
-          backgroundPosition: 'center',
-        }"
-        @click="isAddMode && addCustomGate($event)"
-        @dragover="onMapDragOver"
-      >
+      <div class="lg:col-span-2 relative flex min-h-[600px] flex-col overflow-auto rounded-3xl border border-forena-100 shadow-card">
+
         <div class="absolute right-4 top-4 z-20 flex items-center gap-2">
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
-            :class="
-              isAddMode
-                ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse'
-                : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'
-            "
+            :class="isAddMode ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse' : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'"
             @click.stop="isAddMode = !isAddMode"
           >
             <MapIcon class="h-4 w-4" />
@@ -342,38 +320,51 @@ const onGateClick = (gateId, event) => {
           </span>
         </div>
 
-        <button
-          v-for="gate in gates"
-          :key="gate.id"
-          class="absolute flex flex-col items-center gap-1 transition-all"
-          :class="draggingGateId === gate.id ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
+        <div
+          ref="mapRef"
+          class="relative h-full min-h-[650px] w-full min-w-[130%]"
+          :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''"
           :style="{
-            left: gate.x + '%',
-            top: gate.y + '%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: draggingGateId === gate.id ? 50 : 10,
+            backgroundImage: `url(${siteLayout})`,
+            backgroundSize: 'contain',
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'center'
           }"
-          :draggable="!isAddMode"
-          @dragstart="onMarkerDragStart(gate, $event)"
-          @drag="onMarkerDrag($event)"
-          @dragend="onMarkerDragEnd(gate, $event)"
-          @click="onGateClick(gate.id, $event)"
+          @click="isAddMode && addCustomGate($event)"
+          @dragover="onMapDragOver"
         >
-          <div
-            class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"
-            :class="[getMarkerColor(gate), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']"
+          <button
+            v-for="gate in gates"
+            :key="gate.id"
+            class="absolute flex flex-col items-center gap-1 transition-all"
+            :class="draggingGateId === gate.id ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
+            :style="{
+              left: gate.x + '%',
+              top: gate.y + '%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: draggingGateId === gate.id ? 50 : 10,
+            }"
+            :draggable="!isAddMode"
+            @dragstart="onMarkerDragStart(gate, $event)"
+            @drag="onMarkerDrag($event)"
+            @dragend="onMarkerDragEnd(gate, $event)"
+            @click="onGateClick(gate.id, $event)"
           >
-            <Truck class="h-5 w-5" />
-            <AlertCircle
-              v-if="isInefficientGate(gate)"
-              class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
-            />
-          </div>
-          <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100 flex flex-col items-center gap-0.5">
-            <span>G{{ gate.id }} (진입 {{ gate.vehicles }}대)</span>
-            <span v-if="gate.waitingTrucks > 0" class="text-amber-600">대기 {{ gate.waitingTrucks }}대</span>
-          </div>
-        </button>
+            <div
+              class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"
+              :class="[getMarkerColor(gate), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']"
+            >
+              <Truck class="h-5 w-5" />
+              <AlertCircle
+                v-if="isInefficientGate(gate)"
+                class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
+              />
+            </div>
+            <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100 flex flex-col items-center gap-0.5">
+              <span class="whitespace-nowrap">G{{ gate.id }} (총 {{ gate.vehicles }}대)</span>
+            </div>
+          </button>
+        </div>
       </div>
 
       <div class="space-y-4">
@@ -410,6 +401,15 @@ const onGateClick = (gateId, event) => {
               >
                 {{ getGateStatusLabel(selectedGate) }}
               </span>
+
+              <button
+                type="button"
+                class="rounded-full p-2 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
+                @click="removeGate(selectedGate.id)"
+                title="게이트 삭제"
+              >
+                <Trash2 class="h-5 w-5" />
+              </button>
 
               <button
                 type="button"
