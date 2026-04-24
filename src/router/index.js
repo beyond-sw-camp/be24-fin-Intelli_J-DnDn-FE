@@ -82,6 +82,12 @@ const router = createRouter({
       meta: meta('공정 지표보고'),
     },
     {
+      path: '/site/gate',
+      name: 'HeavyEquipmentGate',
+      component: () => import('../views/schedule/HeavyEquipmentGateView.vue'),
+      meta: meta('중장비 입출차'),
+    },
+    {
       path: '/site/work-plan',
       name: 'siteWorkPlan',
       component: () => import('../views/schedule/WorkPlanView.vue'),
@@ -131,6 +137,12 @@ const router = createRouter({
       component: () => import('../views/personnel/AccountListView.vue'),
       meta: meta('계정 관리'),
     },
+    {
+      path: '/system/admins',
+      name: 'systemAdmins',
+      component: () => import('../views/system/SystemAdminListView.vue'),
+      meta: meta('시스템 관리자'),
+    },
 
     { path: '/SiteManagement', redirect: '/site/dashboard' },
     { path: '/SiteManagement/:id', redirect: '/site/dashboard' },
@@ -152,6 +164,7 @@ router.beforeEach((to) => {
 
   if (to.path === '/login') {
     if (auth.isAuthenticated) {
+      if (auth.stayOnLogin) return true
       return { path: '/site/dashboard' }
     }
     return true
@@ -161,7 +174,10 @@ router.beforeEach((to) => {
     return { path: '/login' }
   }
 
-  if (!pathAllowedForRole(auth.role, to.path)) {
+  if (!pathAllowedForRole(auth.role, to.path, auth.accessScope)) {
+    if (auth.stayOnLogin) {
+      return { path: '/site/dashboard', query: to.query }
+    }
     return { path: '/login' }
   }
   return true
