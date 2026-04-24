@@ -6,6 +6,8 @@ import {
   Upload,
   FileText,
   Plus,
+  BarChart3,
+  MapPin,
 } from 'lucide-vue-next'
 
 const T = {
@@ -35,6 +37,10 @@ const T = {
   colTask: '공정명',
   colType: '공종',
   countUnit: '건',
+  secProgress: '공정 진행 상황',
+  progressViz: '공종별 진행률',
+  progressVizSub: '통합 작업 계획 기준 공정별 진행 지표를 요약합니다.',
+  overall: '전체 공사 진행률',
 }
 
 const planViewYear = ref(2025)
@@ -55,6 +61,24 @@ const defaultTrades = [
   { id: 'tunnel', label: '톰링 / 가오사' },
   { id: 'elec', label: '전기 공사' },
 ]
+
+const categoryChips = ['전체', '골조', '내장', '설비']
+const activeCategoryChip = ref('전체')
+const tradeChipMap = ref({
+  steel: '골조',
+  pile: '골조',
+  earth: '내장',
+  tunnel: '내장',
+  elec: '설비',
+})
+
+const overallProgress = ref(62)
+const progressByCategory = ref([
+  { name: '골조', pct: 74 },
+  { name: '기초', pct: 68 },
+  { name: '전기', pct: 52 },
+  { name: '마감', pct: 41 },
+])
 
 /** @param {string} task @param {number} d0 @param {number} d1 @param {[number, number] | null} actual */
 function demoSeg(task, d0, d1, actual = null) {
@@ -138,6 +162,10 @@ function addTradeSection() {
   const id = nextTradeId()
   tradeSites.value = [...tradeSites.value, { id, label: name }]
   tradeUploads.value = { ...tradeUploads.value, [id]: [] }
+  tradeChipMap.value = {
+    ...tradeChipMap.value,
+    [id]: activeCategoryChip.value === '전체' ? '골조' : activeCategoryChip.value,
+  }
   newTradeName.value = ''
 }
 
@@ -403,10 +431,15 @@ async function onTradeFiles(tradeId, evt) {
   input.value = ''
 }
 
+const filteredTradeSites = computed(() => {
+  if (activeCategoryChip.value === '전체') return tradeSites.value
+  return tradeSites.value.filter((tr) => (tradeChipMap.value[tr.id] ?? '골조') === activeCategoryChip.value)
+})
+
 const workPlanGanttRows = computed(() => {
   const tl = ganttTimeline.value
   const rows = []
-  for (const def of tradeSites.value) {
+  for (const def of filteredTradeSites.value) {
     const uploads = tradeUploads.value[def.id] ?? []
     for (const up of uploads) {
       for (const seg of up.segments) {
@@ -470,7 +503,7 @@ const allMonthRowsForEmptyCheck = computed(() => {
   const y = planViewYear.value
   const m = planViewMonth.value
   let n = 0
-  for (const def of tradeSites.value) {
+  for (const def of filteredTradeSites.value) {
     const uploads = tradeUploads.value[def.id] ?? []
     for (const up of uploads) {
       for (const seg of up.segments) {
@@ -487,6 +520,75 @@ function barLeftPct(s, total) {
 
 function barWidthPct(s, e, total) {
   return ((e - s + 1) / total) * 100
+}
+
+const isModalOpen = ref(false)
+const modalFileInput = ref(null)
+const modalForm = ref({
+  category: '골조공사',
+  workDate: '',
+  reportFile: null,
+  detailSummary: '',
+  remarks: '',
+})
+
+function openModal() {
+  isModalOpen.value = true
+}
+
+function closeModal() {
+  isModalOpen.value = false
+  modalForm.value = {
+    category: '골조공사',
+    workDate: '',
+    reportFile: null,
+    detailSummary: '',
+    remarks: '',
+  }
+}
+
+function openModalFilePicker() {
+  modalFileInput.value?.click()
+}
+
+function onModalFileChange(evt) {
+  const input = evt.target
+  modalForm.value.reportFile = input.files?.[0] ?? null
+}
+
+function mapModalCategoryToChip(category) {
+  if (category === '골조공사') return '골조'
+  if (category === '내장공사') return '내장'
+  if (category === '전기설비') return '설비'
+  return '골조'
+}
+
+function resolveTradeIdFromModalCategory(category) {
+  const chip = mapModalCategoryToChip(category)
+  const target = tradeSites.value.find((tr) => (tradeChipMap.value[tr.id] ?? '골조') === chip)
+  return target?.id ?? tradeSites.value[0]?.id ?? 'steel'
+}
+
+async function submitModalUpload() {
+  if (!modalForm.value.reportFile) {
+    closeModal()
+    return
+  }
+  const tradeId = resolveTradeIdFromModalCategory(modalForm.value.category)
+  const row = await extractFromFile(tradeId, modalForm.value.reportFile)
+  const list = tradeUploads.value[tradeId] ?? []
+  list.push(row)
+  tradeUploads.value = { ...tradeUploads.value, [tradeId]: [...list] }
+
+  console.log('[WorkPlanView] modal upload', {
+    category: modalForm.value.category,
+    workDate: modalForm.value.workDate,
+    file: modalForm.value.reportFile?.name ?? '',
+    detailSummary: modalForm.value.detailSummary,
+    remarks: modalForm.value.remarks,
+  })
+
+  closeModal()
 }
 </script>
 
@@ -545,83 +647,31 @@ function barWidthPct(s, e, total) {
       {{ T.demoNote }}
     </p>
 
-    <div>
-      <div class="mb-3 flex items-center gap-2">
-        <FileText class="h-4 w-4 text-flare-600" />
-        <h2 class="text-sm font-bold text-forena-900">{{ T.tradeReports }}</h2>
-      </div>
-      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <div
-          v-for="tr in tradeSites"
-          :key="tr.id"
-          class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card"
+    <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card">
+      <div class="flex flex-wrap gap-2 rounded-xl border border-forena-100 bg-forena-50/40 p-1.5">
+        <button
+          v-for="chip in categoryChips"
+          :key="chip"
+          type="button"
+          class="rounded-lg px-4 py-2 text-sm font-bold transition"
+          :class="
+            activeCategoryChip === chip
+              ? 'bg-gradient-to-r from-forena-700 to-forena-900 text-white shadow-sm'
+              : 'text-forena-600 hover:bg-white'
+          "
+          @click="activeCategoryChip = chip"
         >
-          <div class="flex items-start justify-between gap-2">
-            <p class="text-sm font-bold text-forena-900">{{ tr.label }}</p>
-            <span
-              v-if="(tradeUploads[tr.id] ?? []).length"
-              class="shrink-0 rounded-lg bg-forena-100 px-2 py-0.5 text-[10px] font-bold tabular-nums text-forena-700"
-            >
-              {{ (tradeUploads[tr.id] ?? []).length }}{{ T.countUnit }}
-            </span>
-          </div>
-          <input
-            :ref="(el) => setTradeFileInput(tr.id, el)"
-            type="file"
-            class="sr-only"
-            multiple
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
-            @change="onTradeFiles(tr.id, $event)"
-          />
-          <label
-            class="mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-forena-200 bg-forena-50/40 px-3 py-5 transition hover:border-flare-400 hover:bg-flare-50/30"
-            @click.prevent="openTradeFilePicker(tr.id)"
-          >
-            <Upload class="h-6 w-6 text-forena-400" />
-            <span class="text-xs font-bold text-forena-700">{{ T.uploadCta }}</span>
-            <span class="text-[10px] text-slate-500">{{ T.uploadHint }}</span>
-          </label>
-          <ul
-            v-if="(tradeUploads[tr.id] ?? []).length"
-            class="mt-3 max-h-40 space-y-2 overflow-y-auto text-[11px]"
-          >
-            <li
-              v-for="(u, ui) in tradeUploads[tr.id] ?? []"
-              :key="ui"
-              class="rounded-lg border border-forena-100 bg-forena-50/50 px-2 py-1.5"
-            >
-              <p class="truncate font-semibold text-forena-800" :title="u.fileName">
-                {{ u.fileName }}
-              </p>
-              <p class="mt-0.5 text-[10px] text-slate-600">
-                {{ T.extractedLabel }}: {{ u.segments.length }}{{ T.countUnit }}
-              </p>
-            </li>
-          </ul>
-          <p v-else class="mt-3 text-[11px] text-slate-400">{{ T.noExtract }}</p>
-        </div>
-
-        <div
-          class="flex flex-col justify-center overflow-hidden rounded-2xl border-2 border-dashed border-forena-200 bg-gradient-to-br from-forena-50/80 to-flare-50/30 p-4 shadow-card"
-        >
-          <p class="text-sm font-bold text-forena-900">{{ T.addTradeSection }}</p>
-          <input
-            v-model="newTradeName"
-            type="text"
-            class="mt-3 rounded-xl border border-forena-200 bg-white px-3 py-2 text-sm font-medium text-forena-900 placeholder:text-slate-400"
-            :placeholder="T.newTradePh"
-            @keydown.enter.prevent="addTradeSection"
-          />
-          <button
-            type="button"
-            class="mt-3 flex items-center justify-center gap-2 rounded-xl border border-forena-300 bg-white px-4 py-2.5 text-sm font-bold text-forena-800 shadow-sm transition hover:bg-forena-50"
-            @click="addTradeSection"
-          >
-            <Plus class="h-4 w-4 shrink-0 text-flare-600" />
-            {{ T.addTradeSection }}
-          </button>
-        </div>
+          {{ chip }}
+        </button>
       </div>
+      <button
+        type="button"
+        class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:from-forena-600 hover:to-forena-800"
+        @click="openModal"
+      >
+        <Upload class="h-4 w-4" />
+        {{ T.uploadCta }}
+      </button>
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
@@ -767,5 +817,146 @@ function barWidthPct(s, e, total) {
         </div>
       </div>
     </div>
+
+    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+      <div class="border-b border-forena-100 bg-forena-50/50 px-4 py-2.5 sm:px-5 sm:py-3">
+        <div class="flex items-center gap-2">
+          <BarChart3 class="h-4 w-4 text-flare-600" />
+          <h3 class="text-sm font-bold text-forena-900">{{ T.secProgress }}</h3>
+        </div>
+        <p class="mt-1 text-[11px] text-slate-600">{{ T.progressVizSub }}</p>
+      </div>
+
+      <div class="grid gap-5 p-4 sm:p-5 lg:grid-cols-2 lg:items-start lg:gap-6 xl:gap-8 xl:p-6">
+        <div
+          class="rounded-xl border border-forena-100 bg-gradient-to-r from-forena-50/80 to-flare-50/40 p-3.5 sm:p-4"
+        >
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <p class="text-xs font-bold uppercase tracking-wide text-forena-500">{{ T.overall }}</p>
+            <p class="text-2xl font-bold tabular-nums text-forena-900 sm:text-3xl">
+              {{ overallProgress }}%
+            </p>
+          </div>
+          <div class="mt-4 h-3 overflow-hidden rounded-full bg-forena-100 sm:h-3.5">
+            <div
+              class="h-full rounded-full bg-gradient-to-r from-forena-600 to-flare-500 transition-all"
+              :style="{ width: overallProgress + '%' }"
+            />
+          </div>
+        </div>
+
+        <div class="min-w-0">
+          <p class="mb-3 flex items-center gap-1 text-xs font-bold text-forena-500">
+            <MapPin class="h-3.5 w-3.5" />
+            {{ T.progressViz }}
+          </p>
+          <ul class="grid gap-3">
+            <li v-for="(item, idx) in progressByCategory" :key="idx" class="min-w-0">
+              <div class="flex justify-between gap-2 text-xs font-semibold text-forena-800">
+                <span class="min-w-0 truncate">{{ item.name }}</span>
+                <span class="shrink-0 tabular-nums text-flare-700">{{ item.pct }}%</span>
+              </div>
+              <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-forena-100">
+                <div
+                  class="h-full rounded-full bg-gradient-to-r from-forena-500 to-flare-400"
+                  :style="{ width: item.pct + '%' }"
+                />
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <Teleport to="body">
+      <div
+        v-if="isModalOpen"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4"
+        @click.self="closeModal"
+      >
+        <div class="w-full max-w-2xl rounded-2xl border border-forena-100/90 bg-white p-6 shadow-card">
+          <h3 class="text-base font-bold text-forena-900">공정 계획서 업로드</h3>
+
+          <div class="mt-5 grid gap-4 md:grid-cols-2">
+            <label class="block space-y-2">
+              <span class="text-xs font-bold uppercase tracking-wide text-forena-600">공종 선택</span>
+              <select
+                v-model="modalForm.category"
+                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm font-semibold text-forena-900"
+              >
+                <option value="골조공사">골조공사</option>
+                <option value="내장공사">내장공사</option>
+                <option value="전기설비">전기설비</option>
+              </select>
+            </label>
+
+            <label class="block space-y-2">
+              <span class="text-xs font-bold uppercase tracking-wide text-forena-600">작업 일자</span>
+              <input
+                v-model="modalForm.workDate"
+                type="date"
+                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm font-semibold text-forena-900"
+              />
+            </label>
+          </div>
+
+          <div class="mt-4">
+            <span class="block text-xs font-bold uppercase tracking-wide text-forena-600">파일 첨부</span>
+            <input
+              ref="modalFileInput"
+              type="file"
+              class="sr-only"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg"
+              @change="onModalFileChange"
+            />
+            <label
+              class="mt-2 flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-forena-200 bg-forena-50/40 px-4 py-6 transition hover:border-flare-400 hover:bg-flare-50/30"
+              @click.prevent="openModalFilePicker"
+            >
+              <Upload class="h-6 w-6 text-forena-400" />
+              <span class="text-sm font-bold text-forena-700">PDF, JPG 파일 선택</span>
+              <span class="text-xs text-slate-500">{{ modalForm.reportFile?.name || '선택된 파일 없음' }}</span>
+            </label>
+          </div>
+
+          <label class="mt-4 block space-y-2">
+            <span class="text-xs font-bold uppercase tracking-wide text-forena-600">세부 내역</span>
+            <input
+              v-model="modalForm.detailSummary"
+              type="text"
+              class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 placeholder:text-slate-400"
+              placeholder="세부 내역을 입력하세요"
+            />
+          </label>
+
+          <label class="mt-4 block space-y-2">
+            <span class="text-xs font-bold uppercase tracking-wide text-forena-600">비고</span>
+            <textarea
+              v-model="modalForm.remarks"
+              rows="4"
+              class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 placeholder:text-slate-400"
+              placeholder="특이사항(비고)을 입력하세요"
+            />
+          </label>
+
+          <div class="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              class="rounded-xl border border-forena-300 bg-white px-4 py-2 text-sm font-bold text-forena-800 transition hover:bg-forena-50"
+              @click="closeModal"
+            >
+              취소(Cancel)
+            </button>
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:from-forena-600 hover:to-forena-800"
+              @click="submitModalUpload"
+            >
+              업로드(Upload)
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
