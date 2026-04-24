@@ -1,5 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
+import siteLayout from '@/assets/Firefly_Gemini Flash.png'
 import {
   Navigation,
   Users,
@@ -13,15 +14,9 @@ import {
   X,
 } from 'lucide-vue-next'
 
-// 1. 게이트별 상태 데이터 (Gate 1 ~ 7)
+// 1. 게이트별 상태 데이터 (초기 기본 게이트 1개 유지)
 const gates = ref([
-  { id: 1, name: 'Gate 1 (정문)', x: 15, y: 80, vehicles: 8, machines: [true, true], manpower: 6 },
-  { id: 2, name: 'Gate 2 (서측)', x: 10, y: 40, vehicles: 2, machines: [true, false], manpower: 4 },
-  { id: 3, name: 'Gate 3 (북측)', x: 45, y: 15, vehicles: 12, machines: [false, false], manpower: 4 },
-  { id: 4, name: 'Gate 4 (자재)', x: 80, y: 20, vehicles: 3, machines: [true, true], manpower: 6 },
-  { id: 5, name: 'Gate 5 (토목)', x: 90, y: 60, vehicles: 15, machines: [true, true], manpower: 8 },
-  { id: 6, name: 'Gate 6 (후문)', x: 70, y: 85, vehicles: 1, machines: [true, false], manpower: 4 },
-  { id: 7, name: 'Gate 7 (비상)', x: 50, y: 55, vehicles: 0, machines: [false, false], manpower: 2 },
+  { id: 1, name: 'Gate 1 (정문)', x: 15, y: 80, vehicles: 0, machines: [true, true], manpower: 6 },
 ])
 
 const selectedGateId = ref(1)
@@ -308,22 +303,13 @@ const onGateClick = (gateId, event) => {
     </div>
 
     <div class="grid gap-6 lg:grid-cols-3">
-      <div
-        ref="mapRef"
-        class="lg:col-span-2 overflow-hidden rounded-3xl border border-forena-100 bg-slate-50 shadow-card relative min-h-[500px]"
-        :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''"
-        @click="isAddMode && addCustomGate($event)"
-        @dragover="onMapDragOver"
-      >
+      <div class="lg:col-span-2 relative flex min-h-[600px] flex-col overflow-auto rounded-3xl border border-forena-100 shadow-card">
+
         <div class="absolute right-4 top-4 z-20 flex items-center gap-2">
           <button
             type="button"
             class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
-            :class="
-              isAddMode
-                ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse'
-                : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'
-            "
+            :class="isAddMode ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse' : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'"
             @click.stop="isAddMode = !isAddMode"
           >
             <MapIcon class="h-4 w-4" />
@@ -334,65 +320,107 @@ const onGateClick = (gateId, event) => {
           </span>
         </div>
 
-        <div class="absolute inset-0 flex items-center justify-center opacity-20">
-          <MapIcon class="h-64 w-64 text-slate-300" />
-          <span class="absolute text-sm font-bold text-slate-400">SITE PLAN VIEW (DNDN)</span>
-        </div>
-
-        <svg class="absolute inset-0 h-full w-full pointer-events-none" viewBox="0 0 100 100">
-          <path d="M10,20 L90,20 L90,80 L10,80 Z" fill="none" stroke="#e2e8f0" stroke-width="0.5" stroke-dasharray="2" />
-        </svg>
-
-        <button
-          v-for="gate in gates"
-          :key="gate.id"
-          class="absolute flex flex-col items-center gap-1 transition-all"
-          :class="draggingGateId === gate.id ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
+        <div
+          ref="mapRef"
+          class="relative h-full min-h-[650px] w-full min-w-[130%]"
+          :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''"
           :style="{
-            left: gate.x + '%',
-            top: gate.y + '%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: draggingGateId === gate.id ? 50 : 10,
+            backgroundImage: `url(${siteLayout})`,
+            backgroundSize: 'contain',
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'center'
           }"
-          :draggable="!isAddMode"
-          @dragstart="onMarkerDragStart(gate, $event)"
-          @drag="onMarkerDrag($event)"
-          @dragend="onMarkerDragEnd(gate, $event)"
-          @click="onGateClick(gate.id, $event)"
+          @click="isAddMode && addCustomGate($event)"
+          @dragover="onMapDragOver"
         >
-          <div
-            class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-lg transition-colors"
-            :class="[getMarkerColor(gate), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : '']"
+          <button
+            v-for="gate in gates"
+            :key="gate.id"
+            class="absolute flex flex-col items-center gap-1 transition-all"
+            :class="draggingGateId === gate.id ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
+            :style="{
+              left: gate.x + '%',
+              top: gate.y + '%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: draggingGateId === gate.id ? 50 : 10,
+            }"
+            :draggable="!isAddMode"
+            @dragstart="onMarkerDragStart(gate, $event)"
+            @drag="onMarkerDrag($event)"
+            @dragend="onMarkerDragEnd(gate, $event)"
+            @click="onGateClick(gate.id, $event)"
           >
-            <Truck class="h-5 w-5" />
-            <AlertCircle
-              v-if="isInefficientGate(gate)"
-              class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
-            />
-          </div>
-          <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100">
-            G{{ gate.id }} ({{ gate.vehicles }}대)
-          </div>
-        </button>
+            <div
+              class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"
+              :class="[getMarkerColor(gate), draggingGateId === gate.id ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']"
+            >
+              <Truck class="h-5 w-5" />
+              <AlertCircle
+                v-if="isInefficientGate(gate)"
+                class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
+              />
+            </div>
+            <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100 flex flex-col items-center gap-0.5">
+              <span class="whitespace-nowrap">G{{ gate.id }} (총 {{ gate.vehicles }}대)</span>
+            </div>
+          </button>
+        </div>
       </div>
 
       <div class="space-y-4">
-        <div v-if="selectedGate" class="rounded-3xl border border-forena-100 bg-white p-6 shadow-card ring-1 ring-forena-50">
-          <div class="flex items-center justify-between border-b border-forena-50 pb-4">
-            <div class="flex items-center gap-2">
-              <h2 class="text-lg font-bold text-forena-900">{{ selectedGate.name }}</h2>
+        <div v-if="selectedGate" class="overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50">
+          <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-6 py-4">
+            <div class="flex items-center gap-3">
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm">
+                <span class="text-lg font-black text-forena-900">{{ selectedGate.id }}</span>
+              </div>
+              <div>
+                <h3 class="text-lg font-bold text-forena-900">{{ selectedGate.name }}</h3>
+                <p class="text-xs font-semibold text-slate-500">게이트 상세 정보</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <div class="flex items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1">
+                <button
+                  type="button"
+                  @click="selectedGate.vehicles = Math.max(0, selectedGate.vehicles - 1)"
+                  class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:bg-amber-50 hover:scale-105"
+                >-</button>
+                <span class="px-1 text-sm font-bold text-amber-800">대기 {{ selectedGate.vehicles }}대</span>
+                <button
+                  type="button"
+                  @click="selectedGate.vehicles++"
+                  class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:bg-amber-50 hover:scale-105"
+                >+</button>
+              </div>
+
+              <span
+                class="rounded-full px-3 py-1 text-xs font-bold border"
+                :class="getStatusColor(selectedGate)"
+              >
+                {{ getGateStatusLabel(selectedGate) }}
+              </span>
+
               <button
                 type="button"
-                class="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-rose-100 bg-rose-50 text-rose-500 transition hover:bg-rose-100"
-                @click.stop="removeGate(selectedGate.id)"
+                class="rounded-full p-2 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
+                @click="removeGate(selectedGate.id)"
+                title="게이트 삭제"
               >
-                <Trash2 class="h-4 w-4" />
+                <Trash2 class="h-5 w-5" />
+              </button>
+
+              <button
+                type="button"
+                class="rounded-full p-2 text-forena-400 transition hover:bg-forena-100 hover:text-forena-600"
+                @click="selectedGateId = null"
+              >
+                <X class="h-5 w-5" />
               </button>
             </div>
-            <span class="rounded-full px-3 py-1 text-xs font-bold border" :class="getStatusColor(selectedGate)">
-              {{ getGateStatusLabel(selectedGate) }}
-            </span>
           </div>
+          <div class="p-6">
 
           <div class="mt-6">
             <div class="flex items-center justify-between text-sm font-bold text-forena-500 uppercase tracking-wider">
@@ -479,6 +507,7 @@ const onGateClick = (gateId, event) => {
             <p class="mt-2 text-sm font-bold text-blue-900">
               가장 가까운 우회 경로: {{ recommendedGate.name }} (현재 진입: {{ recommendedGate.vehicles }}대)
             </p>
+          </div>
           </div>
         </div>
       </div>
