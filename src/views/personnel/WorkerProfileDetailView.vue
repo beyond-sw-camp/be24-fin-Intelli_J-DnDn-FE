@@ -257,6 +257,12 @@ const deployBadgeClass = (v) => {
   return 'bg-slate-50 text-slate-700 ring-1 ring-slate-200/80'
 }
 
+function jobRankBadgeClass(rank) {
+  if (rank === '현장 총 책임자') return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
+  if (rank === '현장 관리자') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
+}
+
 const docStatusClass = (v) => {
   if (v === 'done') return 'text-emerald-700 font-semibold'
   if (v === 'pending') return 'text-amber-700 font-semibold'
@@ -478,12 +484,20 @@ const avatarLetter = computed(() => {
             <p class="mt-1 text-sm text-slate-600">
               {{ profile.company }} <span class="text-slate-400">|</span> {{ profile.role }}
             </p>
-            <span
-              class="mt-3 inline-flex rounded-full px-3 py-1 text-[11px] font-bold"
-              :class="deployBadgeClass(profile.deployStatusVariant)"
-            >
-              {{ profile.deployStatus }}
-            </span>
+            <div class="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <span
+                class="inline-flex rounded-full px-3 py-1 text-[11px] font-bold"
+                :class="deployBadgeClass(profile.deployStatusVariant)"
+              >
+                {{ profile.deployStatus }}
+              </span>
+              <span
+                class="inline-flex rounded-full px-3 py-1 text-[11px] font-bold"
+                :class="jobRankBadgeClass(profile.jobRank || '작업자')"
+              >
+                {{ profile.jobRank || '작업자' }}
+              </span>
+            </div>
           </div>
           <dl class="mt-6 space-y-3 border-t border-forena-100 pt-6 text-sm">
             <div class="flex justify-between gap-2">

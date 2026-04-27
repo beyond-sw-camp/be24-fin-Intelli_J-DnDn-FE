@@ -12,7 +12,11 @@ import {
   UserCheck,
   Eye,
 } from 'lucide-vue-next'
-import { getAffiliationKind, affiliationKindBadgeClass } from '@/utils/workerAffiliation'
+import {
+  getAffiliationKind,
+  affiliationKindBadgeClass,
+  formatAffiliationDisplay,
+} from '@/utils/workerAffiliation'
 
 const props = defineProps({
   embed: { type: Boolean, default: false },
@@ -500,7 +504,9 @@ const getStatusBadge = (status) => {
                 </span>
               </td>
               <td class="px-6 py-4">
-                <div class="text-xs font-semibold text-forena-800">{{ record.affiliationType }}</div>
+                <div class="text-xs font-semibold text-forena-800">
+                  {{ formatAffiliationDisplay(record.affiliationType) }}
+                </div>
                 <div class="text-[11px] text-slate-500">{{ record.site }}</div>
               </td>
               <td class="px-6 py-4 font-mono text-xs">

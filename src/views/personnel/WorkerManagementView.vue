@@ -13,7 +13,11 @@ import {
   Download,
   Send,
 } from 'lucide-vue-next'
-import { getAffiliationKind, affiliationKindBadgeClass } from '@/utils/workerAffiliation'
+import {
+  getAffiliationKind,
+  affiliationKindBadgeClass,
+  formatAffiliationDisplay,
+} from '@/utils/workerAffiliation'
 
 const router = useRouter()
 
@@ -49,7 +53,7 @@ const T = {
   colEmergency: '비상 연락망 / 관계',
   colAffil: '소속',
   colTime: '출·퇴근',
-  colMan: '산정 공수',
+  colRank: '직급',
   colStatus: '상태',
   colDel: '삭제',
   empty: '조회된 근태 내역이 없습니다.',
@@ -89,6 +93,17 @@ const T = {
   badgePartner: '협력',
   badgeAgency: '인력',
   countPeople: '명',
+}
+
+/** 직급 표시 (현장 총 책임자 · 현장 관리자 · 작업자) */
+const JOB_RANK_CHIEF = '현장 총 책임자'
+const JOB_RANK_MANAGER = '현장 관리자'
+const JOB_RANK_WORKER = '작업자'
+
+function jobRankBadgeClass(rank) {
+  if (rank === JOB_RANK_CHIEF) return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
+  if (rank === JOB_RANK_MANAGER) return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
 /** 소속 구분 1단계: 본사 / 협력사 소속 / 인력사무소 소속 */
@@ -164,6 +179,7 @@ const attendanceList = ref([
     name: '김동석',
     phone: '010-1234-5678',
     emergency: '010-9999-1111 (배우자)',
+    jobRank: JOB_RANK_WORKER,
     affiliationType: '협력사 (태양건설)',
     site: '강남구 재건축 A공구',
     clockIn: '06:50',
@@ -184,6 +200,7 @@ const attendanceList = ref([
     name: '이목수',
     phone: '010-8888-7777',
     emergency: '010-7777-6666 (자녀)',
+    jobRank: JOB_RANK_WORKER,
     affiliationType: '인력사무소 (한강인력)',
     site: '강남구 재건축 A공구',
     clockIn: '07:05',
@@ -203,6 +220,7 @@ const attendanceList = ref([
     name: '박반장',
     phone: '010-5555-4444',
     emergency: '010-4444-3333 (형제)',
+    jobRank: JOB_RANK_MANAGER,
     affiliationType: '본사 소속',
     site: '판교 데이터센터',
     clockIn: '06:45',
@@ -222,6 +240,7 @@ const attendanceList = ref([
     name: '최철수',
     phone: '010-2222-3333',
     emergency: '010-3333-2222 (부)',
+    jobRank: JOB_RANK_CHIEF,
     affiliationType: '협력사 (대한건설)',
     site: '강남구 재건축 A공구',
     clockIn: '07:00',
@@ -387,6 +406,7 @@ const saveEdit = () => {
       clockIn: editForm.value.clockIn,
       clockOut: editForm.value.clockOut || '-',
       manDays: md,
+      jobRank: prev.jobRank,
       monthTotalMan: prev.monthTotalMan,
       clockHistory: prev.clockHistory,
     }
@@ -681,8 +701,8 @@ function onDataTransfer() {
                   <th class="px-6 py-4 font-semibold">{{ T.colEmergency }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colKind }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colAffil }}</th>
+                  <th class="px-6 py-4 font-semibold">{{ T.colRank }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colMan }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colStatus }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colDetail }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colDel }}</th>
@@ -717,15 +737,22 @@ function onDataTransfer() {
                     </span>
                   </td>
                   <td class="px-6 py-4">
-                    <div class="text-xs font-semibold text-forena-800">{{ record.affiliationType }}</div>
+                    <div class="text-xs font-semibold text-forena-800">
+                      {{ formatAffiliationDisplay(record.affiliationType) }}
+                    </div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <span
+                      class="inline-flex rounded-lg px-2 py-0.5 text-[10px] font-bold"
+                      :class="jobRankBadgeClass(record.jobRank)"
+                    >
+                      {{ record.jobRank }}
+                    </span>
                   </td>
                   <td class="px-6 py-4 font-mono text-xs">
                     <span class="font-semibold text-flare-700">{{ record.clockIn }}</span>
                     <span class="text-slate-400"> — </span>
                     <span class="text-slate-600">{{ record.clockOut }}</span>
-                  </td>
-                  <td class="px-6 py-4 font-semibold tabular-nums text-forena-900">
-                    {{ record.manDays }} {{ T.manSuffix }}
                   </td>
                   <td class="px-6 py-4 text-center">
                     <span
