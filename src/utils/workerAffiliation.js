@@ -13,6 +13,20 @@ export function getAffiliationKind(text) {
   return 'partner'
 }
 
+/**
+ * 테이블 등 표시용 소속 문구.
+ * `협력사 (태양건설)` → `태양건설`, `인력사무소 (한강인력)` → `한강인력`.
+ * @param {string} [text]
+ */
+export function formatAffiliationDisplay(text) {
+  const s = String(text ?? '')
+  let m = s.match(/^협력사\s*\(([^)]+)\)\s*$/)
+  if (m) return m[1].trim()
+  m = s.match(/^인력사무소\s*\(([^)]+)\)\s*$/)
+  if (m) return m[1].trim()
+  return s
+}
+
 /** @param {AffiliationKind} kind */
 export function affiliationKindBadgeClass(kind) {
   if (kind === 'direct') return 'bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200/80'
