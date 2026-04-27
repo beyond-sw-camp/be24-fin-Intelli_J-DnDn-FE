@@ -13,6 +13,17 @@ export function getAffiliationKind(text) {
   return 'partner'
 }
 
+/**
+ * 카드 등에 표시할 소속 문구. 협력사는 `협력사 (태양건설)` → `태양건설` 형태로만 출력합니다.
+ * @param {string} [text]
+ */
+export function formatAffiliationDisplay(text) {
+  const s = String(text ?? '')
+  const m = s.match(/^협력사\s*\(([^)]+)\)\s*$/)
+  if (m) return m[1].trim()
+  return s
+}
+
 /** @param {AffiliationKind} kind */
 export function affiliationKindBadgeClass(kind) {
   if (kind === 'direct') return 'bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200/80'
