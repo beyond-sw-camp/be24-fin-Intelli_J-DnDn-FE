@@ -4,10 +4,14 @@ import {
   CloudSun,
   Sparkles,
   AlertTriangle,
-  CalendarRange,
   Wind,
   Droplets,
-  CheckCircle2,
+  Thermometer,
+  Eye,
+  CalendarDays,
+  CalendarRange,
+  ShieldAlert,
+  ChevronRight,
 } from 'lucide-vue-next'
 
 const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8081').replace(/\/$/, '')
@@ -142,22 +146,24 @@ function getPlanSegmentsByDate(dateText) {
   return result
 }
 
-
 const T = {
   title: '기상 관제',
   desc: '기상 변화에 따른 위험 공정 통제와 작업 계획 조정 포인트를 한 화면에서 확인합니다.',
-  catRisk: '위험 통제',
-  row2Title: 'AI 위험 장비 통제',
+  catRisk: 'AI 위험 통제 추천',
+  catRiskSub: '오늘 날씨와 작업 계획·중장비를 비교해 AI가 우선 검토 항목을 제안합니다.',
+  row2Title: '위험 장비 통제',
   row3Title: '계획 대비 위험 경고',
   demoToday: '오늘 현장 요약',
   demoWeek: '기상 영향도',
   demoRain: '강수 확률',
   fineDustTitle: '금일 미세먼지',
   badgeAi: 'AI',
-  badgePlan: '계획 연동',
+  badgePlan: 'AI',
   liveRisk: '실시간 위험 통제 추천',
-  threeDayTitle: '오늘 · 내일 · 모레 저장 예보',
-  monthPlanTitle: 'AI 기상 기반 1개월 작업 추천',
+  liveRiskSub: '오늘 계획·장비에 없더라도 날씨 기반으로 함께 살펴보면 좋은 항목입니다.',
+  forecastTitle: '기상 예보',
+  tabWeek: '주간 7일',
+  tabMonth: '월간',
 }
 
 function getTodayDateText() {
@@ -302,9 +308,27 @@ function buildFineDustCard(data) {
 }
 
 function buildAnalysisFromDashboard(data) {
+  const fineDustValue = parseNumber(
+    firstNonEmpty(
+      data?.airQuality?.value,
+      data?.airQuality?.pm10,
+      data?.airQuality?.concentration,
+      data?.airQuality?.density,
+      data?.fineDustValue,
+      data?.pm10Value,
+      data?.pm10,
+      data?.today?.fineDustValue,
+    ),
+  )
+
   const analysis = data?.analysis
   if (analysis && analysis.sourceType && analysis.sourceType !== 'EMPTY') {
-    return analysis
+    return {
+      ...analysis,
+      fineDustValue: analysis.fineDustValue ?? fineDustValue,
+      fineDustRisk:
+        analysis.fineDustRisk ?? (fineDustValue != null && fineDustValue >= 80),
+    }
   }
 
   const todaySummary = String(data?.today?.summary || '')
@@ -333,6 +357,8 @@ function buildAnalysisFromDashboard(data) {
     heatRisk: maxTemperature != null && maxTemperature >= 33,
     coldRisk: minTemperature != null && minTemperature <= -5,
     windRisk: maxWindSpeed >= 8,
+    fineDustValue,
+    fineDustRisk: fineDustValue != null && fineDustValue >= 80,
   }
 }
 
@@ -356,6 +382,10 @@ function isCold(analysis) {
   return Boolean(analysis?.coldRisk) || Number(analysis?.minTemperature || 0) <= -5
 }
 
+function isDusty(analysis) {
+  return Boolean(analysis?.fineDustRisk) || Number(analysis?.fineDustValue || 0) >= 80
+}
+
 function includesAny(target, keywords) {
   return keywords.some((keyword) => target.includes(keyword))
 }
@@ -367,6 +397,7 @@ function buildRiskLevel(analysis) {
   if (isSnowy(analysis)) score += 2
   if (isHot(analysis)) score += 1
   if (isCold(analysis)) score += 1
+  if (isDusty(analysis)) score += 1
 
   if (score >= 4) return { label: '높음', tone: 'text-rose-700 bg-rose-100 border-rose-200' }
   if (score >= 2) return { label: '보통', tone: 'text-amber-700 bg-amber-100 border-amber-200' }
@@ -464,6 +495,18 @@ function buildLinkedPlanRisks(segments, analysis) {
         level: '주의',
         reason: `저온 시 ${taskName} 작업은 동결과 양생 품질 저하 가능성이 있습니다.`,
         title: '저온 연동 위험',
+      })
+    }
+
+    if (
+      isDusty(analysis) &&
+      includesAny(taskText, ['옥외', '외부', '도장', '용접', '절단', '굴착', '도로'])
+    ) {
+      pushRisk({
+        label: `계획 연동 · ${taskName}`,
+        level: '주의',
+        reason: `미세먼지가 많은 날 ${taskName} 작업은 호흡기 보호구 착용과 작업 시간 분산이 필요합니다.`,
+        title: '미세먼지 연동 위험',
       })
     }
   })
@@ -696,185 +739,26 @@ function buildLiveControlFallbacks(analysis, equipmentRisk, planRisk) {
     })
   }
 
+  if (isCold(analysis)) {
+    items.push({
+      id: 'live-cold',
+      label: '동결·결빙 동선 점검',
+      level: '주의',
+      reason: '바닥 결빙과 자재 동결로 미끄럼·균열 위험이 커집니다. 통로 제설·제빙 후 작업을 시작하세요.',
+    })
+  }
+
+  if (isDusty(analysis)) {
+    items.push({
+      id: 'live-dust',
+      label: '미세먼지 작업 보호구 강화',
+      level: Number(analysis?.fineDustValue || 0) >= 150 ? '경고' : '주의',
+      reason:
+        '옥외 도장·용접·절단·굴착 작업자에게 KF94 이상 보호구를 지급하고, 노출 시간을 줄이는 교대 편성을 적용하세요.',
+    })
+  }
+
   return items.slice(0, 4)
-}
-
-function buildBriefingItems(data, analysis, riskLevel, fineDust) {
-  const serverAlerts = Array.isArray(data?.alerts) ? data.alerts : []
-  const mappedServerAlerts = serverAlerts
-    .map((item, index) => ({
-      id: item.id || `alert-${index}`,
-      title: item.title || item.label || '현장 특보',
-      level: item.level || '주의',
-      detail: item.description || item.reason || '현장 특보 내용을 확인하세요.',
-    }))
-    .slice(0, 3)
-
-  if (mappedServerAlerts.length > 0) {
-    return mappedServerAlerts
-  }
-
-  const items = [
-    {
-      id: 'briefing-overview',
-      title: '현장 종합 판단',
-      level: riskLevel.label === '높음' ? '경고' : riskLevel.label === '보통' ? '주의' : '안정',
-      detail: `${data?.today?.summary || '현장 기상 정보'} 기준으로 오늘 공정 조정 여부를 우선 확인하세요.`,
-    },
-  ]
-
-  if (isWindy(analysis)) {
-    items.push({
-      id: 'briefing-wind',
-      title: '강풍 영향',
-      level: Number(analysis?.maxWindSpeed || 0) >= 10 ? '경고' : '주의',
-      detail: `최대 풍속 ${formatWindSpeed(analysis?.maxWindSpeed)} 기준으로 고소·양중 작업은 즉시 재검토가 필요합니다.`,
-    })
-  }
-
-  if (isRainy(analysis)) {
-    items.push({
-      id: 'briefing-rain',
-      title: '강수 대응',
-      level: Number(analysis?.precipitationProbability || 0) >= 70 ? '경고' : '주의',
-      detail: `강수 확률 ${formatPercent(analysis?.precipitationProbability)}로 외부 마감과 타설 품질 관리에 유의해야 합니다.`,
-    })
-  }
-
-  if (fineDust?.label && fineDust.label !== '정보 없음' && fineDust.label !== '좋음') {
-    items.push({
-      id: 'briefing-fine-dust',
-      title: '미세먼지 관리',
-      level: fineDust.label.includes('매우') ? '경고' : '주의',
-      detail: `${fineDust.label} 수준으로 절단·비산먼지 작업 구간은 방진 관리와 보호구 착용 확인이 필요합니다.`,
-    })
-  }
-
-  return items.slice(0, 3)
-}
-
-function parseDateParts(dateText) {
-  const matched = String(dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
-  if (!matched) return null
-  return {
-    y: Number(matched[1]),
-    m: Number(matched[2]),
-    d: Number(matched[3]),
-  }
-}
-
-function getMonthlyPlanSegments(dateText) {
-  const target = parseDateParts(dateText)
-  if (!target) return []
-
-  const storage = loadWeatherPlanStorage()
-  const tradeSites = Array.isArray(storage.tradeSites) ? storage.tradeSites : []
-  const tradeUploads = storage.tradeUploads && typeof storage.tradeUploads === 'object'
-    ? storage.tradeUploads
-    : {}
-
-  const tradeLabelMap = new Map(tradeSites.map((trade) => [trade.id, trade.label || trade.id]))
-  const result = []
-
-  Object.entries(tradeUploads).forEach(([tradeId, uploads]) => {
-    if (!Array.isArray(uploads)) return
-
-    const tradeLabel = tradeLabelMap.get(tradeId) || tradeId
-
-    uploads.forEach((upload, uploadIndex) => {
-      const fileName = upload?.fileName || `upload-${uploadIndex + 1}`
-      const segments = Array.isArray(upload?.segments) ? upload.segments : []
-
-      segments.forEach((segment, segmentIndex) => {
-        const plan = segment?.plan
-        if (!plan) return
-        if (Number(plan.y) !== target.y || Number(plan.m) !== target.m) return
-
-        result.push({
-          id: `${tradeId}-${uploadIndex}-${segmentIndex}`,
-          tradeId,
-          tradeLabel,
-          task: segment?.task || '계획 작업',
-          source: fileName,
-          planStart: Number(plan.d0),
-          planEnd: Number(plan.d1),
-          actual: segment?.actual || null,
-        })
-      })
-    })
-  })
-
-  result.sort((a, b) => {
-    if (a.planStart !== b.planStart) return a.planStart - b.planStart
-    if (a.planEnd !== b.planEnd) return a.planEnd - b.planEnd
-    return String(a.task).localeCompare(String(b.task), 'ko')
-  })
-
-  return result
-}
-
-function buildMonthlyPlanRecommendations(monthlyPlans, analysis, selectedDateText) {
-  const target = parseDateParts(selectedDateText)
-  if (!target) return []
-
-  const results = []
-  const sourcePlans = Array.isArray(monthlyPlans) && monthlyPlans.length > 0
-    ? monthlyPlans.slice(0, 6)
-    : [
-      { id: 'dummy-1', tradeLabel: '골조', task: '외부 거푸집 해체', planStart: target.d, planEnd: target.d + 1 },
-      { id: 'dummy-2', tradeLabel: '마감', task: '옥상 방수 시공', planStart: target.d + 2, planEnd: target.d + 3 },
-      { id: 'dummy-3', tradeLabel: '전기', task: '실내 배선 정리', planStart: target.d + 4, planEnd: target.d + 5 },
-      { id: 'dummy-4', tradeLabel: '토목', task: '외곽 배수로 정비', planStart: target.d + 6, planEnd: target.d + 7 },
-    ]
-
-  sourcePlans.forEach((plan, index) => {
-    const taskText = normalizeKeyword(`${plan.tradeLabel} ${plan.task}`)
-    let level = '유지'
-    let reason = '현재 기준으로 기존 일정 유지가 가능합니다.'
-    let suggestion = '작업 시작 전 오전 브리핑만 재확인하세요.'
-
-    if (
-      isRainy(analysis) &&
-      includesAny(taskText, ['타설', '방수', '도장', '외부', '옥상', '굴착', '토공', '비계'])
-    ) {
-      level = '조정 필요'
-      reason = '우천 조건에서 외부 품질 공정과 작업면 확보가 어렵습니다.'
-      suggestion = '실내 마감·자재 검수·양생 준비 작업으로 우선 전환하는 편이 안전합니다.'
-    } else if (
-      isWindy(analysis) &&
-      includesAny(taskText, ['철골', '양중', '고소', '패널', '유리', '거푸집', '외부'])
-    ) {
-      level = '재검토'
-      reason = '강풍 조건에서 양중 및 외부 설치 작업의 위험도가 상승합니다.'
-      suggestion = '지상 조립, 자재 선별, 안전시설 보강 작업을 우선 편성하세요.'
-    } else if (
-      isHot(analysis) &&
-      includesAny(taskText, ['옥외', '외부', '철근', '토목', '도로', '배수로'])
-    ) {
-      level = '시간 조정'
-      reason = '고온 시간대 집중 시 작업 생산성과 안전성이 모두 떨어질 수 있습니다.'
-      suggestion = '오전 선시공 후 오후는 실내 보조 작업으로 분산 배치하는 것이 좋습니다.'
-    } else if (
-      isCold(analysis) &&
-      includesAny(taskText, ['타설', '콘크리트', '방수', '배관', '외부'])
-    ) {
-      level = '품질 주의'
-      reason = '저온 조건에서는 양생과 부착 품질 확보가 어렵습니다.'
-      suggestion = '보양 계획을 먼저 확보하고, 필요 시 일정 순연을 검토하세요.'
-    }
-
-    results.push({
-      id: plan.id || `monthly-${index}`,
-      dateRange: `${String(target.m).padStart(2, '0')}.${String(plan.planStart).padStart(2, '0')} - ${String(target.m).padStart(2, '0')}.${String(plan.planEnd).padStart(2, '0')}`,
-      tradeLabel: plan.tradeLabel || '공정',
-      task: plan.task || '계획 작업',
-      level,
-      reason,
-      suggestion,
-    })
-  })
-
-  return results
 }
 
 function buildForecastLabel(day, index) {
@@ -884,11 +768,156 @@ function buildForecastLabel(day, index) {
   return day?.dayLabel || '-'
 }
 
+const KOREAN_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+
+function getWeekdayLabel(daysAhead, baseDateText) {
+  const base = parseDateText(baseDateText)
+  let date
+  if (base) {
+    date = new Date(base.y, base.m - 1, base.d)
+  } else {
+    date = new Date()
+  }
+  date.setDate(date.getDate() + daysAhead)
+  return `${KOREAN_WEEKDAYS[date.getDay()]}요일`
+}
+
+function getDaysInMonth(year, month) {
+  return new Date(year, month, 0).getDate()
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function buildWeatherLabelByRain(rain, wind) {
+  if (wind >= 10) return '강풍 주의'
+  if (rain >= 75) return '비'
+  if (rain >= 55) return '흐리고 비'
+  if (rain >= 35) return '구름 많음'
+  return '맑음'
+}
+
+function buildWeeklyForecast(analysis, forecastDays, baseDateText) {
+  const serverDays = Array.isArray(forecastDays) ? forecastDays : []
+
+  const dayLabelFor = (i, fallback) => {
+    if (i === 0) return '오늘'
+    if (i === 1) return '내일'
+    if (i === 2) return '모레'
+    return getWeekdayLabel(i, baseDateText) || fallback || `+${i}일`
+  }
+
+  if (serverDays.length >= 7) {
+    return serverDays.slice(0, 7).map((day, i) => ({
+      ...day,
+      dayLabel: dayLabelFor(i, day.dayLabel),
+    }))
+  }
+
+  const baseRain = Number(analysis?.precipitationProbability || 20)
+  const baseWind = Number(analysis?.maxWindSpeed || 3)
+  const maxTemp = Number(analysis?.maxTemperature || 23)
+  const minTemp = Number(analysis?.minTemperature || 14)
+
+  const weatherPatterns = [
+    isRainy(analysis) ? '비 가능성 높음' : isWindy(analysis) ? '강풍 주의' : '대체로 맑음',
+    baseRain >= 60 ? '흐리고 비' : '구름 많음',
+    baseRain >= 70 ? '비 뒤 갬' : '맑음',
+    '맑음',
+    '구름 조금',
+    baseRain >= 50 ? '흐림' : '대체로 맑음',
+    '맑음',
+  ]
+
+  return weatherPatterns.map((weatherLabel, i) => ({
+    dayLabel: dayLabelFor(i),
+    weatherLabel,
+    maxTemp: maxTemp + (i === 0 ? 0 : i <= 2 ? -1 + i : i - 2),
+    minTemp: minTemp + (i === 0 ? 0 : Math.floor(i / 2) - 1),
+    precipitationProbability: Math.max(5, baseRain - i * 8),
+    windSpeed: Math.max(1, baseWind - Math.floor(i / 2)),
+  }))
+}
+
+function buildMonthlyForecastSummary(analysis, reportDateText) {
+  const target = parseDateText(reportDateText)
+  if (!target) return []
+
+  const daysInMonth = getDaysInMonth(target.y, target.m)
+  const weekCount = Math.ceil(daysInMonth / 7)
+  const baseRain = Number(analysis?.precipitationProbability || 20)
+  const baseWind = Number(analysis?.maxWindSpeed || 3)
+  const maxTemp = Number(analysis?.maxTemperature || 23)
+  const minTemp = Number(analysis?.minTemperature || 14)
+
+  return Array.from({ length: weekCount }, (_, w) => {
+    const startDay = 1 + w * 7
+    const endDay = Math.min(startDay + 6, daysInMonth)
+    const weekRainBase = clamp(
+      baseRain + (w === 1 ? 14 : 0) + (w === 2 ? -6 : 0) + (w === 3 ? 8 : 0) + (w === 4 ? -3 : 0),
+      5,
+      95,
+    )
+    const weekWindBase = clamp(baseWind + (w === 1 ? 1 : 0) + (w === 3 ? 1 : 0), 1, 14)
+
+    const days = Array.from({ length: endDay - startDay + 1 }, (_, dayIndex) => {
+      const day = startDay + dayIndex
+      const date = new Date(target.y, target.m - 1, day)
+      const rain = clamp(
+        weekRainBase + (dayIndex % 3 === 0 ? 8 : dayIndex % 2 === 0 ? -4 : 3),
+        5,
+        95,
+      )
+      const wind = clamp(
+        weekWindBase + (dayIndex === 0 || dayIndex === 5 ? 1 : 0),
+        1,
+        14,
+      )
+      const weatherLabel = buildWeatherLabelByRain(rain, wind)
+
+      return {
+        id: `week-${w + 1}-day-${day}`,
+        shortDate: `${target.m}/${day}`,
+        weekday: KOREAN_WEEKDAYS[date.getDay()],
+        weatherLabel,
+        precipitationProbability: rain,
+        windSpeed: wind,
+        maxTemp: Math.round((maxTemp + (w % 2 === 0 ? 0 : 1) + (dayIndex >= 4 ? 1 : 0)) * 10) / 10,
+        minTemp: Math.round((minTemp + (w >= 2 ? 1 : 0) - (dayIndex === 0 ? 1 : 0)) * 10) / 10,
+      }
+    })
+
+    const weekSummary = weekRainBase >= 60 ? '비 예보 포함' : weekRainBase >= 40 ? '흐린 날 있음' : '대체로 맑음'
+    const risk = weekRainBase >= 60 || weekWindBase >= 10 ? '주의' : weekRainBase >= 40 || weekWindBase >= 8 ? '보통' : '양호'
+
+    return {
+      id: `week-${w + 1}`,
+      label: `${w + 1}주차`,
+      dateRange: `${String(target.m).padStart(2, '0')}.${String(startDay).padStart(2, '0')} — ${String(target.m).padStart(2, '0')}.${String(endDay).padStart(2, '0')}`,
+      weatherSummary: weekSummary,
+      maxTemp: Math.round((Math.max(...days.map((item) => item.maxTemp))) * 10) / 10,
+      minTemp: Math.round((Math.min(...days.map((item) => item.minTemp))) * 10) / 10,
+      precipitationProbability: weekRainBase,
+      windSpeed: weekWindBase,
+      risk,
+      riskClass:
+        risk === '주의'
+          ? 'text-rose-700 bg-rose-50 border-rose-200'
+          : risk === '보통'
+          ? 'text-amber-700 bg-amber-50 border-amber-200'
+          : 'text-emerald-700 bg-emerald-50 border-emerald-200',
+      days,
+    }
+  })
+}
+
 const dashboard = ref(createEmptyDashboard())
 const loading = ref(false)
 const reportDate = ref(getTodayDateText())
 const linkedPlanSegments = ref([])
-const monthlyPlanSegments = ref([])
+const forecastTab = ref('week')
+const selectedMonthWeekId = ref(null)
 
 const todayHeadline = computed(() => dashboard.value.today?.headlineTemp || '--°C / --°C')
 const todaySummary = computed(() => dashboard.value.today?.summary || '기상 정보 없음')
@@ -910,12 +939,17 @@ const equipmentPrimary = computed(() => {
 
 const planPrimary = computed(() => {
   const linked = linkedPlanRisks.value[0]
+  const affectedTasks = Array.from(
+    new Set(linkedPlanRisks.value.map((item) => item.taskName).filter(Boolean)),
+  ).slice(0, 6)
+
   if (linked) {
     return {
       title: T.row3Title,
       level: linked.level,
       reason: linked.reason,
       action: '외부 공정은 실내 선행 작업 또는 자재 준비 작업으로 전환 검토가 필요합니다.',
+      affectedTasks,
     }
   }
 
@@ -926,10 +960,14 @@ const planPrimary = computed(() => {
       level: risky.level,
       reason: `${risky.reason || ''}`.trim(),
       action: `${risky.action || ''}`.trim(),
+      affectedTasks,
     }
   }
 
-  return buildFallbackPlanRisk(derivedAnalysis.value, linked)
+  return {
+    ...buildFallbackPlanRisk(derivedAnalysis.value, linked),
+    affectedTasks,
+  }
 })
 
 const equipmentSummary = computed(() => {
@@ -939,10 +977,6 @@ const equipmentSummary = computed(() => {
 const planSummary = computed(() => {
   return `${planPrimary.value.reason} ${planPrimary.value.action || ''}`.trim()
 })
-
-const briefingItems = computed(() =>
-  buildBriefingItems(dashboard.value, derivedAnalysis.value, riskLevel.value, fineDustCard.value),
-)
 
 const riskFlags = computed(() => {
   const linked = linkedPlanRisks.value.map((item) => ({
@@ -1026,15 +1060,51 @@ const threeDayForecast = computed(() => {
   ]
 })
 
-const monthlyRecommendations = computed(() =>
-  buildMonthlyPlanRecommendations(monthlyPlanSegments.value, derivedAnalysis.value, reportDate.value),
+const weeklyForecast = computed(() =>
+  buildWeeklyForecast(derivedAnalysis.value, dashboard.value.forecastDays, reportDate.value),
 )
+
+const monthlyForecast = computed(() => buildMonthlyForecastSummary(derivedAnalysis.value, reportDate.value))
+
+watch(
+  monthlyForecast,
+  (weeks) => {
+    if (!weeks.length) {
+      selectedMonthWeekId.value = null
+      return
+    }
+    if (selectedMonthWeekId.value && !weeks.some((week) => week.id === selectedMonthWeekId.value)) {
+      selectedMonthWeekId.value = null
+    }
+  },
+  { immediate: true },
+)
+
+function selectMonthWeek(weekId) {
+  selectedMonthWeekId.value = selectedMonthWeekId.value === weekId ? null : weekId
+}
+
+function weatherEmoji(label, rain) {
+  if (!label) return '🌤'
+  const k = String(label).replace(/\s/g, '')
+  if (k.includes('눈')) return '❄️'
+  if (k.includes('비') || rain >= 70) return '🌧'
+  if (k.includes('흐림') || k.includes('흐리고') || rain >= 40) return '☁️'
+  if (k.includes('강풍')) return '💨'
+  if (k.includes('구름')) return '⛅'
+  return '☀️'
+}
+
+function rainBarClass(rain) {
+  if (rain >= 70) return 'bg-rose-500'
+  if (rain >= 40) return 'bg-amber-400'
+  return 'bg-sky-400'
+}
 
 async function loadDashboard() {
   loading.value = true
   try {
     linkedPlanSegments.value = getPlanSegmentsByDate(reportDate.value)
-    monthlyPlanSegments.value = getMonthlyPlanSegments(reportDate.value)
 
     const response = await fetch(`${API_BASE_URL}/weather/dashboard?reportDate=${reportDate.value}`)
     if (!response.ok) {
@@ -1051,7 +1121,6 @@ async function loadDashboard() {
     console.error(error)
     dashboard.value = createEmptyDashboard()
     linkedPlanSegments.value = getPlanSegmentsByDate(reportDate.value)
-    monthlyPlanSegments.value = getMonthlyPlanSegments(reportDate.value)
   } finally {
     loading.value = false
   }
@@ -1062,7 +1131,8 @@ onMounted(loadDashboard)
 </script>
 
 <template>
-  <div class="space-y-6 pb-10">
+  <div class="space-y-5 pb-10">
+
     <div
       class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-sky-50/40 to-flare-50/20 p-6 shadow-card">
       <div
@@ -1092,21 +1162,24 @@ onMounted(loadDashboard)
     <div class="grid gap-4 md:grid-cols-4">
       <article class="rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
         <div class="flex items-start justify-between gap-3">
-          <div>
+          <div class="flex items-center gap-2">
+            <Thermometer class="h-4 w-4 shrink-0 text-forena-400" />
             <p class="text-[11px] font-bold text-forena-500">{{ T.demoToday }}</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-forena-900">{{ todayHeadline }}</p>
           </div>
           <span class="rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="riskLevel.tone">
             위험 {{ riskLevel.label }}
           </span>
         </div>
-        <p class="mt-3 text-sm leading-relaxed text-slate-600">{{ todaySummary }}</p>
+        <p class="mt-3 text-2xl font-bold tabular-nums text-forena-900">{{ todayHeadline }}</p>
+        <p class="mt-2 text-sm leading-relaxed text-slate-600">{{ todaySummary }}</p>
       </article>
 
       <article class="rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
-        <p class="text-[11px] font-bold text-forena-500">{{ T.demoWeek }}</p>
-        <p class="mt-2 flex items-center gap-2 text-base font-bold text-amber-800">
-          <Wind class="h-5 w-5 shrink-0" />
+        <div class="flex items-center gap-2">
+          <Wind class="h-4 w-4 shrink-0 text-forena-400" />
+          <p class="text-[11px] font-bold text-forena-500">{{ T.demoWeek }}</p>
+        </div>
+        <p class="mt-3 text-base font-bold text-amber-800">
           {{ dashboard.week?.summary || '기상 영향 분석 준비 중' }}
         </p>
         <p class="mt-2 text-sm leading-relaxed text-slate-500">
@@ -1116,19 +1189,30 @@ onMounted(loadDashboard)
 
       <article class="rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50 to-cyan-50 p-5 shadow-card">
         <div class="flex items-center justify-between gap-3">
-          <p class="text-[11px] font-bold tracking-wide text-sky-800">{{ T.demoRain }}</p>
-          <Droplets class="h-5 w-5 text-sky-600" />
+          <div class="flex items-center gap-2">
+            <Droplets class="h-4 w-4 text-sky-500" />
+            <p class="text-[11px] font-bold tracking-wide text-sky-800">{{ T.demoRain }}</p>
+          </div>
         </div>
         <p class="mt-3 text-3xl font-extrabold tracking-tight text-sky-900">{{ rainValue }}</p>
-        <p class="mt-2 text-sm leading-relaxed text-sky-800/80">
+        <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
+          <div
+            class="h-full rounded-full transition-all duration-500"
+            :class="rainBarClass(Number(derivedAnalysis?.precipitationProbability || 0))"
+            :style="{ width: `${Math.min(100, Number(derivedAnalysis?.precipitationProbability || 0))}%` }"
+          />
+        </div>
+        <p class="mt-2 text-xs leading-relaxed text-sky-800/80">
           {{ Number(derivedAnalysis?.precipitationProbability || 0) >= 70 ? '외부 공정 순연 검토 필요' : Number(derivedAnalysis?.precipitationProbability || 0) >= 40 ? '외부 작업면 상태 사전 점검 권장' : '기본 우천 대비 수준 유지' }}
         </p>
       </article>
 
       <article class="rounded-2xl border border-violet-100/90 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-5 shadow-card">
         <div class="flex items-center justify-between gap-3">
-          <p class="text-[11px] font-bold tracking-wide text-violet-800">{{ T.fineDustTitle }}</p>
-          <Wind class="h-5 w-5 text-violet-600" />
+          <div class="flex items-center gap-2">
+            <Eye class="h-4 w-4 text-violet-500" />
+            <p class="text-[11px] font-bold tracking-wide text-violet-800">{{ T.fineDustTitle }}</p>
+          </div>
         </div>
         <p class="mt-3 text-3xl font-extrabold tracking-tight text-violet-900">{{ fineDustCard.value }}</p>
         <p class="mt-2 text-sm leading-relaxed text-violet-800/80">{{ fineDustCard.label }}</p>
@@ -1136,55 +1220,95 @@ onMounted(loadDashboard)
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="border-b border-forena-100 bg-forena-50/50 px-5 py-3">
-        <h2 class="text-sm font-bold text-forena-900">{{ T.catRisk }}</h2>
+      <div class="border-b border-forena-100 bg-gradient-to-r from-violet-50/70 via-white to-rose-50/60 px-5 py-3.5">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 class="flex items-center gap-2 text-sm font-bold text-forena-900">
+              <ShieldAlert class="h-4 w-4 text-forena-600" />
+              {{ T.catRisk }}
+            </h2>
+            <p class="mt-0.5 text-[11px] text-forena-500">{{ T.catRiskSub }}</p>
+          </div>
+          <span class="rounded-full border border-violet-200 bg-white px-3 py-1 text-[11px] font-bold text-violet-700">
+            <Sparkles class="mr-1 inline h-3 w-3" />
+            AI 추천
+          </span>
+        </div>
       </div>
 
       <div class="space-y-3 p-4">
-        <div class="grid gap-3 rounded-2xl border border-violet-100 bg-violet-50/45 p-4 md:grid-cols-[126px_1fr] md:items-start">
-          <div class="flex items-center gap-2">
-            <span class="rounded-lg bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-800">{{ T.badgeAi }}</span>
-            <Sparkles class="h-4 w-4 text-violet-600" />
-          </div>
-          <div class="space-y-3">
-            <div class="flex flex-wrap items-center gap-2">
-              <h3 class="text-sm font-bold text-forena-900">{{ T.row2Title }}</h3>
-              <span class="rounded-md px-2 py-0.5 text-[10px] font-bold"
-                :class="levelBadgeClass(equipmentPrimary.level)">
-                {{ equipmentPrimary.level }}
-              </span>
-            </div>
-            <p class="text-sm leading-relaxed text-slate-700">{{ equipmentSummary }}</p>
-            <div class="flex flex-wrap gap-2">
-              <span v-for="item in equipmentPrimary.equipment || []" :key="item"
-                class="rounded-full border border-violet-200 bg-white px-3 py-1 text-xs font-semibold text-violet-800">
-                {{ item }}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid gap-3 rounded-2xl border border-rose-100 bg-rose-50/45 p-4 md:grid-cols-[126px_1fr] md:items-start">
+        <div
+          class="relative overflow-hidden rounded-2xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-50/70 via-white to-rose-50/40 p-5 shadow-sm md:grid md:grid-cols-[120px_1fr] md:items-start md:gap-4"
+        >
+          <span class="pointer-events-none absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-rose-400 to-rose-600" />
           <div class="flex items-center gap-2">
             <span class="rounded-lg bg-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-800">{{ T.badgePlan }}</span>
             <AlertTriangle class="h-4 w-4 text-rose-600" />
           </div>
-          <div class="space-y-3">
+          <div class="mt-3 space-y-3 md:mt-0">
             <div class="flex flex-wrap items-center gap-2">
-              <h3 class="text-sm font-bold text-forena-900">{{ T.row3Title }}</h3>
-              <span class="rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(planPrimary.level)">
+              <h3 class="text-base font-extrabold tracking-tight text-forena-900">{{ T.row3Title }}</h3>
+              <span
+                class="rounded-md px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider"
+                :class="levelBadgeClass(planPrimary.level)"
+              >
                 {{ planPrimary.level }}
               </span>
             </div>
-            <p class="text-sm leading-relaxed text-slate-700">{{ planSummary }}</p>
-            <div class="flex flex-wrap gap-2">
+            <p class="text-[15px] font-medium leading-7 text-slate-800">{{ planSummary }}</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <template v-if="planPrimary.affectedTasks?.length">
+                <span
+                  v-for="task in planPrimary.affectedTasks"
+                  :key="task"
+                  class="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-white px-3 py-1 text-xs font-bold text-rose-800 shadow-sm"
+                >
+                  <AlertTriangle class="h-3 w-3" />
+                  {{ task }}
+                </span>
+              </template>
+              <template v-else>
+                <span
+                  class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800"
+                >
+                  당일 연동 공정 0건
+                </span>
+                <span
+                  class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+                >
+                  계획 대비 위험 없음
+                </span>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="relative overflow-hidden rounded-2xl border-2 border-violet-200/80 bg-gradient-to-br from-violet-50/70 via-white to-violet-50/30 p-5 shadow-sm md:grid md:grid-cols-[120px_1fr] md:items-start md:gap-4"
+        >
+          <span class="pointer-events-none absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-violet-400 to-violet-600" />
+          <div class="flex items-center gap-2">
+            <span class="rounded-lg bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-800">{{ T.badgeAi }}</span>
+            <Sparkles class="h-4 w-4 text-violet-600" />
+          </div>
+          <div class="mt-3 space-y-3 md:mt-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <h3 class="text-base font-extrabold tracking-tight text-forena-900">{{ T.row2Title }}</h3>
               <span
-                class="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-800">
-                당일 연동 공정 {{ linkedPlanSegments.length }}건
+                class="rounded-md px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider"
+                :class="levelBadgeClass(equipmentPrimary.level)"
+              >
+                {{ equipmentPrimary.level }}
               </span>
-              <span v-if="linkedPlanRisks.length > 0"
-                class="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
-                즉시 조정 후보 {{ linkedPlanRisks.length }}건
+            </div>
+            <p class="text-[15px] font-medium leading-7 text-slate-800">{{ equipmentSummary }}</p>
+            <div class="flex flex-wrap gap-2 pt-1">
+              <span
+                v-for="item in equipmentPrimary.equipment || []"
+                :key="item"
+                class="inline-flex items-center rounded-full border border-violet-300 bg-white px-3 py-1 text-xs font-bold text-violet-800 shadow-sm"
+              >
+                {{ item }}
               </span>
             </div>
           </div>
@@ -1193,11 +1317,15 @@ onMounted(loadDashboard)
     </div>
 
     <div class="rounded-2xl border border-rose-100/80 bg-rose-50/30 p-5 shadow-card">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <h3 class="flex items-center gap-2 text-sm font-bold text-rose-900">
-          <AlertTriangle class="h-4 w-4" />
-          {{ T.liveRisk }}
-        </h3>
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 class="flex items-center gap-2 text-sm font-bold text-rose-900">
+            <AlertTriangle class="h-4 w-4" />
+            {{ T.liveRisk }}
+            <Sparkles class="h-3.5 w-3.5 text-violet-500" />
+          </h3>
+          <p class="mt-0.5 text-[11px] text-rose-700/70">{{ T.liveRiskSub }}</p>
+        </div>
         <span class="rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-700">
           기준 {{ reportDate }}
         </span>
@@ -1226,91 +1354,283 @@ onMounted(loadDashboard)
       </ul>
     </div>
 
-    <div class="rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
-      <div class="flex items-center justify-between gap-3 border-b border-forena-100 pb-3">
-        <h2 class="text-sm font-bold text-forena-900">{{ T.threeDayTitle }}</h2>
-        <span class="text-xs font-medium text-forena-500">{{ dashboard.locationLabel }}</span>
+    <div class="rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+      <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-3">
+        <h2 class="flex items-center gap-2 text-sm font-bold text-forena-900">
+          <CalendarDays class="h-4 w-4 text-forena-500" />
+          오늘 · 내일 · 모레 저장 예보
+        </h2>
+        <span class="text-xs font-medium text-forena-400">{{ dashboard.locationLabel }}</span>
       </div>
 
-      <div class="mt-4 grid gap-3 md:grid-cols-3">
-        <article v-for="day in threeDayForecast" :key="day.date || day.dayLabel"
-          class="rounded-xl border border-forena-100 bg-forena-50/40 p-4">
-          <p class="text-xs font-bold text-forena-600">{{ day.dayLabel }}</p>
-          <p class="mt-2 text-base font-bold text-forena-900">{{ day.weatherLabel }}</p>
-          <p class="mt-2 text-sm text-slate-700">
-            {{ day.maxTemp ?? '--' }}°C / {{ day.minTemp ?? '--' }}°C
-          </p>
-          <div class="mt-2 flex items-center justify-between text-xs text-slate-600">
-            <span>강수 {{ day.precipitationProbability ?? 0 }}%</span>
-            <span>풍속 {{ formatWindSpeed(day.windSpeed) }}</span>
-          </div>
-        </article>
+      <div class="p-5">
+        <div class="grid gap-3 md:grid-cols-3">
+          <article
+            v-for="day in threeDayForecast"
+            :key="day.date || day.dayLabel"
+            class="rounded-xl border border-forena-100 bg-forena-50/40 p-4"
+          >
+            <div class="flex items-center justify-between">
+              <p class="text-xs font-bold text-forena-600">{{ day.dayLabel }}</p>
+              <span class="text-2xl leading-none">{{ weatherEmoji(day.weatherLabel, day.precipitationProbability) }}</span>
+            </div>
+
+            <p class="mt-2 text-sm font-semibold text-forena-900">{{ day.weatherLabel }}</p>
+
+            <p class="mt-1 tabular-nums text-base font-bold text-forena-800">
+              {{ day.maxTemp ?? '--' }}°C
+              <span class="text-sm font-normal text-slate-500">/ {{ day.minTemp ?? '--' }}°C</span>
+            </p>
+
+            <div class="my-3 border-t border-forena-100" />
+
+            <div class="flex items-center justify-between text-xs text-slate-600">
+              <span class="flex items-center gap-1">
+                <Droplets class="h-3.5 w-3.5 text-sky-500" />
+                {{ day.precipitationProbability ?? 0 }}%
+              </span>
+              <span class="flex items-center gap-1">
+                <Wind class="h-3.5 w-3.5 text-slate-400" />
+                {{ formatWindSpeed(day.windSpeed) }}
+              </span>
+            </div>
+
+            <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-100">
+              <div
+                class="h-full rounded-full"
+                :class="rainBarClass(day.precipitationProbability ?? 0)"
+                :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
+              />
+            </div>
+          </article>
+        </div>
       </div>
     </div>
 
     <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="border-b border-forena-100 bg-forena-50/50 px-5 py-3">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <h2 class="text-sm font-bold text-forena-900">{{ T.monthPlanTitle }}</h2>
-          <span class="text-xs font-medium text-forena-500">기상 조건 반영 대체 작업 추천</span>
+      <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-0">
+        <div class="flex">
+          <button
+            v-for="tab in [
+              { key: 'week',  label: T.tabWeek  },
+              { key: 'month', label: T.tabMonth },
+            ]"
+            :key="tab.key"
+            @click="forecastTab = tab.key"
+            :class="[
+              'flex items-center gap-1.5 border-b-2 px-4 py-3.5 text-sm font-medium transition-colors',
+              forecastTab === tab.key
+                ? 'border-forena-700 text-forena-900'
+                : 'border-transparent text-forena-500 hover:text-forena-700',
+            ]"
+          >
+            <CalendarDays v-if="tab.key === 'week'" class="h-3.5 w-3.5" />
+            <CalendarRange v-else class="h-3.5 w-3.5" />
+            {{ tab.label }}
+          </button>
+        </div>
+        <span class="pr-4 text-xs font-medium text-forena-400">{{ dashboard.locationLabel }}</span>
+      </div>
+
+      <div v-if="forecastTab === 'week'" class="p-5">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[560px] border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-forena-100">
+                <th class="w-16 py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">날짜</th>
+                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">날씨</th>
+                <th class="w-24 py-2 pr-3 text-right text-[11px] font-bold uppercase tracking-wide text-forena-500">최고/최저</th>
+                <th class="w-24 py-2 pr-3 text-right text-[11px] font-bold uppercase tracking-wide text-forena-500">강수</th>
+                <th class="w-20 py-2 text-right text-[11px] font-bold uppercase tracking-wide text-forena-500">풍속</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(day, idx) in weeklyForecast"
+                :key="idx"
+                :class="[
+                  'border-b border-forena-50 transition-colors hover:bg-forena-50/30',
+                  idx === 0 ? 'bg-sky-50/40' : '',
+                ]"
+              >
+                <td class="py-3 pr-3">
+                  <span :class="['text-xs font-bold', idx === 0 ? 'text-sky-700' : 'text-forena-700']">
+                    {{ day.dayLabel }}
+                  </span>
+                </td>
+                <td class="py-3 pr-3">
+                  <span class="flex items-center gap-2">
+                    <span class="text-lg leading-none">{{ weatherEmoji(day.weatherLabel, day.precipitationProbability) }}</span>
+                    <span class="text-xs text-slate-700">{{ day.weatherLabel }}</span>
+                  </span>
+                </td>
+                <td class="py-3 pr-3 text-right tabular-nums">
+                  <span class="font-semibold text-forena-800">{{ day.maxTemp }}°</span>
+                  <span class="text-xs text-slate-400"> / {{ day.minTemp }}°</span>
+                </td>
+                <td class="py-3 pr-3">
+                  <div class="flex flex-col items-end gap-1">
+                    <span class="text-xs font-medium tabular-nums text-slate-700">{{ day.precipitationProbability ?? 0 }}%</span>
+                    <div class="h-1 w-16 overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        class="h-full rounded-full"
+                        :class="rainBarClass(day.precipitationProbability ?? 0)"
+                        :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
+                      />
+                    </div>
+                  </div>
+                </td>
+                <td class="py-3 text-right text-xs tabular-nums text-slate-600">
+                  {{ formatWindSpeed(day.windSpeed) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div class="space-y-3 p-4">
-        <article v-for="plan in monthlyRecommendations" :key="plan.id"
-          class="rounded-2xl border border-forena-100 bg-forena-50/30 p-4">
-          <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div class="space-y-2">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="rounded-full border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-bold text-forena-700">
-                  {{ plan.dateRange }}
-                </span>
-                <span class="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-bold text-sky-700">
-                  {{ plan.tradeLabel }}
-                </span>
+      <div v-else-if="forecastTab === 'month'" class="p-5">
+        <p class="mb-4 text-xs text-forena-500">
+          월간 요약은 기상 추세 기반 참고 정보입니다. 주차를 누르면 아래에 해당 주간 상세 예보가 바로 바뀝니다.
+        </p>
+
+        <div class="space-y-3">
+          <article
+            v-for="week in monthlyForecast"
+            :key="week.id"
+            role="button"
+            tabindex="0"
+            @click="selectMonthWeek(week.id)"
+            @keyup.enter="selectMonthWeek(week.id)"
+            class="relative cursor-pointer overflow-hidden rounded-xl border bg-white/95 p-4 transition"
+            :class="[
+              selectedMonthWeekId === week.id
+                ? week.risk === '주의'
+                  ? 'border-rose-300 bg-rose-50/60 shadow-md ring-2 ring-rose-100'
+                  : week.risk === '보통'
+                  ? 'border-amber-300 bg-amber-50/50 shadow-md ring-2 ring-amber-100'
+                  : 'border-forena-200 bg-sky-50/40 shadow-md ring-2 ring-sky-100'
+                : week.risk === '주의'
+                ? 'border-rose-200 bg-rose-50/40 shadow-sm hover:bg-rose-50/60'
+                : week.risk === '보통'
+                ? 'border-amber-200 bg-amber-50/30 hover:bg-amber-50/50'
+                : 'border-forena-100 bg-forena-50/30 hover:bg-forena-50/50',
+            ]"
+          >
+            <span
+              class="pointer-events-none absolute left-0 top-0 h-full w-1"
+              :class="[
+                week.risk === '주의'
+                  ? 'bg-gradient-to-b from-rose-400 to-rose-600'
+                  : week.risk === '보통'
+                  ? 'bg-gradient-to-b from-amber-300 to-amber-500'
+                  : 'bg-gradient-to-b from-emerald-300 to-emerald-500',
+              ]"
+            />
+
+            <div class="md:flex md:items-center md:justify-between">
+              <div class="flex items-center gap-4 pl-2">
+                <div class="w-16 shrink-0">
+                  <p class="text-xs font-bold text-forena-700">{{ week.label }}</p>
+                  <p class="mt-0.5 text-[10px] text-forena-500">{{ week.dateRange }}</p>
+                </div>
+                <div class="h-8 w-px bg-forena-100" />
+                <div class="flex items-center gap-2">
+                  <span class="text-2xl leading-none">{{ weatherEmoji(week.weatherSummary, week.precipitationProbability) }}</span>
+                  <div>
+                    <p class="text-sm font-semibold text-forena-900">{{ week.weatherSummary }}</p>
+                    <p class="mt-0.5 tabular-nums text-xs text-slate-500">
+                      {{ week.maxTemp }}°C / {{ week.minTemp }}°C &nbsp;·&nbsp; 강수 {{ week.precipitationProbability }}%
+                    </p>
+                  </div>
+                </div>
               </div>
-              <h3 class="text-base font-bold text-forena-900">{{ plan.task }}</h3>
-              <p class="text-sm leading-relaxed text-slate-700">{{ plan.reason }}</p>
-              <p class="text-sm leading-relaxed text-forena-700"><span class="font-bold">AI 추천:</span> {{ plan.suggestion }}</p>
+
+              <div class="mt-3 flex items-center justify-between gap-3 md:mt-0">
+                <div class="flex flex-col items-end gap-1">
+                  <span class="text-[10px] font-bold text-slate-500">강수</span>
+                  <div class="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      class="h-full rounded-full"
+                      :class="rainBarClass(week.precipitationProbability ?? 0)"
+                      :style="{ width: `${Math.min(100, week.precipitationProbability ?? 0)}%` }"
+                    />
+                  </div>
+                </div>
+                <span
+                  class="inline-flex w-fit items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
+                  :class="week.riskClass"
+                >
+                  <AlertTriangle v-if="week.risk === '주의'" class="h-3 w-3" />
+                  {{ week.risk }}
+                </span>
+                <ChevronRight
+                  class="h-4 w-4 transition"
+                  :class="selectedMonthWeekId === week.id ? 'rotate-90 text-forena-800' : 'text-forena-300'"
+                />
+              </div>
             </div>
 
-            <span class="inline-flex w-fit rounded-full px-3 py-1 text-xs font-bold" :class="
-              plan.level === '조정 필요' || plan.level === '재검토'
-                ? 'bg-rose-100 text-rose-800'
-                : plan.level === '시간 조정' || plan.level === '품질 주의'
-                  ? 'bg-amber-100 text-amber-800'
-                  : 'bg-emerald-100 text-emerald-800'
-            ">
-              {{ plan.level }}
-            </span>
-          </div>
-        </article>
+            <div
+              v-if="selectedMonthWeekId === week.id"
+              class="mt-4 overflow-hidden rounded-2xl border border-forena-100 bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-sm"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-2 border-b border-forena-100 px-5 py-3">
+                <div>
+                  <h3 class="text-sm font-bold text-forena-900">
+                    {{ week.label }} 상세 예보
+                  </h3>
+                  <p class="mt-0.5 text-[11px] text-forena-500">
+                    {{ week.dateRange }} · 선택한 주차의 일별 날씨입니다.
+                  </p>
+                </div>
+                <span class="rounded-full border border-forena-200 bg-white px-3 py-1 text-xs font-semibold text-forena-700">
+                  {{ week.weatherSummary }}
+                </span>
+              </div>
 
-        <div v-if="monthlyRecommendations.length === 0"
-          class="rounded-2xl border border-forena-100 bg-forena-50/30 px-4 py-5 text-sm text-slate-600">
-          업로드된 작업 계획이 없어서 추천할 1개월 계획 데이터가 없습니다.
+              <div class="p-4">
+                <div class="grid gap-2 md:grid-cols-7">
+                  <article
+                    v-for="day in week.days"
+                    :key="day.id"
+                    class="rounded-xl border border-forena-100 bg-white px-3 py-3 shadow-sm transition hover:-translate-y-0.5"
+                  >
+                    <div class="flex items-start justify-between gap-2">
+                      <div>
+                        <p class="text-sm font-bold text-forena-900">{{ day.shortDate }}</p>
+                        <p class="text-[11px] text-forena-500">{{ day.weekday }}</p>
+                      </div>
+                      <span class="text-xl leading-none">{{ weatherEmoji(day.weatherLabel, day.precipitationProbability) }}</span>
+                    </div>
+
+                    <p class="mt-3 text-xs font-semibold text-slate-700">{{ day.weatherLabel }}</p>
+
+                    <p class="mt-2 tabular-nums text-sm font-bold text-forena-800">
+                      {{ day.maxTemp }}°
+                      <span class="font-normal text-slate-400"> / {{ day.minTemp }}°</span>
+                    </p>
+
+                    <div class="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>강수 {{ day.precipitationProbability }}%</span>
+                      <span>{{ formatWindSpeed(day.windSpeed) }}</span>
+                    </div>
+
+                    <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-100">
+                      <div
+                        class="h-full rounded-full"
+                        :class="rainBarClass(day.precipitationProbability ?? 0)"
+                        :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
+                      />
+                    </div>
+                  </article>
+                </div>
+              </div>
+            </div>
+          </article>
         </div>
       </div>
     </div>
 
-    <div class="rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
-      <div class="flex items-center gap-2 border-b border-forena-100 pb-3">
-        <CheckCircle2 class="h-4 w-4 text-emerald-600" />
-        <h2 class="text-sm font-bold text-forena-900">현장 브리핑 포인트</h2>
-      </div>
-
-      <div class="mt-4 grid gap-3 lg:grid-cols-3">
-        <article v-for="item in briefingItems" :key="item.id"
-          class="rounded-xl border border-forena-100 bg-forena-50/30 p-4">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-sm font-bold text-forena-900">{{ item.title }}</h3>
-            <span class="rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(item.level)">
-              {{ item.level }}
-            </span>
-          </div>
-          <p class="mt-2 text-sm leading-relaxed text-slate-600">{{ item.detail }}</p>
-        </article>
-      </div>
-    </div>
   </div>
 </template>
