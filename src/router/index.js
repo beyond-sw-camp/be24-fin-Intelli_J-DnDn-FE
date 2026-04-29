@@ -78,7 +78,7 @@ const router = createRouter({
     {
       path: '/site/process-analysis',
       name: 'siteProcessAnalysis',
-      component: () => import('../views/misc/PlaceholderView.vue'),
+      component: () => import('../views/schedule/AnalysisView.vue'),
       meta: meta('공정 분석'),
     },
     {
