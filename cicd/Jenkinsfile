@@ -48,6 +48,7 @@ spec:
     stage('Prepare') {
       steps {
         script {
+          // #1
           env.TARGET_NAMESPACE = env.BRANCH_NAME == 'main' ? 'default' : 'test'
           env.IMAGE_TAG = env.BRANCH_NAME == 'main' ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
         }
