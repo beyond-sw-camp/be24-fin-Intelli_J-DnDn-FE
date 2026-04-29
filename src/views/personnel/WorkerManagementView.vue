@@ -10,14 +10,9 @@ import {
   Clock,
   UserCheck,
   Eye,
-  Download,
-  Send,
+  RefreshCw,
 } from 'lucide-vue-next'
-import {
-  getAffiliationKind,
-  affiliationKindBadgeClass,
-  formatAffiliationDisplay,
-} from '@/utils/workerAffiliation'
+import { getAffiliationKind, formatAffiliationDisplay } from '@/utils/workerAffiliation'
 
 const router = useRouter()
 
@@ -26,12 +21,10 @@ const WM = {
   pageTitle: '작업자 관리',
   kicker: '인사',
   heroDesc:
-    '본사 직영과 협력사(인력 등)소속 작업자를 동일 현장에서 관리할 수 있도록, 출입/근태 및 공수 현황을 구분별로 조회하고 보정합니다.',
+    '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
   sectionAttendance: '출입 / 근태 현황',
-  excelExport: '엑셀로 출력',
-  dataTransfer: '데이터 전송',
-  excelExportDemo: '엑셀 파일로 내보냅니다. (데모)',
-  dataTransferDemo: '데이터 전송 요청을 접수했습니다. (데모)',
+  dataLoad: '데이터 불러오기',
+  dataLoadDemo: '최신 근태 데이터를 불러왔습니다. (데모)',
 }
 
 /** 출입·근태 테이블 구역 */
@@ -54,6 +47,7 @@ const T = {
   colAffil: '소속',
   colTime: '출·퇴근',
   colRank: '직급',
+  colTag: '태그',
   colStatus: '상태',
   colDel: '삭제',
   empty: '조회된 근태 내역이 없습니다.',
@@ -80,18 +74,8 @@ const T = {
   statHint: '기준',
   colDetail: '상세보기',
   affilDetailPartner: '협력사 지정',
-  affilDetailAgency: '인력사무소 지정',
   affilPartnerAll: '전체 협력사',
-  affilAgencyAll: '전체 인력사무소',
-  kindDirect: '본사 직영',
-  kindPartner: '협력사',
-  kindAgency: '인력사무소',
-  kindBreakdown: '오늘 조회 대상 (구분별)',
   listFilteredStats: '목록 집계',
-  colKind: '구분',
-  badgeDirect: '직영',
-  badgePartner: '협력',
-  badgeAgency: '인력',
   countPeople: '명',
 }
 
@@ -106,12 +90,11 @@ function jobRankBadgeClass(rank) {
   return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
-/** 소속 구분 1단계: 본사 / 협력사 소속 / 인력사무소 소속 */
+/** 소속 구분 1단계: 본사 / 협력사 */
 const affiliationCategoryOptions = [
   { value: '', label: '전체' },
   { value: 'direct', label: '본사 소속 직원' },
   { value: 'partner', label: '협력사 소속' },
-  { value: 'agency', label: '인력사무소 소속' },
 ]
 
 /** 협력사 소속 선택 시 특정 협력사 (value는 데이터와 일치, label은 표시명만) */
@@ -121,21 +104,10 @@ const partnerDetailOptions = [
   { value: '협력사 (대한건설)', label: '대한건설' },
 ]
 
-/** 인력사무소 소속 선택 시 특정 인력사무소 */
-const agencyDetailOptions = [
-  { value: '', label: '전체 인력사무소' },
-  { value: '인력사무소', label: '일반' },
-  { value: '인력사무소 (한강인력)', label: '한강인력' },
-  { value: '인력사무소 (강남고용)', label: '강남고용' },
-]
-
 const editAffiliationOptions = [
   { value: '본사 소속', label: '본사 소속 직원' },
   { value: '협력사 (태양건설)', label: '태양건설' },
   { value: '협력사 (대한건설)', label: '대한건설' },
-  { value: '인력사무소', label: '일반' },
-  { value: '인력사무소 (한강인력)', label: '한강인력' },
-  { value: '인력사무소 (강남고용)', label: '강남고용' },
 ]
 
 /** 표시용: `번호 / 관계`, `번호 (관계)`(기존), 또는 번호만 */
@@ -162,9 +134,9 @@ function formatEmergencyDisplayCell(raw) {
 
 const filters = ref({
   date: new Date().toISOString().split('T')[0],
-  /** '' | 'direct' | 'partner' | 'agency' */
+  /** '' | 'direct' | 'partner' */
   affiliationCategory: '',
-  /** 협력사·인력사무소 세부 (해당 소속일 때만 사용) */
+  /** 협력사 세부 (해당 소속일 때만 사용) */
   affiliationDetail: '',
   searchName: '',
 })
@@ -181,6 +153,8 @@ const attendanceList = ref([
     emergency: '010-9999-1111 (배우자)',
     jobRank: JOB_RANK_WORKER,
     affiliationType: '협력사 (태양건설)',
+    primaryContractor: '태양건설',
+    affiliationSubLabel: '인력',
     site: '강남구 재건축 A공구',
     clockIn: '06:50',
     clockOut: '17:10',
@@ -201,7 +175,9 @@ const attendanceList = ref([
     phone: '010-8888-7777',
     emergency: '010-7777-6666 (자녀)',
     jobRank: JOB_RANK_WORKER,
-    affiliationType: '인력사무소 (한강인력)',
+    affiliationType: '협력사 (태양건설)',
+    primaryContractor: '태양건설',
+    affiliationSubLabel: '목수',
     site: '강남구 재건축 A공구',
     clockIn: '07:05',
     clockOut: '-',
@@ -222,6 +198,8 @@ const attendanceList = ref([
     emergency: '010-4444-3333 (형제)',
     jobRank: JOB_RANK_MANAGER,
     affiliationType: '본사 소속',
+    primaryContractor: '한화건설',
+    affiliationSubLabel: '직영',
     site: '판교 데이터센터',
     clockIn: '06:45',
     clockOut: '16:00',
@@ -242,6 +220,8 @@ const attendanceList = ref([
     emergency: '010-3333-2222 (부)',
     jobRank: JOB_RANK_CHIEF,
     affiliationType: '협력사 (대한건설)',
+    primaryContractor: '대한건설',
+    affiliationSubLabel: '목수',
     site: '강남구 재건축 A공구',
     clockIn: '07:00',
     clockOut: '17:00',
@@ -249,6 +229,24 @@ const attendanceList = ref([
     status: '퇴근 완료',
     isClosed: false,
     monthTotalMan: 12.0,
+    clockHistory: [],
+  },
+  {
+    id: 5,
+    name: '정미도',
+    phone: '010-1010-2020',
+    emergency: '010-2020-3030 / 배우자',
+    jobRank: JOB_RANK_WORKER,
+    affiliationType: '협력사 (대한건설)',
+    primaryContractor: '대한건설',
+    affiliationSubLabel: '인력',
+    site: '강남구 재건축 A공구',
+    clockIn: '-',
+    clockOut: '-',
+    manDays: 0,
+    status: '결근',
+    isClosed: false,
+    monthTotalMan: 9.0,
     clockHistory: [],
   },
 ])
@@ -265,38 +263,9 @@ const preKindAttendance = computed(() => {
   } else if (cat === 'partner') {
     result = result.filter((a) => getAffiliationKind(a.affiliationType) === 'partner')
     if (detail) result = result.filter((a) => a.affiliationType === detail)
-  } else if (cat === 'agency') {
-    result = result.filter((a) => getAffiliationKind(a.affiliationType) === 'agency')
-    if (detail) result = result.filter((a) => a.affiliationType === detail)
   }
 
   return result
-})
-
-/** 소속·검색 필터와 무관하게 당일(목록 전체) 기준 구분별 집계 — 조회 대상 카드 전용 */
-const kindBreakdown = computed(() => {
-  const rows = attendanceList.value
-  let direct = 0
-  let partner = 0
-  let agency = 0
-  let manDirect = 0
-  let manPartner = 0
-  let manAgency = 0
-  for (const r of rows) {
-    const k = getAffiliationKind(r.affiliationType)
-    const m = Number(r.manDays) || 0
-    if (k === 'direct') {
-      direct++
-      manDirect += m
-    } else if (k === 'agency') {
-      agency++
-      manAgency += m
-    } else {
-      partner++
-      manPartner += m
-    }
-  }
-  return { direct, partner, agency, manDirect, manPartner, manAgency }
 })
 
 const filteredAttendance = computed(() => preKindAttendance.value)
@@ -315,10 +284,29 @@ const statCounts = computed(() => countAttendanceStats(attendanceList.value))
 /** 테이블에 표시되는 행 기준 (필터·검색 반영) */
 const filteredStatCounts = computed(() => countAttendanceStats(filteredAttendance.value))
 
-function affiliationKindLabel(kind) {
-  if (kind === 'direct') return T.badgeDirect
-  if (kind === 'agency') return T.badgeAgency
-  return T.badgePartner
+/** 근무 시작 기준시각(이후 출근 = 지각) */
+const ATTENDANCE_ON_TIME_END = '07:00'
+
+function formatAffiliationRow(record) {
+  const kind = getAffiliationKind(record.affiliationType)
+  const sub = record.affiliationSubLabel || '인력'
+  if (kind === 'direct') {
+    const corp = record.primaryContractor || '한화건설'
+    return `${corp} / ${sub}`
+  }
+  if (kind === 'agency') {
+    const name = formatAffiliationDisplay(record.affiliationType)
+    return `${name} / 파견`
+  }
+  const company = formatAffiliationDisplay(record.affiliationType)
+  return `${company} / ${sub}`
+}
+
+function attendanceTagBadgeClass(tag) {
+  if (tag === '출근') return 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80'
+  if (tag === '지각') return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
+  if (tag === '조퇴') return 'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80'
+  return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
 }
 
 const deleteAttendance = (id, event) => {
@@ -341,6 +329,17 @@ function timeStrToMinutes(s) {
   const mi = Number(m[2])
   if (Number.isNaN(h) || Number.isNaN(mi)) return null
   return h * 60 + mi
+}
+
+function deriveAttendanceTag(record) {
+  const st = String(record.status ?? '')
+  const cin = record.clockIn
+  if (!cin || cin === '-') return '결근'
+  if (st.includes('조퇴')) return '조퇴'
+  const inM = timeStrToMinutes(cin)
+  const limitM = timeStrToMinutes(ATTENDANCE_ON_TIME_END)
+  if (inM != null && limitM != null && inM > limitM) return '지각'
+  return '출근'
 }
 
 function manDaysFromAttendanceTimes(clockIn, clockOut) {
@@ -425,15 +424,12 @@ const getStatusBadge = (status) => {
   if (status.includes('작업 중')) return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200/80'
   if (status.includes('조퇴') || status.includes('겸근'))
     return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
+  if (status.includes('결근')) return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
   return 'bg-slate-50 text-slate-600 ring-1 ring-slate-200/80'
 }
 
-function onExcelExport() {
-  window.alert(WM.excelExportDemo)
-}
-
-function onDataTransfer() {
-  window.alert(WM.dataTransferDemo)
+function onDataLoad() {
+  window.alert(WM.dataLoadDemo)
 }
 </script>
 
@@ -461,19 +457,11 @@ function onDataTransfer() {
         <div class="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-xl border border-forena-200 bg-white px-4 py-2.5 text-sm font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
-            @click="onExcelExport"
-          >
-            <Download class="h-4 w-4 text-flare-600" />
-            {{ WM.excelExport }}
-          </button>
-          <button
-            type="button"
             class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
-            @click="onDataTransfer"
+            @click="onDataLoad"
           >
-            <Send class="h-4 w-4" />
-            {{ WM.dataTransfer }}
+            <RefreshCw class="h-4 w-4" />
+            {{ WM.dataLoad }}
           </button>
         </div>
       </div>
@@ -547,65 +535,6 @@ function onDataTransfer() {
           </div>
         </div>
 
-        <div>
-          <h2 class="mb-3 text-sm font-bold text-forena-900">{{ T.kindBreakdown }}</h2>
-          <div
-            class="flex flex-nowrap gap-2 overflow-x-auto pb-0.5 sm:gap-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          >
-            <article
-              class="flex min-w-[31%] shrink-0 flex-1 items-center justify-center gap-x-1.5 rounded-xl border border-indigo-100/90 bg-gradient-to-b from-indigo-50/40 to-white/95 px-2 py-2.5 text-sm shadow-card ring-1 ring-indigo-100/50 sm:min-w-0 sm:gap-x-2 sm:px-3 sm:py-3"
-            >
-              <span class="shrink-0 font-bold uppercase tracking-wide text-indigo-700/90">
-                {{ T.kindDirect }}
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="min-w-0 truncate font-bold tabular-nums text-forena-900">
-                {{ kindBreakdown.direct
-                }}<span class="ml-0.5 font-semibold text-forena-600">{{ T.countPeople }}</span>
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="shrink-0 font-bold tabular-nums text-forena-700">
-                {{ kindBreakdown.manDirect.toFixed(1)
-                }}<span class="ml-0.5 font-bold text-forena-500">{{ T.manSuffix }}</span>
-              </span>
-            </article>
-            <article
-              class="flex min-w-[31%] shrink-0 flex-1 items-center justify-center gap-x-1.5 rounded-xl border border-amber-100/90 bg-gradient-to-b from-amber-50/35 to-white/95 px-2 py-2.5 text-sm shadow-card ring-1 ring-amber-100/55 sm:min-w-0 sm:gap-x-2 sm:px-3 sm:py-3"
-            >
-              <span class="shrink-0 font-bold uppercase tracking-wide text-amber-900/85">
-                {{ T.kindPartner }}
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="min-w-0 truncate font-bold tabular-nums text-forena-900">
-                {{ kindBreakdown.partner
-                }}<span class="ml-0.5 font-semibold text-forena-600">{{ T.countPeople }}</span>
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="shrink-0 font-bold tabular-nums text-forena-700">
-                {{ kindBreakdown.manPartner.toFixed(1)
-                }}<span class="ml-0.5 font-bold text-forena-500">{{ T.manSuffix }}</span>
-              </span>
-            </article>
-            <article
-              class="flex min-w-[31%] shrink-0 flex-1 items-center justify-center gap-x-1.5 rounded-xl border border-slate-200/90 bg-gradient-to-b from-slate-50/50 to-white/95 px-2 py-2.5 text-sm shadow-card ring-1 ring-slate-100/80 sm:min-w-0 sm:gap-x-2 sm:px-3 sm:py-3"
-            >
-              <span class="shrink-0 font-bold uppercase tracking-wide text-slate-700">
-                {{ T.kindAgency }}
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="min-w-0 truncate font-bold tabular-nums text-forena-900">
-                {{ kindBreakdown.agency
-                }}<span class="ml-0.5 font-semibold text-forena-600">{{ T.countPeople }}</span>
-              </span>
-              <span class="shrink-0 select-none font-bold leading-none text-forena-300" aria-hidden="true">·</span>
-              <span class="shrink-0 font-bold tabular-nums text-forena-700">
-                {{ kindBreakdown.manAgency.toFixed(1)
-                }}<span class="ml-0.5 font-bold text-forena-500">{{ T.manSuffix }}</span>
-              </span>
-            </article>
-          </div>
-        </div>
-
         <div
           class="rounded-2xl border border-forena-100/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
         >
@@ -637,17 +566,6 @@ function onDataTransfer() {
                 class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
               >
                 <option v-for="opt in partnerDetailOptions" :key="opt.value || 'p-all'" :value="opt.value">
-                  {{ opt.label }}
-                </option>
-              </select>
-            </div>
-            <div v-if="filters.affiliationCategory === 'agency'">
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.affilDetailAgency }}</label>
-              <select
-                v-model="filters.affiliationDetail"
-                class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              >
-                <option v-for="opt in agencyDetailOptions" :key="opt.value || 'a-all'" :value="opt.value">
                   {{ opt.label }}
                 </option>
               </select>
@@ -699,7 +617,7 @@ function onDataTransfer() {
                 <tr>
                   <th class="px-6 py-4 font-semibold">{{ T.colContact }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colEmergency }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colKind }}</th>
+                  <th class="px-6 py-4 font-semibold">{{ T.colTag }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colAffil }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colRank }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
@@ -731,14 +649,14 @@ function onDataTransfer() {
                   <td class="px-6 py-4">
                     <span
                       class="inline-flex rounded-lg px-2 py-0.5 text-[10px] font-bold"
-                      :class="affiliationKindBadgeClass(getAffiliationKind(record.affiliationType))"
+                      :class="attendanceTagBadgeClass(deriveAttendanceTag(record))"
                     >
-                      {{ affiliationKindLabel(getAffiliationKind(record.affiliationType)) }}
+                      {{ deriveAttendanceTag(record) }}
                     </span>
                   </td>
                   <td class="px-6 py-4">
                     <div class="text-xs font-semibold text-forena-800">
-                      {{ formatAffiliationDisplay(record.affiliationType) }}
+                      {{ formatAffiliationRow(record) }}
                     </div>
                   </td>
                   <td class="px-6 py-4">
