@@ -48,7 +48,6 @@ spec:
     stage('Prepare') {
       steps {
         script {
-          // BRANCH_NAME은 Multibranch에서만 보통 설정됨. 일반 Pipeline은 checkout만 main이고 BRANCH_NAME이 비어 있을 수 있음.
           def gitShort = (env.GIT_BRANCH ?: '')
             .replaceFirst(/^refs\/heads\//, '')
             .replaceFirst(/^origin\//, '')
