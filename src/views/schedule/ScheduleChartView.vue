@@ -143,6 +143,9 @@ const uploadForm = ref({ docType: '마스터 공정표', desc: '', fileName: '' 
 const showUploadSection = ref(false)
 const aiAnalyzing = ref(false)
 
+// AI 분석 결과 모달
+const aiAnalysisModalOpen = ref(false)
+
 // ======================================================
 // 헬퍼
 // ======================================================
@@ -379,7 +382,8 @@ function runAiAnalysis() {
       aiAnalyzed: true, reflectStatus: '검토 중', desc: uploadForm.value.desc,
     })
     uploadForm.value = { docType: '마스터 공정표', desc: '', fileName: '' }
-    alert('AI 분석이 완료되었습니다. 분석 결과를 검토하세요.')
+    showUploadSection.value = false
+    aiAnalysisModalOpen.value = true
   }, 1400)
 }
 function loadExistingDoc() { alert('기존 문서 불러오기 (데모)') }
@@ -594,11 +598,11 @@ onMounted(async () => {
           <Upload class="h-3.5 w-3.5 text-forena-400" /> 공정표 업로드
         </button>
 
-        <button :disabled="aiAnalyzing"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100 disabled:opacity-60"
-                @click="runAiAnalysis">
+        <button
+            class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
+            @click="aiAnalysisModalOpen = true">
           <BrainCircuit class="h-3.5 w-3.5 text-flare-600" />
-          {{ aiAnalyzing ? 'AI 분석 중…' : 'AI 분석 실행' }}
+          AI 분석 실행
         </button>
 
         <button v-if="!isConfirmed" :disabled="!canConfirm"
@@ -876,7 +880,7 @@ onMounted(async () => {
               <div class="flex h-7 items-center border-b border-forena-200 bg-forena-50/60 px-4 text-[10px] font-bold text-forena-500">공정명 / 공종</div>
               <template v-for="(grp, gi) in groupedTasks" :key="grp.group">
                 <!-- 공종 그룹 헤더 -->
-                <div class="flex h-7 cursor-pointer items-center justify-between border-b border-forena-100 bg-forena-100 px-3 text-[11px] font-bold text-forena-700"
+                <div class="flex h-7 cursor-pointer items-center justify-between border-b border-forena-100 bg-forena-100/70 px-3 text-[11px] font-bold text-forena-700"
                      @click="groupOpen[grp.group] = !groupOpen[grp.group]">
                   <div class="flex items-center gap-1">
                     <ChevronDown v-if="groupOpen[grp.group]" class="h-3.5 w-3.5" />
@@ -931,7 +935,7 @@ onMounted(async () => {
                 <!-- 행 -->
                 <template v-for="(grp, gi) in groupedTasks" :key="`grow-${grp.group}`">
                   <!-- 그룹 헤더 라인 (왼쪽 헤더 높이와 맞춤) -->
-                  <div class="h-7 border-b border-forena-100 bg-forena-100"></div>
+                  <div class="h-7 border-b border-forena-100 bg-forena-100/70"></div>
                   <template v-if="groupOpen[grp.group]">
                     <div v-for="t in grp.items" :key="`row-${t.id}`"
                          class="relative flex h-11 border-b border-forena-50"
@@ -1217,137 +1221,130 @@ onMounted(async () => {
     </div>
 
     <!-- ============================================================ -->
-    <!-- 5. 필터 + AI 분석 결과 검토 테이블                              -->
+    <!-- 5. AI 분석 결과 — 검토 테이블 모달                             -->
     <!-- ============================================================ -->
-    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-forena-100 px-5 py-3">
-        <div class="flex items-center gap-2">
-          <BrainCircuit class="h-4 w-4 text-flare-600" />
-          <h2 class="text-sm font-bold text-forena-900">AI 분석 결과 — 검토 테이블</h2>
+    <div v-if="aiAnalysisModalOpen"
+         class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+         @click.self="aiAnalysisModalOpen = false">
+      <div class="flex w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+           style="max-height: 90vh">
+
+        <!-- 모달 헤더 -->
+        <div class="flex flex-wrap items-center gap-3 border-b border-forena-100 px-6 py-4">
+          <BrainCircuit class="h-4 w-4 text-flare-600 shrink-0" />
+          <h3 class="text-sm font-bold text-forena-900">AI 분석 결과 — 검토 테이블</h3>
           <span class="rounded-md bg-forena-100 px-1.5 py-0.5 text-[10px] font-bold text-forena-600">{{ filteredTasks.length }}건</span>
           <span v-if="isConfirmed" class="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-200">확정 — 직접 수정 불가</span>
-        </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <!-- 검색 -->
-          <div class="relative">
-            <Search class="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-forena-400" />
-            <input v-model="searchKey" type="text" placeholder="작업/공종 검색"
-                   class="w-44 rounded-lg border border-forena-200 bg-white pl-7 pr-2 py-1.5 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <select v-model="filterGroup" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
-            <option value="">전체 공종</option>
-            <option v-for="g in [...new Set(aiTasks.map(t=>t.group))]" :key="g">{{ g }}</option>
-          </select>
-          <select v-model="filterReview" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
-            <option value="">전체 상태</option>
-            <option>미검토</option><option>검토 중</option><option>승인</option><option>수정 요청</option><option>제외</option>
-          </select>
-          <select v-model="filterCp" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
-            <option value="">CP 전체</option>
-            <option value="cp">CP만</option>
-            <option value="noncp">CP 제외</option>
-          </select>
-
-          <div v-if="canEdit && !isConfirmed" class="flex gap-1">
-            <button @click="bulkApprove"
-                    class="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100">
-              일괄 승인
-            </button>
-            <button @click="bulkExclude"
-                    class="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100">
-              일괄 제외
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div class="overflow-x-auto">
-        <table class="w-full min-w-[1100px] text-xs">
-          <thead class="bg-forena-50/60 text-[10px] font-bold uppercase text-forena-500">
-          <tr>
-            <th class="w-8 px-2 py-2"><input type="checkbox" disabled /></th>
-            <th class="px-3 py-2 text-left">공종</th>
-            <th class="px-3 py-2 text-left">작업명</th>
-            <th class="px-3 py-2 text-left">시작일</th>
-            <th class="px-3 py-2 text-left">종료일</th>
-            <th class="px-3 py-2 text-right">기간</th>
-            <th class="px-3 py-2 text-left">선행</th>
-            <th class="px-3 py-2 text-left">후속</th>
-            <th class="px-3 py-2 text-center">CP</th>
-            <th class="px-3 py-2 text-right">보할</th>
-            <th class="px-3 py-2 text-right">신뢰도</th>
-            <th class="px-3 py-2 text-left">상태</th>
-            <th class="px-3 py-2"></th>
-          </tr>
-          </thead>
-          <tbody class="divide-y divide-forena-50">
-          <tr v-for="t in filteredTasks" :key="t.id"
-              class="cursor-pointer transition hover:bg-forena-50/40"
-              :class="selectedTaskId === t.id ? 'bg-flare-50/50' : ''"
-              @click="selectedTaskId = t.id">
-            <td class="px-2 py-2" @click.stop>
-              <input type="checkbox" v-model="t.checked" :disabled="isConfirmed" />
-            </td>
-            <td class="px-3 py-2">
-              <p class="font-semibold text-forena-700">{{ t.group }}</p>
-              <p class="text-[10px] text-slate-400">{{ t.sub }}</p>
-            </td>
-            <td class="px-3 py-2 font-semibold text-forena-900">{{ t.name }}</td>
-            <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.start }}</td>
-            <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.end }}</td>
-            <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ t.durDays }}일</td>
-            <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.prev || '-' }}</td>
-            <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.next || '-' }}</td>
-            <td class="px-3 py-2 text-center">
-              <span v-if="t.isCritical" class="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold text-rose-700">CP</span>
-              <span v-else class="text-slate-300">—</span>
-            </td>
-            <td class="px-3 py-2 text-right tabular-nums font-bold text-forena-700">{{ t.weight }}%</td>
-            <td class="px-3 py-2 text-right tabular-nums font-bold" :class="confidenceClass(t.confidence)">{{ t.confidence }}%</td>
-            <td class="px-3 py-2">
-              <span class="rounded-md px-1.5 py-0.5 text-[10px] font-bold" :class="reviewStatusClass(t.reviewStatus)">{{ t.reviewStatus }}</span>
-            </td>
-            <td class="px-3 py-2 text-right" @click.stop>
-              <button v-if="canEdit" @click="openEdit(t)"
-                      class="rounded p-1 text-forena-500 hover:bg-forena-100"
-                      :title="isConfirmed ? '변경 요청' : '수정'">
-                <Pencil class="h-3.5 w-3.5" />
+          <!-- 필터 영역 -->
+          <div class="ml-auto flex flex-wrap items-center gap-2">
+            <div class="relative">
+              <Search class="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-forena-400" />
+              <input v-model="searchKey" type="text" placeholder="작업/공종 검색"
+                     class="w-40 rounded-lg border border-forena-200 bg-white pl-7 pr-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+            </div>
+            <select v-model="filterGroup" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
+              <option value="">전체 공종</option>
+              <option v-for="g in [...new Set(aiTasks.map(t=>t.group))]" :key="g">{{ g }}</option>
+            </select>
+            <select v-model="filterReview" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
+              <option value="">전체 상태</option>
+              <option>미검토</option><option>검토 중</option><option>승인</option><option>수정 요청</option><option>제외</option>
+            </select>
+            <select v-model="filterCp" class="rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-xs outline-none">
+              <option value="">CP 전체</option>
+              <option value="cp">CP만</option>
+              <option value="noncp">CP 제외</option>
+            </select>
+            <div v-if="canEdit && !isConfirmed" class="flex gap-1">
+              <button @click="bulkApprove"
+                      class="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-bold text-emerald-700 hover:bg-emerald-100">
+                일괄 승인
               </button>
-            </td>
-          </tr>
-          <tr v-if="!filteredTasks.length">
-            <td colspan="13" class="px-3 py-12 text-center text-sm text-slate-400">
-              조회된 작업이 없습니다.
-            </td>
-          </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+              <button @click="bulkExclude"
+                      class="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-bold text-rose-700 hover:bg-rose-100">
+                일괄 제외
+              </button>
+            </div>
+            <button @click="aiAnalysisModalOpen = false" class="ml-1 rounded-lg p-1 hover:bg-forena-50">
+              <X class="h-4 w-4 text-slate-400 hover:text-forena-700" />
+            </button>
+          </div>
+        </div>
 
-    <!-- ============================================================ -->
-    <!-- 6. 공종별 진척률                                              -->
-    <!-- ============================================================ -->
-    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
-      <div class="flex items-center gap-2 border-b border-forena-100 pb-3">
-        <BarChart3 class="h-4 w-4 text-flare-600" />
-        <h2 class="text-sm font-bold text-forena-900">공종별 진척률 (계획 vs 실제)</h2>
-      </div>
-      <div class="mt-4 space-y-3">
-        <div v-for="g in groupProgress" :key="g.group">
-          <div class="flex items-center justify-between text-xs mb-1.5">
-            <span class="font-bold text-forena-800">{{ g.group }}</span>
-            <span class="tabular-nums text-slate-500">
-              계획 <strong class="text-forena-700">{{ g.plan }}%</strong> ·
-              실제 <strong class="text-rose-600">{{ g.actual }}%</strong> ·
-              차이 <strong :class="g.diff < 0 ? 'text-rose-600' : 'text-emerald-600'">{{ g.diff > 0 ? '+' : '' }}{{ g.diff }}%</strong>
-            </span>
-          </div>
-          <div class="relative h-2.5 overflow-hidden rounded-full bg-forena-100">
-            <div class="absolute inset-y-0 left-0 rounded-full bg-forena-400" :style="{ width: g.plan + '%' }" />
-            <div class="absolute inset-y-0 left-0 rounded-full bg-rose-500/80" :style="{ width: g.actual + '%' }" />
-          </div>
+        <!-- 테이블 본문 (스크롤) -->
+        <div class="overflow-auto flex-1">
+          <table class="w-full min-w-[1100px] text-xs">
+            <thead class="sticky top-0 bg-forena-50/95 text-[10px] font-bold uppercase text-forena-500 shadow-sm">
+            <tr>
+              <th class="w-8 px-2 py-2.5"><input type="checkbox" disabled /></th>
+              <th class="px-3 py-2.5 text-left">공종</th>
+              <th class="px-3 py-2.5 text-left">작업명</th>
+              <th class="px-3 py-2.5 text-left">시작일</th>
+              <th class="px-3 py-2.5 text-left">종료일</th>
+              <th class="px-3 py-2.5 text-right">기간</th>
+              <th class="px-3 py-2.5 text-left">선행</th>
+              <th class="px-3 py-2.5 text-left">후속</th>
+              <th class="px-3 py-2.5 text-center">CP</th>
+              <th class="px-3 py-2.5 text-right">보할</th>
+              <th class="px-3 py-2.5 text-right">신뢰도</th>
+              <th class="px-3 py-2.5 text-left">상태</th>
+              <th class="px-3 py-2.5"></th>
+            </tr>
+            </thead>
+            <tbody class="divide-y divide-forena-50">
+            <tr v-for="t in filteredTasks" :key="t.id"
+                class="cursor-pointer transition hover:bg-forena-50/40"
+                :class="selectedTaskId === t.id ? 'bg-flare-50/50' : ''"
+                @click="openEdit(t)">
+              <td class="px-2 py-2" @click.stop>
+                <input type="checkbox" v-model="t.checked" :disabled="isConfirmed" />
+              </td>
+              <td class="px-3 py-2">
+                <p class="font-semibold text-forena-700">{{ t.group }}</p>
+                <p class="text-[10px] text-slate-400">{{ t.sub }}</p>
+              </td>
+              <td class="px-3 py-2 font-semibold text-forena-900">{{ t.name }}</td>
+              <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.start }}</td>
+              <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.end }}</td>
+              <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ t.durDays }}일</td>
+              <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.prev || '-' }}</td>
+              <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.next || '-' }}</td>
+              <td class="px-3 py-2 text-center">
+                <span v-if="t.isCritical" class="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold text-rose-700">CP</span>
+                <span v-else class="text-slate-300">—</span>
+              </td>
+              <td class="px-3 py-2 text-right tabular-nums font-bold text-forena-700">{{ t.weight }}%</td>
+              <td class="px-3 py-2 text-right tabular-nums font-bold" :class="confidenceClass(t.confidence)">{{ t.confidence }}%</td>
+              <td class="px-3 py-2">
+                <span class="rounded-md px-1.5 py-0.5 text-[10px] font-bold" :class="reviewStatusClass(t.reviewStatus)">{{ t.reviewStatus }}</span>
+              </td>
+              <td class="px-3 py-2 text-right" @click.stop>
+                <button v-if="canEdit" @click="openEdit(t)"
+                        class="rounded p-1 text-forena-500 hover:bg-forena-100"
+                        :title="isConfirmed ? '변경 요청' : '수정'">
+                  <Pencil class="h-3.5 w-3.5" />
+                </button>
+              </td>
+            </tr>
+            <tr v-if="!filteredTasks.length">
+              <td colspan="13" class="px-3 py-12 text-center text-sm text-slate-400">
+                조회된 작업이 없습니다.
+              </td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 모달 푸터 -->
+        <div class="flex items-center justify-between border-t border-forena-100 px-6 py-3">
+          <p class="text-[11px] text-forena-400">
+            전체 {{ aiTasks.length }}건 중 {{ filteredTasks.length }}건 표시
+          </p>
+          <button @click="aiAnalysisModalOpen = false"
+                  class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50">
+            닫기
+          </button>
         </div>
       </div>
     </div>
@@ -1397,29 +1394,55 @@ onMounted(async () => {
         </table>
       </div>
 
-      <!-- 변경 이력 -->
-      <div class="lg:col-span-5 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-        <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-3">
-          <History class="h-4 w-4 text-flare-600" />
-          <h2 class="text-sm font-bold text-forena-900">변경 이력</h2>
-          <span class="ml-auto text-[10px] text-forena-400">최종 확정자: {{ projectInfo.finalApprover }}</span>
+      <!-- ============================================================ -->
+      <!-- 6. 공종별 진척률                                              -->
+      <!-- ============================================================ -->
+      <div class="lg:col-span-5 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
+        <div class="flex items-center gap-2 border-b border-forena-100 pb-3">
+          <BarChart3 class="h-4 w-4 text-flare-600" />
+          <h2 class="text-sm font-bold text-forena-900">공종별 진척률 (계획 vs 실제)</h2>
         </div>
-        <ul class="divide-y divide-forena-50 max-h-72 overflow-y-auto">
-          <li v-for="log in changeLog" :key="log.id" class="px-4 py-2.5 text-xs">
-            <div class="flex items-center gap-2">
+        <div class="mt-4 space-y-3">
+          <div v-for="g in groupProgress" :key="g.group">
+            <div class="flex items-center justify-between text-xs mb-1.5">
+              <span class="font-bold text-forena-800">{{ g.group }}</span>
+              <span class="tabular-nums text-slate-500">
+              계획 <strong class="text-forena-700">{{ g.plan }}%</strong> ·
+              실제 <strong class="text-rose-600">{{ g.actual }}%</strong> ·
+              차이 <strong :class="g.diff < 0 ? 'text-rose-600' : 'text-emerald-600'">{{ g.diff > 0 ? '+' : '' }}{{ g.diff }}%</strong>
+            </span>
+            </div>
+            <div class="relative h-2.5 overflow-hidden rounded-full bg-forena-100">
+              <div class="absolute inset-y-0 left-0 rounded-full bg-forena-400" :style="{ width: g.plan + '%' }" />
+              <div class="absolute inset-y-0 left-0 rounded-full bg-rose-500/80" :style="{ width: g.actual + '%' }" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 변경 이력 -->
+    <div class="lg:col-span-5 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+      <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-3">
+        <History class="h-4 w-4 text-flare-600" />
+        <h2 class="text-sm font-bold text-forena-900">변경 이력</h2>
+        <span class="ml-auto text-[10px] text-forena-400">최종 확정자: {{ projectInfo.finalApprover }}</span>
+      </div>
+      <ul class="divide-y divide-forena-50 max-h-72 overflow-y-auto">
+        <li v-for="log in changeLog" :key="log.id" class="px-4 py-2.5 text-xs">
+          <div class="flex items-center gap-2">
               <span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold"
                     :class="log.action === '승인' || log.action === '기준 공정표 확정' ? 'bg-emerald-50 text-emerald-700'
                       : log.action === '반려' ? 'bg-rose-50 text-rose-700'
                       : 'bg-slate-100 text-slate-500'">
                 {{ log.action }}
               </span>
-              <span class="min-w-0 flex-1 truncate font-semibold text-forena-800">{{ log.target }}</span>
-              <span class="shrink-0 tabular-nums text-forena-400">{{ log.at }}</span>
-            </div>
-            <p class="mt-1 text-[11px] text-slate-500">{{ log.who }} · {{ log.detail }}</p>
-          </li>
-        </ul>
-      </div>
+            <span class="min-w-0 flex-1 truncate font-semibold text-forena-800">{{ log.target }}</span>
+            <span class="shrink-0 tabular-nums text-forena-400">{{ log.at }}</span>
+          </div>
+          <p class="mt-1 text-[11px] text-slate-500">{{ log.who }} · {{ log.detail }}</p>
+        </li>
+      </ul>
     </div>
 
     <!-- ============================================================ -->
