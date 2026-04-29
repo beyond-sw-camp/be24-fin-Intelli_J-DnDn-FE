@@ -1,962 +1,775 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
-import {
-  CalendarRange,
-  LayoutDashboard,
-  Upload,
-  FileText,
-  Plus,
-  BarChart3,
-  MapPin,
-} from 'lucide-vue-next'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { Upload, BrainCircuit, X, Users, Wrench, MapPin, ChevronDown, ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarPlus } from 'lucide-vue-next'
+import { workPlans, yearlyWorkPlans } from '@/data/mockData'
+import { planStore } from '@/data/planStore'
 
-const T = {
-  kicker: '일정',
-  title: '작업 계획',
-  desc: '공종별 작업 계획서를 업로드하면 문서에서 일정을 추출하여 공종별 작업 계획 일정을 확인합니다. TXT·CSV는 날짜 파싱을 지원하며, 그 외 파일은 데모용 샘플 기간을 생성합니다.',
-  tradeReports: '공종별 보고서',
-  uploadCta: '보고서 업로드',
-  uploadHint: 'PDF, Office, CSV, TXT',
-  addTradeSection: '공종(공사) 추가',
-  newTradePh: '새 공종 명을 입력하세요',
-  extractedLabel: '추출된 작업 일정',
-  noExtract:
-    '아직 업로드된 보고서가 없습니다.',
-  weekNoBars:
-    '선택한 주차에 표시할 일정이 없습니다.',
-  monthPick: '기준 월',
-  sourceDoc: '출처 문서',
-  demoNote:
-    '이미지·PDF 등은 서버 OCR 없이 날짜를 읽지 못하므로, 파일명 기반 샘플 계획이 생성됩니다.',
-  sectionSchedule: '공종별 작업 계획 일정',
-  tabMonth: '월간',
-  tabWeek: '주간',
-  weekOfMonth: '주차',
-  legendPlan: '계획',
-  legendActual: '실적',
-  colTask: '공정명',
-  colType: '공종',
-  countUnit: '건',
-  secProgress: '공정 진행 상황',
-  progressViz: '공종별 진행률',
-  progressVizSub: '통합 작업 계획 기준 공정별 진행 지표를 요약합니다.',
-  overall: '전체 공사 진행률',
+const plans = ref(workPlans.map(p => ({ ...p })))
+const annualPlans = ref(yearlyWorkPlans.map(p => ({ ...p })))
+const viewMode = ref('weekly')
+const filterTrade = ref('')
+const filterStatus = ref('')
+const selectedPlan = ref(null)
+const uploadFileName = ref('')
+const uploadCategory = ref('')
+const trades = ['형틀','전기','방수','골조','설비','철근']
+const statuses = ['계획','검토 중','확정','진행 중']
+
+// 업로드 메뉴 상태
+const showUploadMenu = ref(false)
+const uploadMenuRef = ref(null)
+const yearlyInputRef = ref(null)
+const weeklyInputRef = ref(null)
+const monthlyInputRef = ref(null)
+
+// 연장 정보 헬퍼 (planStore 기반)
+function extOf(p) {
+  return planStore.extensions[p.id] ?? null
+}
+// 화면에 보일 "최종 종료일" — 연장이 있으면 연장된 종료일, 없으면 원래 종료일
+function effectiveEnd(p) {
+  return extOf(p)?.extendedEnd ?? p.end
 }
 
-const planViewYear = ref(2025)
-const planViewMonth = ref(10)
-
-const DEMO_Y = 2025
-const DEMO_M = 10
-
-let tradeIdSeq = 1
-function nextTradeId() {
-  return `trade-${Date.now().toString(36)}-${tradeIdSeq++}`
-}
-
-const defaultTrades = [
-  { id: 'steel', label: '건축 / 철근' },
-  { id: 'pile', label: '파일 공사' },
-  { id: 'earth', label: '토목 공사' },
-  { id: 'tunnel', label: '톰링 / 가오사' },
-  { id: 'elec', label: '전기 공사' },
-]
-
-const categoryChips = ['전체', '골조', '내장', '설비']
-const activeCategoryChip = ref('전체')
-const tradeChipMap = ref({
-  steel: '골조',
-  pile: '골조',
-  earth: '내장',
-  tunnel: '내장',
-  elec: '설비',
+const filtered = computed(() => {
+  let r = plans.value
+  if (filterTrade.value)  r = r.filter(p => p.trade === filterTrade.value)
+  if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
+  return r
 })
 
-const overallProgress = ref(62)
-const progressByCategory = ref([
-  { name: '골조', pct: 74 },
-  { name: '기초', pct: 68 },
-  { name: '전기', pct: 52 },
-  { name: '마감', pct: 41 },
-])
-
-/** @param {string} task @param {number} d0 @param {number} d1 @param {[number, number] | null} actual */
-function demoSeg(task, d0, d1, actual = null) {
-  const o = {
-    task,
-    plan: { y: DEMO_Y, m: DEMO_M, d0, d1 },
-    actual: null,
-  }
-  if (actual) {
-    o.actual = { y: DEMO_Y, m: DEMO_M, d0: actual[0], d1: actual[1] }
-  }
-  return o
-}
-
-const exampleUploadsByTrade = {
-  steel: [
-    {
-      fileName: '샘플_철근_승라브_3F.pdf',
-      segments: [demoSeg('본동 3축 슬라브 철근 박・고정', 3, 12, [4, 13])],
-    },
-  ],
-  pile: [
-    {
-      fileName: '샘플_A2단지_파일계획.xlsx',
-      segments: [demoSeg('A-2 구간 파일 거제', 6, 15, [7, 15])],
-    },
-  ],
-  earth: [
-    {
-      fileName: '샘플_구간_깨다_토추.pdf',
-      segments: [
-        demoSeg('뺄엔 구간 깨다 및 사몰', 1, 9, [2, 10]),
-        demoSeg('지해 방수 공', 8, 17, [9, 16]),
-      ],
-    },
-  ],
-  tunnel: [
-    {
-      fileName: '샘플_EV_PIT_톤링.pdf',
-      segments: [
-        demoSeg('Joint Pipe EV PIT', 10, 22, [11, 23]),
-        demoSeg('톤넛 내 배관 시공', 18, 28, [19, 27]),
-      ],
-    },
-  ],
-  elec: [
-    {
-      fileName: '샘플_전기_라이저_설선.csv',
-      segments: [demoSeg('전기 라이저 베이스 및 동선', 12, 24, [13, 24])],
-    },
-  ],
-}
-
-const tradeSites = ref([...defaultTrades])
-const newTradeName = ref('')
-
-const tradeUploads = ref(
-  Object.fromEntries(
-    defaultTrades.map((t) => [
-      t.id,
-      structuredClone(exampleUploadsByTrade[t.id] ?? []),
-    ]),
-  ),
-)
-
-/** @type {Record<string, HTMLInputElement | undefined>} */
-const tradeFileInputs = {}
-
-function setTradeFileInput(tradeId, el) {
-  if (el) tradeFileInputs[tradeId] = /** @type {HTMLInputElement} */ (el)
-  else delete tradeFileInputs[tradeId]
-}
-
-function openTradeFilePicker(tradeId) {
-  tradeFileInputs[tradeId]?.click()
-}
-
-function addTradeSection() {
-  const name = newTradeName.value.trim()
-  if (!name) return
-  const id = nextTradeId()
-  tradeSites.value = [...tradeSites.value, { id, label: name }]
-  tradeUploads.value = { ...tradeUploads.value, [id]: [] }
-  tradeChipMap.value = {
-    ...tradeChipMap.value,
-    [id]: activeCategoryChip.value === '전체' ? '골조' : activeCategoryChip.value,
-  }
-  newTradeName.value = ''
-}
-
-const scheduleTab = ref('month')
-const planWeekIndex = ref(0)
-
-watch([planViewYear, planViewMonth], () => {
-  planWeekIndex.value = 0
+const annualFiltered = computed(() => {
+  let r = annualPlans.value
+  if (filterTrade.value)  r = r.filter(p => p.trade === filterTrade.value)
+  if (filterStatus.value) r = r.filter(p => p.status === filterStatus.value)
+  return r
 })
 
-function weekChunksOfMonth(y, m) {
-  const last = new Date(y, m, 0).getDate()
-  const chunks = []
-  for (let start = 1; start <= last; start += 7) {
-    const end = Math.min(start + 6, last)
-    chunks.push({
-      start,
-      end,
-      label: `${start}~${end}일`,
-    })
-  }
-  return chunks
+const statusClass = (s) => {
+  if (s === '확정')   return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+  if (s === '진행 중') return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'
+  if (s === '검토 중') return 'bg-sky-50 text-sky-700 ring-1 ring-sky-200'
+  return 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'
 }
 
-const monthWeekChunks = computed(() =>
-  weekChunksOfMonth(planViewYear.value, planViewMonth.value),
-)
-
-watch(monthWeekChunks, (chunks) => {
-  if (planWeekIndex.value >= chunks.length) planWeekIndex.value = Math.max(0, chunks.length - 1)
-})
-
-const ganttTimeline = computed(() => {
-  const y = planViewYear.value
-  const mo = planViewMonth.value
-  const last = new Date(y, mo, 0).getDate()
-  if (scheduleTab.value === 'month') {
+// =========================
+// 주간 캘린더
+// =========================
+const weekDays = computed(() => {
+  const today = new Date()
+  const start = new Date(today)
+  start.setDate(today.getDate() - 3)
+  const labels = ['일','월','화','수','목','금','토']
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start); d.setDate(start.getDate() + i)
+    const isToday = d.toDateString() === today.toDateString()
+    const dow = d.getDay()
     return {
-      mode: 'month',
-      count: last,
-      labels: Array.from({ length: last }, (_, i) => String(i + 1)),
-      y,
-      m: mo,
-      chunkStart: 1,
-      chunkEnd: last,
-      chunkLabel: '',
+      label: labels[dow],
+      date: d.toISOString().slice(0, 10),
+      day: d.getDate(),
+      month: d.getMonth() + 1,
+      isToday,
+      isWeekend: dow === 0 || dow === 6,
     }
-  }
-  const chunks = weekChunksOfMonth(y, mo)
-  const idx = Math.min(planWeekIndex.value, Math.max(0, chunks.length - 1))
-  const ch = chunks[idx] ?? { start: 1, end: last, label: '' }
-  const span = ch.end - ch.start + 1
-  return {
-    mode: 'week',
-    count: span,
-    labels: Array.from({ length: span }, (_, i) => String(ch.start + i)),
-    y,
-    m: mo,
-    chunkStart: ch.start,
-    chunkEnd: ch.end,
-    chunkLabel: ch.label,
-  }
-})
-
-const DATE_RE = /\b(\d{4})[./-](\d{1,2})[./-](\d{1,2})\b/g
-
-function parseDatesFromText(text) {
-  const dates = []
-  let m
-  const re = new RegExp(DATE_RE.source, 'g')
-  while ((m = re.exec(text)) !== null) {
-    const y = Number(m[1])
-    const mo = Number(m[2])
-    const d = Number(m[3])
-    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) dates.push({ y, m: mo, d })
-  }
-  dates.sort((a, b) => (a.y !== b.y ? a.y - b.y : a.m !== b.m ? a.m - b.m : a.d - b.d))
-  return dates
-}
-
-function firstLineTask(text, fallback) {
-  const line = text.split(/\r?\n/).find((l) => l.trim().length > 0)
-  if (!line) return fallback
-  const cleaned = line.replace(DATE_RE, '').replace(/[,;]/g, ' ').trim()
-  return cleaned.slice(0, 80) || fallback
-}
-
-function parseFilenameRange(name) {
-  const re = /(\d{4})[./-](\d{1,2})[./-](\d{1,2})/g
-  const found = []
-  let m
-  while ((m = re.exec(name)) !== null) {
-    found.push({
-      y: Number(m[1]),
-      m: Number(m[2]),
-      d: Number(m[3]),
-    })
-  }
-  if (found.length >= 2) {
-    const a = found[0]
-    const b = found[found.length - 1]
-    return { a, b }
-  }
-  return null
-}
-
-function hashStr(s) {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return Math.abs(h)
-}
-
-function mockSegmentFromFile(fileName, tradeLabel) {
-  const y = planViewYear.value
-  const m = planViewMonth.value
-  const lastDay = new Date(y, m, 0).getDate()
-  const fnRange = parseFilenameRange(fileName)
-  if (fnRange) {
-    const d0 = fnRange.a.m === m && fnRange.a.y === y ? fnRange.a.d : Math.min(fnRange.a.d, lastDay)
-    const d1 = fnRange.b.m === m && fnRange.b.y === y ? fnRange.b.d : Math.min(fnRange.b.d, lastDay)
-    if (fnRange.a.y !== y || fnRange.a.m !== m) {
-      const span = Math.min(10, lastDay - 2)
-      const start = 2 + (hashStr(fileName) % Math.max(1, lastDay - span - 2))
-      return {
-        task: fileName.replace(/\.[^.]+$/, ''),
-        plan: { y, m, d0: start, d1: Math.min(lastDay, start + span) },
-        actual: null,
-      }
-    }
-    return {
-      task: fileName.replace(/\.[^.]+$/, ''),
-      plan: {
-        y,
-        m,
-        d0: Math.max(1, Math.min(d0, lastDay)),
-        d1: Math.max(1, Math.min(d1, lastDay)),
-      },
-      actual:
-        d1 > d0 ? { y, m, d0: Math.min(lastDay, d0 + 1), d1: Math.min(lastDay, d1 + 1) } : null,
-    }
-  }
-  const h = hashStr(fileName)
-  const len = 4 + (h % 8)
-  const start = 1 + (h % Math.max(1, lastDay - len))
-  const d0 = start
-  const d1 = Math.min(lastDay, start + len - 1)
-  const ad0 = Math.min(lastDay, d0 + (h % 2))
-  const ad1 = Math.min(lastDay, d1 + (h % 3))
-  return {
-    task: `${tradeLabel} 계획 (${fileName.replace(/\.[^.]+$/, '')})`,
-    plan: { y, m, d0, d1 },
-    actual: ad1 >= ad0 ? { y, m, d0: ad0, d1: ad1 } : null,
-  }
-}
-
-function parseCsvRows(text) {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim())
-  if (lines.length < 2) return []
-  const header = lines[0].split(/[,;\t]/).map((c) => c.trim())
-  const idx = (nameVariants) => {
-    const lower = header.map((h) => h.toLowerCase())
-    for (const v of nameVariants) {
-      const i = lower.indexOf(v.toLowerCase())
-      if (i >= 0) return i
-    }
-    return -1
-  }
-  const iTask = idx(['공정', '공종', 'task', '항목', '작업'])
-  const iPs = idx(['계획시작', 'plan_start', 'start', '시작'])
-  const iPe = idx(['계획종료', 'plan_end', 'end', '종료'])
-  const iAs = idx(['실적시작', 'actual_start'])
-  const iAe = idx(['실적종료', 'actual_end'])
-  const out = []
-  for (let r = 1; r < lines.length; r++) {
-    const cols = lines[r].split(/[,;\t]/).map((c) => c.trim())
-    const task = (iTask >= 0 ? cols[iTask] : null) || cols[0] || `행 ${r}`
-    const parseCell = (ci) => {
-      if (ci < 0 || !cols[ci]) return null
-      const mm = cols[ci].match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/)
-      if (!mm) return null
-      return { y: Number(mm[1]), m: Number(mm[2]), d: Number(mm[3]) }
-    }
-    const ps = parseCell(iPs >= 0 ? iPs : 1)
-    const pe = parseCell(iPe >= 0 ? iPe : 2)
-    if (!ps || !pe) continue
-    const aS = parseCell(iAs)
-    const aE = parseCell(iAe)
-    const d0 = Math.min(ps.d, pe.d)
-    const d1 = Math.max(ps.d, pe.d)
-    out.push({
-      task,
-      plan: { y: ps.y, m: ps.m, d0, d1 },
-      actual:
-        aS && aE
-          ? {
-              y: aS.y,
-              m: aS.m,
-              d0: Math.min(aS.d, aE.d),
-              d1: Math.max(aS.d, aE.d),
-            }
-          : null,
-    })
-  }
-  return out
-}
-
-async function extractFromFile(tradeId, file) {
-  const trade = tradeSites.value.find((t) => t.id === tradeId)
-  const label = trade?.label ?? tradeId
-  const name = file.name
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
-
-  let segments = []
-
-  if (ext === 'csv' || ext === 'txt') {
-    const text = await file.text()
-    if (text.includes(',') && /\d{4}[./-]\d/.test(text)) {
-      segments = parseCsvRows(text)
-    }
-    if (segments.length === 0) {
-      const dates = parseDatesFromText(text)
-      if (dates.length >= 2) {
-        const task = firstLineTask(text, name.replace(/\.[^.]+$/, ''))
-        const a = dates[0]
-        const b = dates[dates.length - 1]
-        segments = [
-          {
-            task,
-            plan: { y: a.y, m: a.m, d0: a.d, d1: b.d },
-            actual: null,
-          },
-        ]
-      } else if (dates.length === 1) {
-        const task = firstLineTask(text, name.replace(/\.[^.]+$/, ''))
-        segments = [
-          {
-            task,
-            plan: { y: dates[0].y, m: dates[0].m, d0: dates[0].d, d1: dates[0].d },
-            actual: null,
-          },
-        ]
-      }
-    }
-  }
-
-  if (segments.length === 0) {
-    segments = [mockSegmentFromFile(name, label)]
-  }
-
-  return { fileName: name, segments }
-}
-
-async function onTradeFiles(tradeId, evt) {
-  const input = evt.target
-  const files = input.files ? Array.from(input.files) : []
-  if (!files.length) return
-  const list = tradeUploads.value[tradeId] ?? []
-  for (const file of files) {
-    const row = await extractFromFile(tradeId, file)
-    list.push(row)
-  }
-  tradeUploads.value = { ...tradeUploads.value, [tradeId]: [...list] }
-  input.value = ''
-}
-
-const filteredTradeSites = computed(() => {
-  if (activeCategoryChip.value === '전체') return tradeSites.value
-  return tradeSites.value.filter((tr) => (tradeChipMap.value[tr.id] ?? '골조') === activeCategoryChip.value)
-})
-
-const workPlanGanttRows = computed(() => {
-  const tl = ganttTimeline.value
-  const rows = []
-  for (const def of filteredTradeSites.value) {
-    const uploads = tradeUploads.value[def.id] ?? []
-    for (const up of uploads) {
-      for (const seg of up.segments) {
-               if (seg.plan.y !== tl.y || seg.plan.m !== tl.m) continue
-        const ws = seg.plan.d0
-        const we = seg.plan.d1
-        let ps
-        let pe
-        if (tl.mode === 'month') {
-          const last = tl.count
-          ps = Math.max(1, Math.min(last, ws))
-          pe = Math.max(1, Math.min(last, we))
-          if (pe < ps) [ps, pe] = [pe, ps]
-        } else {
-          if (we < tl.chunkStart || ws > tl.chunkEnd) continue
-          const o0 = Math.max(ws, tl.chunkStart)
-          const o1 = Math.min(we, tl.chunkEnd)
-          ps = o0 - tl.chunkStart + 1
-          pe = o1 - tl.chunkStart + 1
-          if (pe < ps) [ps, pe] = [pe, ps]
-        }
-
-        let actual = null
-        if (seg.actual && seg.actual.y === tl.y && seg.actual.m === tl.m) {
-          const aws = seg.actual.d0
-          const awe = seg.actual.d1
-          if (tl.mode === 'week') {
-            if (awe < tl.chunkStart || aws > tl.chunkEnd) {
-              actual = null
-            } else {
-              const a0 = Math.max(aws, tl.chunkStart)
-              const a1 = Math.min(awe, tl.chunkEnd)
-              let as_ = a0 - tl.chunkStart + 1
-              let ae = a1 - tl.chunkStart + 1
-              if (ae < as_) [as_, ae] = [ae, as_]
-              actual = { s: as_, e: ae }
-            }
-          } else {
-            const last = tl.count
-            let as_ = Math.max(1, Math.min(last, aws))
-            let ae = Math.max(1, Math.min(last, awe))
-            if (ae < as_) [as_, ae] = [ae, as_]
-            actual = { s: as_, e: ae }
-          }
-        }
-
-        rows.push({
-          name: seg.task,
-          trade: def.label,
-          source: up.fileName,
-          plan: { s: ps, e: pe },
-          actual,
-        })
-      }
-    }
-  }
-  return rows
-})
-
-const allMonthRowsForEmptyCheck = computed(() => {
-  const y = planViewYear.value
-  const m = planViewMonth.value
-  let n = 0
-  for (const def of filteredTradeSites.value) {
-    const uploads = tradeUploads.value[def.id] ?? []
-    for (const up of uploads) {
-      for (const seg of up.segments) {
-        if (seg.plan.y === y && seg.plan.m === m) n++
-      }
-    }
-  }
-  return n
-})
-
-function barLeftPct(s, total) {
-  return ((s - 1) / total) * 100
-}
-
-function barWidthPct(s, e, total) {
-  return ((e - s + 1) / total) * 100
-}
-
-const isModalOpen = ref(false)
-const modalFileInput = ref(null)
-const modalForm = ref({
-  category: '골조공사',
-  workDate: '',
-  reportFile: null,
-  detailSummary: '',
-  remarks: '',
-})
-
-function openModal() {
-  isModalOpen.value = true
-}
-
-function closeModal() {
-  isModalOpen.value = false
-  modalForm.value = {
-    category: '골조공사',
-    workDate: '',
-    reportFile: null,
-    detailSummary: '',
-    remarks: '',
-  }
-}
-
-function openModalFilePicker() {
-  modalFileInput.value?.click()
-}
-
-function onModalFileChange(evt) {
-  const input = evt.target
-  modalForm.value.reportFile = input.files?.[0] ?? null
-}
-
-function mapModalCategoryToChip(category) {
-  if (category === '골조공사') return '골조'
-  if (category === '내장공사') return '내장'
-  if (category === '전기설비') return '설비'
-  return '골조'
-}
-
-function resolveTradeIdFromModalCategory(category) {
-  const chip = mapModalCategoryToChip(category)
-  const target = tradeSites.value.find((tr) => (tradeChipMap.value[tr.id] ?? '골조') === chip)
-  return target?.id ?? tradeSites.value[0]?.id ?? 'steel'
-}
-
-async function submitModalUpload() {
-  if (!modalForm.value.reportFile) {
-    closeModal()
-    return
-  }
-  const tradeId = resolveTradeIdFromModalCategory(modalForm.value.category)
-  const row = await extractFromFile(tradeId, modalForm.value.reportFile)
-  const list = tradeUploads.value[tradeId] ?? []
-  list.push(row)
-  tradeUploads.value = { ...tradeUploads.value, [tradeId]: [...list] }
-
-  console.log('[WorkPlanView] modal upload', {
-    category: modalForm.value.category,
-    workDate: modalForm.value.workDate,
-    file: modalForm.value.reportFile?.name ?? '',
-    detailSummary: modalForm.value.detailSummary,
-    remarks: modalForm.value.remarks,
   })
+})
 
-  closeModal()
+const weekHeader = computed(() => {
+  const first = weekDays.value[0]
+  const last  = weekDays.value[6]
+  if (!first || !last) return ''
+  const [y, m] = first.date.split('-')
+  return `${Number(y)}년 ${Number(m)}월 · ${first.month}.${first.day} ~ ${last.month}.${last.day}`
+})
+
+// 해당 날짜에 표시할 작업과 연장 여부 함께 반환
+function plansForDay(dateStr) {
+  return filtered.value
+    .filter(p => p.start <= dateStr && effectiveEnd(p) >= dateStr)
+    .map(p => ({
+      ...p,
+      // 이 날짜가 "연장 구간(원래 end 이후)"에 속하는지
+      isExtensionDay: extOf(p) && dateStr > p.end,
+    }))
 }
+
+// =========================
+// 업로드
+// =========================
+function toggleUploadMenu() { showUploadMenu.value = !showUploadMenu.value }
+function pickYearly() { showUploadMenu.value = false; yearlyInputRef.value?.click() }
+function pickWeekly() { showUploadMenu.value = false; weeklyInputRef.value?.click() }
+function pickMonthly() { showUploadMenu.value = false; monthlyInputRef.value?.click() }
+function onFileChange(e, category) {
+  const f = e.target.files?.[0]
+  if (f) { uploadFileName.value = f.name; uploadCategory.value = category }
+  e.target.value = ''
+}
+function handleClickOutside(e) {
+  if (uploadMenuRef.value && !uploadMenuRef.value.contains(e.target)) showUploadMenu.value = false
+}
+onMounted(() => document.addEventListener('mousedown', handleClickOutside))
+onBeforeUnmount(() => document.removeEventListener('mousedown', handleClickOutside))
+
+function importAi() { alert('AI로 작업계획을 불러옵니다. (데모)') }
+
+// =========================
+// 월간/연간 간트차트
+// =========================
+const GANTT_DAY_W = 42
+const GANTT_MONTH_W = 108
+const NAME_COL_W = 240
+
+const today = new Date()
+const viewYear = ref(today.getFullYear())
+const viewMonth = ref(today.getMonth() + 1)
+
+function prevYear() { viewYear.value -= 1 }
+function nextYear() { viewYear.value += 1 }
+
+function prevMonth() {
+  if (viewMonth.value === 1) { viewMonth.value = 12; viewYear.value -= 1 }
+  else viewMonth.value -= 1
+}
+function nextMonth() {
+  if (viewMonth.value === 12) { viewMonth.value = 1; viewYear.value += 1 }
+  else viewMonth.value += 1
+}
+function goToday() {
+  const t = new Date()
+  viewYear.value = t.getFullYear()
+  viewMonth.value = t.getMonth() + 1
+}
+
+const monthMeta = computed(() => {
+  const y = viewYear.value
+  const m = viewMonth.value - 1
+  const last = new Date(y, m + 1, 0)
+  const today = new Date()
+  const days = []
+  for (let d = 1; d <= last.getDate(); d++) {
+    const dt = new Date(y, m, d)
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+    const dow = dt.getDay()
+    days.push({
+      day: d,
+      date: dateStr,
+      dow,
+      isWeekend: dow === 0 || dow === 6,
+      isToday: dt.toDateString() === today.toDateString(),
+    })
+  }
+  return {
+    year: y,
+    month: m + 1,
+    daysInMonth: last.getDate(),
+    days,
+    firstDate: `${y}-${String(m+1).padStart(2,'0')}-01`,
+    lastDate:  `${y}-${String(m+1).padStart(2,'0')}-${String(last.getDate()).padStart(2,'0')}`,
+  }
+})
+
+const isCurrentMonth = computed(() => {
+  const t = new Date()
+  return viewYear.value === t.getFullYear() && viewMonth.value === t.getMonth() + 1
+})
+
+const isCurrentYear = computed(() => {
+  const t = new Date()
+  return viewYear.value === t.getFullYear()
+})
+
+// 이번 달과 겹치는 작업 (연장된 종료일까지 고려)
+const ganttPlans = computed(() => {
+  const { firstDate, lastDate } = monthMeta.value
+  return filtered.value.filter(p => !(effectiveEnd(p) < firstDate || p.start > lastDate))
+})
+
+const yearMeta = computed(() => {
+  const y = viewYear.value
+  return {
+    year: y,
+    months: Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1,
+      label: `${i + 1}월`,
+      firstDate: `${y}-${String(i + 1).padStart(2, '0')}-01`,
+      lastDate: `${y}-${String(i + 1).padStart(2, '0')}-${String(new Date(y, i + 1, 0).getDate()).padStart(2, '0')}`,
+      isCurrent: y === today.getFullYear() && i === today.getMonth(),
+    })),
+    firstDate: `${y}-01-01`,
+    lastDate: `${y}-12-31`,
+  }
+})
+
+const yearlyPlans = computed(() => {
+  const { firstDate, lastDate } = yearMeta.value
+  return annualFiltered.value.filter(p => !(effectiveEnd(p) < firstDate || p.start > lastDate))
+})
+
+// 막대 위치/너비 계산 — 이번 달 영역 내로 클리핑
+function barStyle(startStr, endStr) {
+  if (!startStr || !endStr) return null
+  const { firstDate, lastDate } = monthMeta.value
+  if (endStr < firstDate || startStr > lastDate) return null
+  const s = startStr < firstDate ? firstDate : startStr
+  const e = endStr   > lastDate  ? lastDate  : endStr
+  const sd = Number(s.slice(8, 10))
+  const ed = Number(e.slice(8, 10))
+  const span = Math.max(1, ed - sd + 1)
+  return {
+    left: `${(sd - 1) * GANTT_DAY_W + 4}px`,
+    width: `${span * GANTT_DAY_W - 8}px`,
+  }
+}
+
+function yearBarStyle(startStr, endStr) {
+  if (!startStr || !endStr) return null
+  const { firstDate, lastDate, year } = yearMeta.value
+  if (endStr < firstDate || startStr > lastDate) return null
+  const s = startStr < firstDate ? firstDate : startStr
+  const e = endStr > lastDate ? lastDate : endStr
+  const sm = Number(s.slice(5, 7))
+  const em = Number(e.slice(5, 7))
+  const span = Math.max(1, em - sm + 1)
+  const startDay = Number(s.slice(8, 10))
+  const endDay = Number(e.slice(8, 10))
+  const startMonthDays = new Date(year, sm, 0).getDate()
+  const endMonthDays = new Date(year, em, 0).getDate()
+  const leftOffset = ((startDay - 1) / startMonthDays) * GANTT_MONTH_W
+  const rightTrim = ((endMonthDays - endDay) / endMonthDays) * GANTT_MONTH_W
+  return {
+    left: `${(sm - 1) * GANTT_MONTH_W + leftOffset + 4}px`,
+    width: `${span * GANTT_MONTH_W - leftOffset - rightTrim - 8}px`,
+  }
+}
+
+function actualLineRange(p) {
+  return {
+    start: p.actualStart || p.start,
+    end: effectiveEnd(p),
+  }
+}
+
+function progressFillEnd(p) {
+  const range = actualLineRange(p)
+  const t = new Date().toISOString().slice(0, 10)
+  if (t < range.start) return null
+  return t > range.end ? range.end : t
+}
+
+// 오늘 라인
+const todayLineStyle = computed(() => {
+  const t = new Date()
+  const { year, month } = monthMeta.value
+  if (t.getFullYear() !== year || (t.getMonth() + 1) !== month) return null
+  const left = (t.getDate() - 1) * GANTT_DAY_W + GANTT_DAY_W / 2
+  return { left: `${left}px` }
+})
+
+const chartWidth = computed(() => monthMeta.value.daysInMonth * GANTT_DAY_W)
+const yearChartWidth = computed(() => 12 * GANTT_MONTH_W)
+
+// 화면 상단/필터 바 — 활성 연장 개수
+const extensionCount = computed(() => Object.keys(planStore.extensions).length)
 </script>
 
 <template>
-  <div class="space-y-6 pb-10">
-    <div
-      class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-forena-50/50 to-flare-50/30 p-6 shadow-card"
-    >
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-flare-400 via-forena-500 to-flare-500"
-      />
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div class="flex items-start gap-3">
-          <span
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md"
-          >
-            <LayoutDashboard class="h-5 w-5" />
-          </span>
-          <div>
-            <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">
-              {{ T.kicker }}
-            </p>
-            <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ T.title }}</h1>
-            <p class="mt-2 max-w-2xl text-sm leading-relaxed text-forena-700/80">{{ T.desc }}</p>
-          </div>
-        </div>
-        <div
-          class="flex flex-wrap items-end gap-3 rounded-2xl border border-forena-100/80 bg-white/80 p-3 shadow-sm"
-        >
-          <label class="flex flex-col gap-1">
-            <span class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
-              T.monthPick
-            }}</span>
-            <div class="flex gap-2">
-              <select
-                v-model.number="planViewYear"
-                class="rounded-xl border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-900"
-              >
-                <option v-for="y in [2024, 2025, 2026, 2027]" :key="y" :value="y">{{ y }}</option>
-              </select>
-              <select
-                v-model.number="planViewMonth"
-                class="rounded-xl border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-900"
-              >
-                <option v-for="mo in 12" :key="mo" :value="mo">{{ mo }}{{ '월' }}</option>
-              </select>
-            </div>
-          </label>
-        </div>
+  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
+    <!-- 헤더 -->
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">일정 관리</p>
+        <h1 class="text-xl font-bold text-forena-900">작업 계획</h1>
       </div>
-    </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex overflow-hidden rounded-lg border border-forena-200 bg-white">
+          <button v-for="m in [['yearly','연간'],['monthly','월간'],['weekly','주간']]" :key="m[0]"
+            class="px-3.5 py-1.5 text-xs font-bold transition"
+            :class="viewMode === m[0] ? 'bg-forena-800 text-white' : 'text-forena-600 hover:bg-forena-50'"
+            @click="viewMode = m[0]; selectedPlan = null">{{ m[1] }}</button>
+        </div>
 
-    <p
-      class="rounded-xl border border-amber-100 bg-amber-50/80 px-4 py-3 text-xs leading-relaxed text-amber-900"
-    >
-      {{ T.demoNote }}
-    </p>
+        <div class="relative" ref="uploadMenuRef">
+          <button type="button"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+            @click="toggleUploadMenu">
+            <Upload class="h-3.5 w-3.5 text-forena-400" />
+            계획서 업로드
+            <ChevronDown class="h-3 w-3 text-forena-400 transition-transform" :class="showUploadMenu ? 'rotate-180' : ''" />
+          </button>
 
-    <div class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card">
-      <div class="flex flex-wrap gap-2 rounded-xl border border-forena-100 bg-forena-50/40 p-1.5">
-        <button
-          v-for="chip in categoryChips"
-          :key="chip"
-          type="button"
-          class="rounded-lg px-4 py-2 text-sm font-bold transition"
-          :class="
-            activeCategoryChip === chip
-              ? 'bg-gradient-to-r from-forena-700 to-forena-900 text-white shadow-sm'
-              : 'text-forena-600 hover:bg-white'
-          "
-          @click="activeCategoryChip = chip"
-        >
-          {{ chip }}
+          <transition
+            enter-active-class="transition duration-100 ease-out"
+            enter-from-class="opacity-0 -translate-y-1"
+            enter-to-class="opacity-100 translate-y-0"
+            leave-active-class="transition duration-75 ease-in"
+            leave-from-class="opacity-100 translate-y-0"
+            leave-to-class="opacity-0 -translate-y-1">
+            <div v-if="showUploadMenu"
+              class="absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-lg border border-forena-200 bg-white shadow-lg">
+              <button type="button"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
+                @click="pickYearly">
+                <CalendarRange class="h-4 w-4 shrink-0 text-flare-600" />
+                <div class="flex flex-col">
+                  <span>연간 계획서 업로드</span>
+                  <span class="text-[10px] font-normal text-slate-400">연간 공정 목표와 범위</span>
+                </div>
+              </button>
+              <div class="h-px bg-forena-100"></div>
+              <button type="button"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
+                @click="pickWeekly">
+                <CalendarDays class="h-4 w-4 shrink-0 text-flare-600" />
+                <div class="flex flex-col">
+                  <span>주간 계획서 업로드</span>
+                  <span class="text-[10px] font-normal text-slate-400">이번 주 협력사별 작업 계획 · 매주 작성</span>
+                </div>
+              </button>
+              <div class="h-px bg-forena-100"></div>
+              <button type="button"
+                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
+                @click="pickMonthly">
+                <CalendarRange class="h-4 w-4 shrink-0 text-flare-600" />
+                <div class="flex flex-col">
+                  <span>월간 계획서 업로드</span>
+                  <span class="text-[10px] font-normal text-slate-400">이번 달 공정 목표와 작업 범위 · 매월 작성</span>
+                </div>
+              </button>
+            </div>
+          </transition>
+
+          <input ref="yearlyInputRef" type="file" class="sr-only"
+            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+            @change="(e) => onFileChange(e, '연간')" />
+          <input ref="weeklyInputRef" type="file" class="sr-only"
+            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+            @change="(e) => onFileChange(e, '주간')" />
+          <input ref="monthlyInputRef" type="file" class="sr-only"
+            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+            @change="(e) => onFileChange(e, '월간')" />
+        </div>
+
+        <button class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100" @click="importAi">
+          <BrainCircuit class="h-3.5 w-3.5 text-flare-600" /> AI 불러오기
         </button>
       </div>
-      <button
-        type="button"
-        class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:from-forena-600 hover:to-forena-800"
-        @click="openModal"
-      >
-        <Upload class="h-4 w-4" />
-        {{ T.uploadCta }}
-      </button>
     </div>
 
-    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div
-        class="flex flex-col gap-3 border-b border-forena-100 px-5 py-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
-      >
-        <div class="flex flex-wrap items-center gap-2">
-          <CalendarRange class="h-4 w-4 text-flare-600" />
-          <h2 class="text-sm font-bold text-forena-900">{{ T.sectionSchedule }}</h2>
-          <span class="rounded-lg bg-forena-100 px-2 py-0.5 text-[10px] font-bold text-forena-600">
-            {{ planViewYear }}.{{ String(planViewMonth).padStart(2, '0') }}
-            <template v-if="scheduleTab === 'week' && ganttTimeline.chunkLabel">
-              · {{ ganttTimeline.chunkLabel }}
-            </template>
-          </span>
-        </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <div class="flex flex-wrap gap-1 rounded-xl border border-forena-100 bg-forena-50/50 p-1">
-            <button
-              type="button"
-              class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
-              :class="
-                scheduleTab === 'month'
-                  ? 'bg-gradient-to-r from-forena-700 to-forena-900 text-white shadow-sm'
-                  : 'text-forena-600 hover:bg-white'
-              "
-              @click="scheduleTab = 'month'"
-            >
-              {{ T.tabMonth }}
-            </button>
-            <button
-              type="button"
-              class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
-              :class="
-                scheduleTab === 'week'
-                  ? 'bg-gradient-to-r from-forena-700 to-forena-900 text-white shadow-sm'
-                  : 'text-forena-600 hover:bg-white'
-              "
-              @click="scheduleTab = 'week'"
-            >
-              {{ T.tabWeek }}
-            </button>
-          </div>
-          <label
-            v-if="scheduleTab === 'week'"
-            class="flex items-center gap-2 text-[11px] font-semibold text-forena-700"
-          >
-            <span class="text-forena-500">{{ T.weekOfMonth }}</span>
-            <select
-              v-model.number="planWeekIndex"
-              class="rounded-lg border border-forena-200 bg-white px-2 py-1 text-xs font-bold text-forena-900"
-            >
-              <option v-for="(ch, ci) in monthWeekChunks" :key="ci" :value="ci">
-                {{ ci + 1 }}주차 ({{ ch.label }})
-              </option>
-            </select>
-          </label>
-        </div>
-        <div class="flex flex-wrap items-center gap-4 text-[11px] text-slate-600 sm:ml-auto sm:w-full sm:justify-end lg:w-auto">
-          <span class="inline-flex items-center gap-1.5">
-            <span class="h-1.5 w-6 shrink-0 rounded-full bg-blue-600" /> {{ T.legendPlan }}
-          </span>
-          <span class="inline-flex items-center gap-1.5">
-            <span class="h-1.5 w-6 shrink-0 rounded-full bg-red-600" /> {{ T.legendActual }}
-          </span>
-        </div>
+    <!-- 필터 바 -->
+    <div class="flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-forena-100 bg-white px-4 py-3">
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-bold text-forena-400">공종</span>
+        <select v-model="filterTrade" class="rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs text-forena-800 outline-none focus:border-flare-400">
+          <option value="">전체</option>
+          <option v-for="t in trades" :key="t">{{ t }}</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-bold text-forena-400">상태</span>
+        <select v-model="filterStatus" class="rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs text-forena-800 outline-none focus:border-flare-400">
+          <option value="">전체</option>
+          <option v-for="s in statuses" :key="s">{{ s }}</option>
+        </select>
       </div>
 
-      <div
-        v-if="!allMonthRowsForEmptyCheck"
-        class="px-5 py-16 text-center text-sm text-slate-500"
-      >
-        {{ T.noExtract }}
-      </div>
-      <div
-        v-else-if="!workPlanGanttRows.length && scheduleTab === 'week'"
-        class="px-5 py-16 text-center text-sm text-slate-500"
-      >
-        {{ T.weekNoBars }}
-      </div>
-      <div v-else class="overflow-x-auto">
-        <div class="min-w-[880px] px-5 py-4">
-          <div
-            class="flex gap-3 border-b border-forena-100 pb-2 text-[10px] font-bold text-forena-500"
-          >
-            <div class="w-[240px] shrink-0 pl-1">{{ T.colTask }} / {{ T.colType }}</div>
-            <div
-              class="grid min-w-0 flex-1"
-              :style="{ gridTemplateColumns: `repeat(${ganttTimeline.count}, minmax(0, 1fr))` }"
-            >
-              <div
-                v-for="(lab, idx) in ganttTimeline.labels"
-                :key="idx"
-                class="border-l border-forena-100 px-0.5 text-center tabular-nums"
-              >
-                {{ lab }}
-              </div>
-            </div>
-          </div>
+      <!-- 연장 적용 개수 알림 -->
+      <span v-if="extensionCount" class="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200">
+        <CalendarPlus class="h-3 w-3" />
+        공정 분석으로 일정 연장 {{ extensionCount }}건 반영됨
+      </span>
 
-          <div
-            v-for="(row, ri) in workPlanGanttRows"
-            :key="ri"
-            class="flex gap-3 border-b border-forena-50 py-3"
-          >
-            <div class="w-[240px] shrink-0 min-w-0 pl-1 pr-2">
-              <p class="truncate text-sm font-semibold text-forena-900">{{ row.name }}</p>
-              <p class="truncate text-[11px] text-slate-500">{{ row.trade }}</p>
-              <p class="mt-0.5 truncate text-[10px] text-slate-400" :title="row.source">
-                {{ T.sourceDoc }}: {{ row.source }}
-              </p>
-            </div>
-            <div class="relative min-h-[44px] min-w-0 flex-1">
-              <div
-                class="absolute inset-0 grid h-full"
-                :style="{ gridTemplateColumns: `repeat(${ganttTimeline.count}, minmax(0, 1fr))` }"
-              >
-                <div
-                  v-for="n in ganttTimeline.count"
-                  :key="n"
-                  class="border-r border-forena-100/70 last:border-r-0"
-                />
-              </div>
-              <div class="relative h-full min-h-[44px] w-full px-0.5">
-                <div
-                  class="pointer-events-none absolute top-[30%] h-1.5 -translate-y-1/2 rounded-full bg-blue-600"
-                  :style="{
-                    left: barLeftPct(row.plan.s, ganttTimeline.count) + '%',
-                    width: barWidthPct(row.plan.s, row.plan.e, ganttTimeline.count) + '%',
-                  }"
-                />
-                <div
-                  v-if="row.actual"
-                  class="pointer-events-none absolute top-[52%] h-1.5 -translate-y-1/2 rounded-full bg-red-600"
-                  :style="{
-                    left: barLeftPct(row.actual.s, ganttTimeline.count) + '%',
-                    width: barWidthPct(row.actual.s, row.actual.e, ganttTimeline.count) + '%',
-                  }"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <span v-if="uploadFileName" class="ml-auto inline-flex items-center gap-1.5 text-xs text-forena-500">
+        <span class="rounded-md bg-flare-50 px-2 py-0.5 text-[10px] font-bold text-flare-700 ring-1 ring-flare-200">{{ uploadCategory }}</span>
+        {{ uploadFileName }}
+      </span>
     </div>
 
-    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="border-b border-forena-100 bg-forena-50/50 px-4 py-2.5 sm:px-5 sm:py-3">
-        <div class="flex items-center gap-2">
-          <BarChart3 class="h-4 w-4 text-flare-600" />
-          <h3 class="text-sm font-bold text-forena-900">{{ T.secProgress }}</h3>
+    <!-- 메인 -->
+    <div class="flex min-h-0 flex-1 gap-4">
+      <!-- 작업 목록 -->
+      <div v-if="viewMode === 'weekly'" class="flex w-80 shrink-0 flex-col overflow-hidden rounded-xl border border-forena-200 bg-white">
+        <div class="border-b border-forena-100 bg-forena-50/60 px-4 py-2.5">
+          <span class="text-sm font-bold text-forena-900">작업 목록</span>
+          <span class="ml-2 text-xs text-forena-400">{{ filtered.length }}건</span>
         </div>
-        <p class="mt-1 text-[11px] text-slate-600">{{ T.progressVizSub }}</p>
+        <div class="min-h-0 flex-1 overflow-y-auto divide-y divide-forena-50">
+          <div v-if="!filtered.length" class="flex items-center justify-center py-16 text-sm text-slate-400">
+            조회된 작업이 없습니다.
+          </div>
+          <div v-for="p in filtered" :key="p.id"
+            class="cursor-pointer p-3.5 transition-colors hover:bg-forena-50/60"
+            :class="selectedPlan?.id === p.id ? 'bg-flare-50/60 border-l-2 border-l-flare-500' : ''"
+            @click="selectedPlan = p">
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-sm font-semibold leading-snug text-forena-900">{{ p.name }}</p>
+              <span class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold" :class="statusClass(p.status)">{{ p.status }}</span>
+            </div>
+            <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+              <span class="flex items-center gap-1"><MapPin class="h-3 w-3" />{{ p.location }}</span>
+              <span class="flex items-center gap-1"><Users class="h-3 w-3" />{{ p.requiredCount }}명</span>
+            </div>
+            <div class="mt-1 flex items-center gap-1.5">
+              <p class="text-[11px] tabular-nums text-forena-400">{{ p.start.slice(5) }} ~ {{ p.end.slice(5) }}</p>
+              <span v-if="extOf(p)" class="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                → {{ extOf(p).extendedEnd.slice(5) }} (+{{ extOf(p).addedDays }}일)
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="grid gap-5 p-4 sm:p-5 lg:grid-cols-2 lg:items-start lg:gap-6 xl:gap-8 xl:p-6">
-        <div
-          class="rounded-xl border border-forena-100 bg-gradient-to-r from-forena-50/80 to-flare-50/40 p-3.5 sm:p-4"
-        >
-          <div class="flex flex-wrap items-end justify-between gap-3">
-            <p class="text-xs font-bold uppercase tracking-wide text-forena-500">{{ T.overall }}</p>
-            <p class="text-2xl font-bold tabular-nums text-forena-900 sm:text-3xl">
-              {{ overallProgress }}%
+      <!-- 오른쪽 -->
+      <div class="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-forena-200 bg-white">
+        <!-- 작업 상세 -->
+        <template v-if="selectedPlan">
+          <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/60 px-4 py-2.5">
+            <p class="text-sm font-bold text-forena-900">작업 상세</p>
+            <button @click="selectedPlan = null"><X class="h-4 w-4 text-slate-400 hover:text-forena-700" /></button>
+          </div>
+          <div class="p-5">
+            <div class="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <p class="text-lg font-bold text-forena-900">{{ selectedPlan.name }}</p>
+                <p class="text-xs text-forena-400 mt-0.5">{{ selectedPlan.trade }} · {{ selectedPlan.start }} ~ {{ selectedPlan.end }}</p>
+              </div>
+              <span class="shrink-0 rounded-lg px-2.5 py-1 text-xs font-bold" :class="statusClass(selectedPlan.status)">{{ selectedPlan.status }}</span>
+            </div>
+
+            <!-- ★ 연장 알림 박스 -->
+            <div v-if="extOf(selectedPlan)"
+              class="mb-4 flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5">
+              <CalendarPlus class="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+              <div class="flex-1">
+                <p class="text-xs font-bold text-emerald-700">공정 분석을 통한 일정 연장</p>
+                <p class="mt-1 text-[11px] text-emerald-800">
+                  종료일 <span class="font-bold tabular-nums">{{ selectedPlan.end }}</span>
+                  → <span class="font-bold tabular-nums">{{ extOf(selectedPlan).extendedEnd }}</span>
+                  (+{{ extOf(selectedPlan).addedDays }}일)
+                </p>
+                <p v-if="extOf(selectedPlan).reason" class="mt-1 text-[11px] text-emerald-700/80 leading-relaxed">{{ extOf(selectedPlan).reason }}</p>
+                <p class="mt-1 text-[10px] text-emerald-600">반영 {{ extOf(selectedPlan).decidedAt }}</p>
+              </div>
+            </div>
+
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
+                <div class="flex items-center gap-1.5 mb-2">
+                  <MapPin class="h-3.5 w-3.5 text-flare-600" />
+                  <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">작업 위치</span>
+                </div>
+                <p class="text-sm font-semibold text-forena-900">{{ selectedPlan.location }}</p>
+              </div>
+              <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
+                <div class="flex items-center gap-1.5 mb-2">
+                  <Users class="h-3.5 w-3.5 text-flare-600" />
+                  <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">필요 인원</span>
+                </div>
+                <p class="text-2xl font-bold tabular-nums text-forena-900">{{ selectedPlan.requiredCount }}<span class="text-sm font-normal text-slate-400 ml-1">명</span></p>
+                <ul class="mt-1.5 space-y-0.5">
+                  <li v-for="(w, i) in selectedPlan.workers" :key="i" class="text-xs text-forena-600">· {{ w }}</li>
+                </ul>
+              </div>
+              <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
+                <div class="flex items-center gap-1.5 mb-2">
+                  <Wrench class="h-3.5 w-3.5 text-flare-600" />
+                  <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">필요 장비</span>
+                </div>
+                <div v-if="selectedPlan.equipment.length">
+                  <p v-for="(eq, i) in selectedPlan.equipment" :key="i" class="text-sm font-semibold text-forena-900">{{ eq }}</p>
+                </div>
+                <p v-else class="text-sm text-slate-400">해당 없음</p>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- 캘린더 -->
+        <template v-else>
+          <div class="flex shrink-0 items-center justify-between border-b border-forena-100 bg-forena-50/60 px-4 py-2.5">
+            <p class="text-sm font-bold text-forena-900">
+              {{ viewMode === 'weekly' ? '주간 일정' : viewMode === 'monthly' ? '월간 계획 (간트차트)' : '연간 계획 (간트차트)' }}
             </p>
-          </div>
-          <div class="mt-4 h-3 overflow-hidden rounded-full bg-forena-100 sm:h-3.5">
-            <div
-              class="h-full rounded-full bg-gradient-to-r from-forena-600 to-flare-500 transition-all"
-              :style="{ width: overallProgress + '%' }"
-            />
-          </div>
-        </div>
+            <div class="flex items-center gap-3">
+              <!-- 간트차트 범례 -->
+              <div v-if="viewMode !== 'weekly'" class="flex items-center gap-3 text-[10px]">
+                <span class="flex items-center gap-1.5 text-forena-500">
+                  <span class="h-[3px] w-5 rounded-full bg-blue-500"></span>계획서 기준
+                </span>
+                <span class="flex items-center gap-1.5 text-forena-500">
+                  <span class="h-[3px] w-5 rounded-full bg-red-500"></span>실제/예상 진행
+                </span>
+              </div>
 
-        <div class="min-w-0">
-          <p class="mb-3 flex items-center gap-1 text-xs font-bold text-forena-500">
-            <MapPin class="h-3.5 w-3.5" />
-            {{ T.progressViz }}
-          </p>
-          <ul class="grid gap-3">
-            <li v-for="(item, idx) in progressByCategory" :key="idx" class="min-w-0">
-              <div class="flex justify-between gap-2 text-xs font-semibold text-forena-800">
-                <span class="min-w-0 truncate">{{ item.name }}</span>
-                <span class="shrink-0 tabular-nums text-flare-700">{{ item.pct }}%</span>
+              <!-- 연 이동 네비게이션 -->
+              <div v-if="viewMode === 'yearly'" class="flex items-center gap-1">
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 transition hover:bg-forena-50"
+                  title="이전 해"
+                  @click="prevYear">
+                  <ChevronLeft class="h-3.5 w-3.5" />
+                </button>
+                <p class="min-w-[82px] text-center text-xs font-bold tabular-nums text-forena-700">
+                  {{ yearMeta.year }}년
+                </p>
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 transition hover:bg-forena-50"
+                  title="다음 해"
+                  @click="nextYear">
+                  <ChevronRight class="h-3.5 w-3.5" />
+                </button>
+                <button type="button"
+                  class="ml-1 rounded-md border px-2 py-1 text-[10px] font-bold transition"
+                  :class="isCurrentYear
+                    ? 'border-flare-200 bg-flare-50 text-flare-700'
+                    : 'border-forena-200 bg-white text-forena-600 hover:bg-forena-50'"
+                  :disabled="isCurrentYear"
+                  @click="goToday">
+                  올해
+                </button>
               </div>
-              <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-forena-100">
-                <div
-                  class="h-full rounded-full bg-gradient-to-r from-forena-500 to-flare-400"
-                  :style="{ width: item.pct + '%' }"
-                />
+
+              <!-- 월 이동 네비게이션 -->
+              <div v-if="viewMode === 'monthly'" class="flex items-center gap-1">
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 transition hover:bg-forena-50"
+                  title="이전 달"
+                  @click="prevMonth">
+                  <ChevronLeft class="h-3.5 w-3.5" />
+                </button>
+                <p class="min-w-[110px] text-center text-xs font-bold tabular-nums text-forena-700">
+                  {{ monthMeta.year }}년 {{ monthMeta.month }}월
+                </p>
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 transition hover:bg-forena-50"
+                  title="다음 달"
+                  @click="nextMonth">
+                  <ChevronRight class="h-3.5 w-3.5" />
+                </button>
+                <button type="button"
+                  class="ml-1 rounded-md border px-2 py-1 text-[10px] font-bold transition"
+                  :class="isCurrentMonth
+                    ? 'border-flare-200 bg-flare-50 text-flare-700'
+                    : 'border-forena-200 bg-white text-forena-600 hover:bg-forena-50'"
+                  :disabled="isCurrentMonth"
+                  @click="goToday">
+                  오늘
+                </button>
               </div>
-            </li>
-          </ul>
-        </div>
+
+              <p v-else class="text-xs text-forena-400 tabular-nums">{{ weekHeader }}</p>
+            </div>
+          </div>
+
+          <!-- ========== 주간 ========== -->
+          <div v-if="viewMode === 'weekly'" class="min-h-0 flex-1 overflow-auto p-3">
+            <div class="grid h-full grid-cols-7 gap-2">
+              <div v-for="day in weekDays" :key="day.date"
+                class="flex flex-col overflow-hidden rounded-xl border bg-white"
+                :class="day.isToday ? 'border-flare-400 ring-2 ring-flare-200' : 'border-forena-100'">
+                <div class="flex items-center justify-between px-2.5 py-2"
+                  :class="day.isToday ? 'bg-flare-500 text-white'
+                          : day.isWeekend ? 'bg-slate-50 text-slate-400'
+                          : 'bg-forena-50 text-forena-600'">
+                  <span class="text-[11px] font-bold">{{ day.label }}</span>
+                  <span class="rounded-md px-1.5 text-base font-bold tabular-nums"
+                    :class="day.isToday ? 'bg-white/20' : ''">{{ day.day }}</span>
+                </div>
+                <div class="flex-1 space-y-1 overflow-y-auto p-1.5">
+                  <div v-if="!plansForDay(day.date).length"
+                    class="py-4 text-center text-[10px] text-slate-300">—</div>
+                  <div v-for="p in plansForDay(day.date)" :key="p.id"
+                    class="cursor-pointer rounded-md border-l-2 px-1.5 py-1 text-[10px] font-semibold transition hover:opacity-80"
+                    :class="p.isExtensionDay
+                          ? 'border-l-emerald-500 bg-emerald-50 text-emerald-800'
+                          : p.status === '확정'   ? 'border-l-emerald-500 bg-emerald-50/40 text-forena-800'
+                          : p.status === '진행 중' ? 'border-l-amber-500 bg-amber-50 text-amber-800'
+                          : p.status === '검토 중' ? 'border-l-sky-500 bg-sky-50 text-sky-800'
+                          : 'border-l-slate-400 bg-slate-50 text-slate-700'"
+                    @click="selectedPlan = p">
+                    <div class="flex items-center gap-1">
+                      <CalendarPlus v-if="p.isExtensionDay" class="h-2.5 w-2.5 shrink-0" />
+                      <p class="truncate">{{ p.name }}</p>
+                    </div>
+                    <p class="mt-0.5 truncate text-[9px] font-normal opacity-70">
+                      <span v-if="p.isExtensionDay">연장 일정</span>
+                      <span v-else>{{ p.location }}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 연간 (간트차트) ========== -->
+          <div v-else-if="viewMode === 'yearly'" class="min-h-0 flex-1 overflow-auto bg-white">
+            <div v-if="!yearlyPlans.length" class="flex items-center justify-center py-16 text-sm text-slate-400">
+              {{ yearMeta.year }}년에 표시할 작업이 없습니다.
+            </div>
+
+            <div v-else class="flex min-w-max">
+              <div class="sticky left-0 z-10 shrink-0 border-r border-forena-200 bg-white"
+                :style="{ width: NAME_COL_W + 'px' }">
+                <div class="flex h-10 items-center border-b border-forena-200 bg-white px-4">
+                  <span class="text-[11px] font-bold text-forena-500">공정명 / 공종</span>
+                </div>
+                <div v-for="p in yearlyPlans" :key="p.id"
+                  class="flex h-[68px] cursor-pointer flex-col justify-center gap-0.5 border-b border-forena-100 px-4 transition hover:bg-forena-50/60"
+                  :class="selectedPlan?.id === p.id ? 'bg-flare-50/60' : ''"
+                  @click="selectedPlan = p">
+                  <div class="flex items-center gap-1.5">
+                    <p class="truncate text-sm font-bold text-forena-900">{{ p.name }}</p>
+                    <span v-if="extOf(p)" class="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-700">
+                      <CalendarPlus class="h-2.5 w-2.5" />+{{ extOf(p).addedDays }}일
+                    </span>
+                  </div>
+                  <p class="truncate text-[11px] text-forena-500">{{ p.trade }}{{ p.location ? ` / ${p.location}` : '' }}</p>
+                  <p v-if="p.sourceFile" class="truncate text-[10px] text-slate-400">출처 문서: {{ p.sourceFile }}</p>
+                </div>
+              </div>
+
+              <div class="relative" :style="{ width: yearChartWidth + 'px' }">
+                <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
+                  <div v-for="m in yearMeta.months" :key="m.month"
+                    class="flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
+                    :style="{ width: GANTT_MONTH_W + 'px' }"
+                    :class="m.isCurrent ? 'bg-flare-50 text-flare-700' : 'text-forena-500'">
+                    {{ m.label }}
+                  </div>
+                </div>
+
+                <div class="relative">
+                  <div v-for="p in yearlyPlans" :key="p.id"
+                    class="relative flex h-[68px] border-b border-forena-100"
+                    :class="selectedPlan?.id === p.id ? 'bg-flare-50/40' : ''">
+                    <div v-for="m in yearMeta.months" :key="m.month"
+                      class="border-r border-forena-50"
+                      :style="{ width: GANTT_MONTH_W + 'px' }"></div>
+
+                    <div v-if="yearBarStyle(p.start, p.end)"
+                      class="group absolute z-[2] flex cursor-pointer items-center"
+                      :style="{ ...yearBarStyle(p.start, p.end), top: '20px', height: '4px' }"
+                      :title="`계획서 기준: ${p.start} ~ ${p.end}`"
+                      @click="selectedPlan = p">
+                      <span class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-white"></span>
+                      <span class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-white"></span>
+                      <span class="h-1 w-full rounded-full bg-blue-500 transition group-hover:h-1.5"></span>
+                    </div>
+
+                    <div v-if="yearBarStyle(actualLineRange(p).start, actualLineRange(p).end)"
+                      class="absolute z-[1] flex cursor-pointer items-center"
+                      :style="{ ...yearBarStyle(actualLineRange(p).start, actualLineRange(p).end), top: '40px', height: '4px' }"
+                      :title="`실제/예상 진행: ${actualLineRange(p).start} ~ ${actualLineRange(p).end}`"
+                      @click="selectedPlan = p">
+                      <span class="h-1 w-full rounded-full bg-red-200"></span>
+                    </div>
+                    <div v-if="progressFillEnd(p) && yearBarStyle(actualLineRange(p).start, progressFillEnd(p))"
+                      class="absolute z-[2] flex cursor-pointer items-center"
+                      :style="{ ...yearBarStyle(actualLineRange(p).start, progressFillEnd(p)), top: '40px', height: '4px' }"
+                      @click="selectedPlan = p">
+                      <span class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"></span>
+                      <span class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"></span>
+                      <span class="h-1 w-full rounded-full bg-red-500"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 월간 (라인형 간트차트) ========== -->
+          <div v-else class="min-h-0 flex-1 overflow-auto bg-white">
+            <div v-if="!ganttPlans.length" class="flex items-center justify-center py-16 text-sm text-slate-400">
+              {{ monthMeta.year }}년 {{ monthMeta.month }}월에 표시할 작업이 없습니다.
+            </div>
+
+            <div v-else class="flex min-w-max">
+              <!-- 좌측: 작업명 -->
+              <div class="sticky left-0 z-10 shrink-0 border-r border-forena-200 bg-white"
+                :style="{ width: NAME_COL_W + 'px' }">
+                <div class="flex h-10 items-center border-b border-forena-200 bg-white px-4">
+                  <span class="text-[11px] font-bold text-forena-500">공정명 / 공종</span>
+                </div>
+                <div v-for="p in ganttPlans" :key="p.id"
+                  class="flex h-[68px] cursor-pointer flex-col justify-center gap-0.5 border-b border-forena-100 px-4 transition hover:bg-forena-50/60"
+                  :class="selectedPlan?.id === p.id ? 'bg-flare-50/60' : ''"
+                  @click="selectedPlan = p">
+                  <div class="flex items-center gap-1.5">
+                    <p class="truncate text-sm font-bold text-forena-900">{{ p.name }}</p>
+                    <span v-if="extOf(p)" class="inline-flex items-center gap-0.5 rounded bg-emerald-50 px-1 py-0.5 text-[9px] font-bold text-emerald-700">
+                      <CalendarPlus class="h-2.5 w-2.5" />+{{ extOf(p).addedDays }}일
+                    </span>
+                  </div>
+                  <p class="truncate text-[11px] text-forena-500">{{ p.trade }}{{ p.location ? ` / ${p.location}` : '' }}</p>
+                  <p v-if="p.sourceFile" class="truncate text-[10px] text-slate-400">출처 문서: {{ p.sourceFile }}</p>
+                </div>
+              </div>
+
+              <!-- 우측: 차트 -->
+              <div class="relative" :style="{ width: chartWidth + 'px' }">
+                <!-- 날짜 헤더 -->
+                <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
+                  <div v-for="d in monthMeta.days" :key="d.date"
+                    class="flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
+                    :style="{ width: GANTT_DAY_W + 'px' }"
+                    :class="d.isToday ? 'bg-flare-50 text-flare-700'
+                          : d.isWeekend ? 'text-slate-300'
+                          : 'text-forena-500'">
+                    {{ d.day }}
+                  </div>
+                </div>
+
+                <!-- 차트 본문 -->
+                <div class="relative">
+                  <div v-if="todayLineStyle"
+                    class="pointer-events-none absolute top-0 z-[3] h-full w-px bg-flare-400/60"
+                    :style="todayLineStyle"></div>
+
+                  <!-- 작업 행들 -->
+                  <div v-for="p in ganttPlans" :key="p.id"
+                    class="relative flex h-[68px] border-b border-forena-100"
+                    :class="selectedPlan?.id === p.id ? 'bg-flare-50/40' : ''">
+                    <!-- 셀 그리드 -->
+                    <div v-for="d in monthMeta.days" :key="d.date"
+                      class="border-r border-forena-50"
+                      :style="{ width: GANTT_DAY_W + 'px' }"
+                      :class="d.isWeekend ? 'bg-slate-50/40' : ''"></div>
+
+                    <!-- 계획 라인 (파란색, 월간 작업계획서 기준) -->
+                    <div v-if="barStyle(p.start, p.end)"
+                      class="group absolute z-[2] flex cursor-pointer items-center"
+                      :style="{ ...barStyle(p.start, p.end), top: '20px', height: '4px' }"
+                      :title="`계획서 기준: ${p.start} ~ ${p.end}`"
+                      @click="selectedPlan = p">
+                      <span class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-white"></span>
+                      <span class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-white"></span>
+                      <span class="h-1 w-full rounded-full bg-blue-500 transition group-hover:h-1.5"></span>
+                    </div>
+
+                    <!-- 실제/예상 진행 라인: 연장 시 빨간 예상선이 연장 종료일까지 이어짐 -->
+                    <div v-if="barStyle(actualLineRange(p).start, actualLineRange(p).end)"
+                      class="absolute z-[1] flex cursor-pointer items-center"
+                      :style="{ ...barStyle(actualLineRange(p).start, actualLineRange(p).end), top: '40px', height: '4px' }"
+                      :title="`실제/예상 진행: ${actualLineRange(p).start} ~ ${actualLineRange(p).end}`"
+                      @click="selectedPlan = p">
+                      <span class="h-1 w-full rounded-full bg-red-200"></span>
+                    </div>
+                    <div v-if="progressFillEnd(p) && barStyle(actualLineRange(p).start, progressFillEnd(p))"
+                      class="group absolute z-[2] flex cursor-pointer items-center"
+                      :style="{ ...barStyle(actualLineRange(p).start, progressFillEnd(p)), top: '40px', height: '4px' }"
+                      @click="selectedPlan = p">
+                      <span class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"></span>
+                      <span class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"></span>
+                      <span class="h-1 w-full rounded-full bg-red-500 transition group-hover:h-1.5"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
       </div>
     </div>
-
-    <Teleport to="body">
-      <div
-        v-if="isModalOpen"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4"
-        @click.self="closeModal"
-      >
-        <div class="w-full max-w-2xl rounded-2xl border border-forena-100/90 bg-white p-6 shadow-card">
-          <h3 class="text-base font-bold text-forena-900">공정 계획서 업로드</h3>
-
-          <div class="mt-5 grid gap-4 md:grid-cols-2">
-            <label class="block space-y-2">
-              <span class="text-xs font-bold uppercase tracking-wide text-forena-600">공종 선택</span>
-              <select
-                v-model="modalForm.category"
-                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm font-semibold text-forena-900"
-              >
-                <option value="골조공사">골조공사</option>
-                <option value="내장공사">내장공사</option>
-                <option value="전기설비">전기설비</option>
-              </select>
-            </label>
-
-            <label class="block space-y-2">
-              <span class="text-xs font-bold uppercase tracking-wide text-forena-600">작업 일자</span>
-              <input
-                v-model="modalForm.workDate"
-                type="date"
-                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm font-semibold text-forena-900"
-              />
-            </label>
-          </div>
-
-          <div class="mt-4">
-            <span class="block text-xs font-bold uppercase tracking-wide text-forena-600">파일 첨부</span>
-            <input
-              ref="modalFileInput"
-              type="file"
-              class="sr-only"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg"
-              @change="onModalFileChange"
-            />
-            <label
-              class="mt-2 flex min-h-[120px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-forena-200 bg-forena-50/40 px-4 py-6 transition hover:border-flare-400 hover:bg-flare-50/30"
-              @click.prevent="openModalFilePicker"
-            >
-              <Upload class="h-6 w-6 text-forena-400" />
-              <span class="text-sm font-bold text-forena-700">PDF, JPG 파일 선택</span>
-              <span class="text-xs text-slate-500">{{ modalForm.reportFile?.name || '선택된 파일 없음' }}</span>
-            </label>
-          </div>
-
-          <label class="mt-4 block space-y-2">
-            <span class="text-xs font-bold uppercase tracking-wide text-forena-600">세부 내역</span>
-            <input
-              v-model="modalForm.detailSummary"
-              type="text"
-              class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 placeholder:text-slate-400"
-              placeholder="세부 내역을 입력하세요"
-            />
-          </label>
-
-          <label class="mt-4 block space-y-2">
-            <span class="text-xs font-bold uppercase tracking-wide text-forena-600">비고</span>
-            <textarea
-              v-model="modalForm.remarks"
-              rows="4"
-              class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 placeholder:text-slate-400"
-              placeholder="특이사항(비고)을 입력하세요"
-            />
-          </label>
-
-          <div class="mt-6 flex justify-end gap-2">
-            <button
-              type="button"
-              class="rounded-xl border border-forena-300 bg-white px-4 py-2 text-sm font-bold text-forena-800 transition hover:bg-forena-50"
-              @click="closeModal"
-            >
-              취소(Cancel)
-            </button>
-            <button
-              type="button"
-              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:from-forena-600 hover:to-forena-800"
-              @click="submitModalUpload"
-            >
-              업로드(Upload)
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
   </div>
 </template>

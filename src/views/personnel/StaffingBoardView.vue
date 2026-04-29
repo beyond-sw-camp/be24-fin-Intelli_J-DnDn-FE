@@ -1,26 +1,29 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   MapPin,
-  Settings,
   GripVertical,
-  MoreHorizontal,
-  Plus,
   X,
   Users,
-  Radio,
-  WifiOff,
+  ExternalLink,
   Moon,
   AlertTriangle,
+  Pencil,
+  Plus,
+  Trash2,
 } from 'lucide-vue-next'
-import { getAffiliationKind, affiliationKindBadgeClass } from '@/utils/workerAffiliation'
+import {
+  getAffiliationKind,
+  affiliationKindBadgeClass,
+  formatAffiliationDisplay,
+} from '@/utils/workerAffiliation'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 
 const T = {
   kicker: '인력 배치',
   boardTitle: '인력 배치 관리 보드',
   hint: '드래그 앤 드롭으로 작업자를 구역별로 배치하세요.',
-  loadPrev: '이전 배치 불러오기',
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
   waitingTitle: '투입 가능 인력',
@@ -29,11 +32,9 @@ const T = {
   needTo: '필요 인원 (T.O)',
   current: '현재 배치',
   dropHint: '인력을 이곳으로 드래그',
-  zoneSettings: '구역 설정',
   removeZone: '구역에서 제거',
-  more: '더 보기',
+  workerDetail: '작업자 상세보기',
   count: '명',
-  alertLoad: '저장된 이전 배치 스내이크를 불러옴니다. (데모)',
   alertAuto:
     '부족 구역 위주로 투입 가능 인력을 자동 배치했습니다. (데모)',
   alertSave: '현재 배치가 확정되어 저장되었습니다. (데모)',
@@ -47,11 +48,6 @@ const T = {
   waitingFilteredEmpty: '선택한 구분에 해당하는 인력이 없습니다.',
   zoneMix: '구역 구성',
   totalWorkers: '보드 총인원',
-  syncTitle: '실시간 보드 동기화',
-  syncConnected:
-    'BroadcastChannel: 다른 관리 탭과 동기화 중 (새로고침 없이 반영)',
-  syncUnsupported:
-    '이 브라우저는 탭 간 동기화(BroadcastChannel)를 지원하지 않습니다.',
   tradeToTitle: '구역 필요 직종(T.O)',
   tradeWarn:
     '이 구역에 필요한 직종과 맞지 않을 수 있습니다. 배치는 가능하며, 안전/산업 관점에서 확인해 주세요.',
@@ -61,7 +57,23 @@ const T = {
   skillRebar: '첼근',
   skillWelder: '용접',
   skillLabor: '인부',
+  editZone: '구역 수정',
+  addZone: '구역 추가',
+  zoneTitle: '구역명',
+  zoneSubtitle: '설명',
+  tradeNeedRows: '필요 직종별 인원',
+  addTradeRow: '직종 추가',
+  save: '저장',
+  cancel: '취소',
+  zoneTitleRequired: '구역명을 입력해 주세요.',
 }
+
+const TRADE_OPTIONS = [
+  { key: 'carpenter', label: () => T.skillCarpenter },
+  { key: 'rebar', label: () => T.skillRebar },
+  { key: 'welder', label: () => T.skillWelder },
+  { key: 'labor', label: () => T.skillLabor },
+]
 
 const tradeLabel = (key) => {
   if (key === 'carpenter') return T.skillCarpenter
@@ -82,9 +94,12 @@ function cloneWorker(w) {
   }
 }
 
+const router = useRouter()
+
 const waiting = ref([
   {
     id: 'w1',
+    profileId: 1,
     name: '김철수',
     affiliation: '협력사 (태양건설)',
     skills: ['carpenter', 'labor'],
@@ -92,6 +107,7 @@ const waiting = ref([
   },
   {
     id: 'w2',
+    profileId: 2,
     name: '이영희',
     affiliation: '협력사 (우주산업)',
     skills: ['rebar'],
@@ -99,6 +115,7 @@ const waiting = ref([
   },
   {
     id: 'w3',
+    profileId: 3,
     name: '박민수',
     affiliation: '인력사무소 (개인)',
     skills: ['labor'],
@@ -106,6 +123,7 @@ const waiting = ref([
   },
   {
     id: 'w4',
+    profileId: 4,
     name: '정대리',
     affiliation: '본사 소속',
     skills: ['welder', 'labor'],
@@ -113,6 +131,7 @@ const waiting = ref([
   },
   {
     id: 'w5',
+    profileId: 1,
     name: '최작업',
     affiliation: '협력사 (태양건설)',
     skills: ['carpenter'],
@@ -308,7 +327,7 @@ const tabId =
     ? crypto.randomUUID()
     : `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
-const { syncStatus, publish } = useStaffingBoardSync(tabId, applyRemoteState)
+const { publish } = useStaffingBoardSync(tabId, applyRemoteState)
 
 function syncPublish() {
   publish(packState())
@@ -388,11 +407,99 @@ function zoneBarClass(z) {
   const r = zoneFillRatio(z)
   if (r >= 1) return 'bg-emerald-500'
   if (r >= 0.5) return 'bg-amber-500'
-  return 'bg-rose-500'
+  if (r > 0) return 'bg-rose-500'
+  return 'bg-white ring-1 ring-inset ring-slate-200/80'
 }
 
-function loadPrevious() {
-  window.alert(T.alertLoad)
+/** 프로그레스 단계(빈/빨강/주황/녹)에 맞춰 구역 카드 테두리 색 */
+function zoneCardBorderClass(z) {
+  const r = zoneFillRatio(z)
+  if (r >= 1) return 'border-2 border-emerald-200/80'
+  if (r >= 0.5) return 'border-2 border-amber-200/80'
+  if (r > 0) return 'border-2 border-rose-200/80'
+  return 'border-2 border-slate-200/50'
+}
+
+function openWorkerProfile(w) {
+  const id = w.profileId ?? w.id
+  router.push({ name: 'siteWorkerProfile', params: { id: String(id) } })
+}
+
+const zoneEditOpen = ref(false)
+/** @type {import('vue').Ref<{ zoneId: string, title: string, subtitle: string, tradeRows: { trade: string, need: number }[] } | null>} */
+const zoneEditDraft = ref(null)
+
+function openZoneEdit(z) {
+  zoneEditDraft.value = {
+    zoneId: z.id,
+    title: z.title,
+    subtitle: z.subtitle ?? '',
+    tradeRows: (z.tradeNeeds || []).map((tn) => ({
+      trade: tn.trade,
+      need: Math.max(0, Number(tn.need) || 0),
+    })),
+  }
+  if (!zoneEditDraft.value.tradeRows.length) {
+    zoneEditDraft.value.tradeRows = [{ trade: 'labor', need: 1 }]
+  }
+  zoneEditOpen.value = true
+}
+
+function closeZoneEdit() {
+  zoneEditOpen.value = false
+  zoneEditDraft.value = null
+}
+
+function addZoneEditRow() {
+  if (!zoneEditDraft.value) return
+  zoneEditDraft.value.tradeRows.push({ trade: 'labor', need: 1 })
+}
+
+function removeZoneEditRow(index) {
+  if (!zoneEditDraft.value || zoneEditDraft.value.tradeRows.length <= 1) return
+  zoneEditDraft.value.tradeRows.splice(index, 1)
+}
+
+function saveZoneEdit() {
+  const draft = zoneEditDraft.value
+  if (!draft) return
+  const z = zones.value.find((x) => x.id === draft.zoneId)
+  if (!z) return
+  const title = draft.title.trim()
+  if (!title) {
+    pushToast(T.zoneTitleRequired, 'warning')
+    return
+  }
+  const merged = {}
+  for (const row of draft.tradeRows) {
+    const need = Math.max(0, Math.floor(Number(row.need) || 0))
+    if (!row.trade || need <= 0) continue
+    merged[row.trade] = (merged[row.trade] || 0) + need
+  }
+  const tradeNeeds = Object.entries(merged).map(([trade, need]) => ({ trade, need }))
+  z.title = title
+  z.subtitle = draft.subtitle.trim()
+  z.tradeNeeds = tradeNeeds
+  const sum = tradeNeeds.reduce((s, t) => s + t.need, 0)
+  z.required = sum > 0 ? sum : Math.max(z.workers.length, 1)
+  syncPublish()
+  closeZoneEdit()
+}
+
+function addZone() {
+  const id = `z-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  zones.value.push({
+    id,
+    title: '신규 구역',
+    subtitle: '',
+    required: 2,
+    tradeNeeds: [
+      { trade: 'labor', need: 1 },
+      { trade: 'carpenter', need: 1 },
+    ],
+    workers: [],
+  })
+  syncPublish()
 }
 
 function autoRecommend() {
@@ -445,13 +552,6 @@ function toastClass(v) {
         <div class="flex flex-wrap gap-2">
           <button
             type="button"
-            class="rounded-xl border border-forena-200 bg-white px-4 py-2.5 text-sm font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
-            @click="loadPrevious"
-          >
-            {{ T.loadPrev }}
-          </button>
-          <button
-            type="button"
             class="rounded-xl border border-flare-200 bg-flare-50 px-4 py-2.5 text-sm font-bold text-forena-800 shadow-sm transition hover:bg-flare-100/80"
             @click="autoRecommend"
           >
@@ -465,25 +565,6 @@ function toastClass(v) {
             {{ T.confirm }}
           </button>
         </div>
-      </div>
-      <div
-        class="mt-4 flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5 text-[11px] font-semibold"
-        :class="
-          syncStatus === 'connected'
-            ? 'border-emerald-200/90 bg-emerald-50/60 text-emerald-900'
-            : 'border-forena-200 bg-forena-50/80 text-forena-700'
-        "
-      >
-        <Radio
-          v-if="syncStatus === 'connected'"
-          class="h-3.5 w-3.5 shrink-0 text-emerald-600"
-          aria-hidden="true"
-        />
-        <WifiOff v-else class="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden="true" />
-        <span class="font-bold text-forena-800">{{ T.syncTitle }}</span>
-        <span class="text-forena-600/90">
-          {{ syncStatus === 'connected' ? T.syncConnected : T.syncUnsupported }}
-        </span>
       </div>
     </div>
 
@@ -582,14 +663,8 @@ function toastClass(v) {
                 >
                   {{ workerKindLabel(w.affiliation) }}
                 </span>
-                <Moon
-                  v-if="w.fatigue?.nightShiftYesterday"
-                  class="h-3.5 w-3.5 shrink-0 text-indigo-500"
-                  :title="T.fatigueTitle"
-                  aria-hidden="true"
-                />
               </div>
-              <div class="truncate text-[11px] text-slate-500">{{ w.affiliation }}</div>
+              <div class="truncate text-[11px] text-slate-500">{{ formatAffiliationDisplay(w.affiliation) }}</div>
               <div class="mt-1.5 flex flex-wrap gap-1">
                 <span
                   v-for="sk in w.skills || []"
@@ -601,7 +676,14 @@ function toastClass(v) {
                 </span>
               </div>
             </div>
-            <MoreHorizontal class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+            <button
+              type="button"
+              class="mt-0.5 shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-flare-700"
+              :title="T.workerDetail"
+              @click.stop="openWorkerProfile(w)"
+            >
+              <ExternalLink class="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
           <p v-if="displayedWaiting.length === 0" class="py-8 text-center text-sm text-slate-400">
             {{ waiting.length === 0 ? T.waitingEmpty : T.waitingFilteredEmpty }}
@@ -612,25 +694,25 @@ function toastClass(v) {
       <section
         v-for="z in zones"
         :key="z.id"
-        class="flex w-[300px] shrink-0 flex-col rounded-2xl border border-forena-100/90 bg-white/90 shadow-card"
+        class="flex w-[300px] shrink-0 flex-col rounded-2xl bg-white/90 shadow-card"
+        :class="zoneCardBorderClass(z)"
         @dragover.prevent
         @drop.prevent="onDropZone(z.id)"
       >
         <header class="border-b border-forena-100 px-4 py-3">
           <div class="flex items-start justify-between gap-2">
-            <div>
-              <div class="flex items-center gap-1.5">
-                <h2 class="text-sm font-bold text-forena-900">{{ z.title }}</h2>
-                <button
-                  type="button"
-                  class="rounded p-1 text-slate-400 transition hover:bg-forena-50 hover:text-forena-600"
-                  :title="T.zoneSettings"
-                >
-                  <Settings class="h-3.5 w-3.5" />
-                </button>
-              </div>
+            <div class="min-w-0 flex-1">
+              <h2 class="text-sm font-bold text-forena-900">{{ z.title }}</h2>
               <p class="text-[11px] text-slate-500">{{ z.subtitle }}</p>
             </div>
+            <button
+              type="button"
+              class="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-flare-700"
+              :title="T.editZone"
+              @click.stop="openZoneEdit(z)"
+            >
+              <Pencil class="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
           <div class="mt-3 space-y-1.5">
             <div class="flex justify-between text-[11px] font-semibold text-forena-600">
@@ -733,17 +815,120 @@ function toastClass(v) {
             </button>
           </div>
         </div>
-        <footer class="border-t border-forena-50 px-3 py-2 text-center">
-          <button
-            type="button"
-            class="inline-flex items-center gap-1 text-[11px] font-bold text-flare-700 hover:text-flare-800"
-          >
-            <Plus class="h-3.5 w-3.5" />
-            {{ T.more }}
-          </button>
-        </footer>
       </section>
+
+      <button
+        type="button"
+        class="flex w-[300px] shrink-0 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-forena-200/90 bg-forena-50/30 px-4 py-10 text-sm font-bold text-forena-600 transition hover:border-flare-300 hover:bg-flare-50/40 hover:text-flare-800"
+        @click="addZone"
+      >
+        <span
+          class="flex h-11 w-11 items-center justify-center rounded-xl bg-white shadow-sm ring-1 ring-forena-100"
+        >
+          <Plus class="h-5 w-5 text-flare-600" aria-hidden="true" />
+        </span>
+        {{ T.addZone }}
+      </button>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="zoneEditOpen && zoneEditDraft"
+        class="fixed inset-0 z-[90] flex items-center justify-center p-4"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="T.editZone"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
+          :aria-label="T.cancel"
+          @click="closeZoneEdit"
+        />
+        <div
+          class="relative z-10 w-full max-w-md rounded-2xl border border-forena-100 bg-white p-5 shadow-xl ring-1 ring-black/5"
+          @click.stop
+        >
+          <h3 class="text-base font-bold text-forena-900">{{ T.editZone }}</h3>
+          <div class="mt-4 space-y-3">
+            <div>
+              <label class="block text-[11px] font-bold text-forena-600">{{ T.zoneTitle }}</label>
+              <input
+                v-model="zoneEditDraft.title"
+                type="text"
+                class="mt-1 w-full rounded-xl border border-forena-200 bg-white px-3 py-2 text-sm text-forena-900 outline-none ring-forena-300 focus:ring-2"
+              />
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-forena-600">{{ T.zoneSubtitle }}</label>
+              <input
+                v-model="zoneEditDraft.subtitle"
+                type="text"
+                class="mt-1 w-full rounded-xl border border-forena-200 bg-white px-3 py-2 text-sm text-forena-900 outline-none ring-forena-300 focus:ring-2"
+                placeholder=""
+              />
+            </div>
+            <div>
+              <p class="text-[11px] font-bold text-forena-600">{{ T.tradeNeedRows }}</p>
+              <ul class="mt-2 space-y-2">
+                <li
+                  v-for="(row, idx) in zoneEditDraft.tradeRows"
+                  :key="idx"
+                  class="flex items-center gap-2"
+                >
+                  <select
+                    v-model="row.trade"
+                    class="min-w-0 flex-1 rounded-xl border border-forena-200 bg-white px-2 py-2 text-sm font-semibold text-forena-800 outline-none ring-forena-300 focus:ring-2"
+                  >
+                    <option v-for="opt in TRADE_OPTIONS" :key="opt.key" :value="opt.key">
+                      {{ opt.label() }}
+                    </option>
+                  </select>
+                  <input
+                    v-model.number="row.need"
+                    type="number"
+                    min="0"
+                    class="w-20 shrink-0 rounded-xl border border-forena-200 bg-white px-2 py-2 text-center text-sm font-bold tabular-nums text-forena-900 outline-none ring-forena-300 focus:ring-2"
+                  />
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600 disabled:opacity-30"
+                    :disabled="zoneEditDraft.tradeRows.length <= 1"
+                    @click="removeZoneEditRow(idx)"
+                  >
+                    <Trash2 class="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </li>
+              </ul>
+              <button
+                type="button"
+                class="mt-2 inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-flare-700 hover:bg-flare-50"
+                @click="addZoneEditRow"
+              >
+                <Plus class="h-3.5 w-3.5" aria-hidden="true" />
+                {{ T.addTradeRow }}
+              </button>
+            </div>
+          </div>
+          <div class="mt-6 flex justify-end gap-2">
+            <button
+              type="button"
+              class="rounded-xl border border-forena-200 bg-white px-4 py-2 text-sm font-bold text-forena-700 hover:bg-forena-50"
+              @click="closeZoneEdit"
+            >
+              {{ T.cancel }}
+            </button>
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white hover:from-forena-800 hover:to-forena-950"
+              @click="saveZoneEdit"
+            >
+              {{ T.save }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div

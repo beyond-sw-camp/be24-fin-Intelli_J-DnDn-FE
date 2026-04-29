@@ -3,14 +3,11 @@ import { ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   LayoutDashboard,
-  UserPlus,
   Users,
   ClipboardList,
   MapPin,
-  Calculator,
   FileText,
   HardHat,
-  Handshake,
   ChevronDown,
   ChevronRight,
   ChevronsLeft,
@@ -20,21 +17,24 @@ import {
   CloudSun,
   Truck,
   Upload,
-  ShieldCheck,
 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/authStore'
 
 const route = useRoute()
 const auth = useAuthStore()
 
-const personnelOpen = ref(true)
 const scheduleOpen = ref(true)
+const deploymentOpen = ref(true)
+const siteInfoOpen = ref(true)
+const documentOpen = ref(true)
 const sidebarExpanded = ref(true)
 
 watch(sidebarExpanded, (expanded) => {
   if (expanded) {
-    personnelOpen.value = true
     scheduleOpen.value = true
+    deploymentOpen.value = true
+    siteInfoOpen.value = true
+    documentOpen.value = true
   }
 })
 
@@ -42,23 +42,44 @@ const L = {
   brandTitle: '인사 관리',
   brandSub: '인사 · 일정 메뉴',
   banner: '총 책임자 권한으로 인사 및 일정 메뉴에서 주요 기능을 이용할 수 있습니다.',
-  personnelGroup: '인사 관리',
   scheduleGroup: '일정 관리',
+  deploymentGroup: '투입 관리',
+  siteInfoGroup: '현장 정보',
+  documentGroup: '문서 관리',
   sidebarCollapse: '사이드바 접기',
   sidebarExpand: '사이드바 펼치기',
 }
 
-const personnelNavAll = [
+const scheduleNavAll = [
   {
     path: '/site/dashboard',
-    label: '인사 대시보드',
+    label: 'ESG 대시보드',
     icon: LayoutDashboard,
   },
   {
-    path: '/site/onboarding',
-    label: '작업자 인력 온보딩',
-    icon: UserPlus,
+    path: '/site/schedule',
+    label: '전체 공정표',
+    icon: LayoutDashboard,
   },
+  {
+    path: '/site/work-plan',
+    label: '작업 계획',
+    icon: ClipboardList,
+  },
+  {
+    path: '/site/work-instructions',
+    label: '작업 지시',
+    icon: FileText,
+  },
+  { path: '/site/daily-log', label: '작업 실적', icon: CalendarDays },
+  {
+    path: '/site/process-analysis',
+    label: '공정 분석',
+    icon: CalendarRange,
+  },
+]
+
+const deploymentNavAll = [
   {
     path: '/site/workers/manage',
     label: '작업자 관리',
@@ -66,37 +87,54 @@ const personnelNavAll = [
     activePrefix: '/site/workers/manage',
   },
   { path: '/site/staffing', label: '인력 배치', icon: MapPin },
-  { path: '/site/man-days', label: '공수 관리', icon: Calculator },
-  { path: '/hr/partners', label: '협력사 관리', icon: Handshake },
-  { path: '/system/admins', label: '시스템 관리자', icon: ShieldCheck },
 ]
 
-const scheduleNavAll = [
+const siteInfoNavAll = [
+  { path: '/site/weather', label: '기상 관제', icon: CloudSun },
+  { path: '/site/gate', label: '장비 입출차', icon: Truck },
+]
+
+const documentNavAll = [
+  { path: '/site/documents/upload', label: '업로드 문서', icon: Upload },
+  { path: '/site/documents/ai-history', label: 'AI 분석 이력', icon: FileText },
+]
+
+const navGroups = [
   {
-    path: '/site/schedule',
-    label: '공정 지표보고',
-    icon: CalendarDays,
+    key: 'schedule',
+    label: L.scheduleGroup,
+    icon: CalendarRange,
+    items: scheduleNavAll,
+    open: scheduleOpen,
+    iconClass: 'bg-gradient-to-br from-forena-500 to-forena-700',
+    borderClass: 'border-forena-100',
   },
   {
-    path: '/site/gate',
-    label: '중장비 입출차',
-    icon: Truck,
+    key: 'deployment',
+    label: L.deploymentGroup,
+    icon: Users,
+    items: deploymentNavAll,
+    open: deploymentOpen,
+    iconClass: 'bg-gradient-to-br from-flare-500 to-flare-600',
+    borderClass: 'border-flare-100',
   },
   {
-    path: '/site/work-plan',
-    label: '작업 계획',
-    icon: Upload,
+    key: 'site-info',
+    label: L.siteInfoGroup,
+    icon: HardHat,
+    items: siteInfoNavAll,
+    open: siteInfoOpen,
+    iconClass: 'bg-gradient-to-br from-forena-500 to-forena-700',
+    borderClass: 'border-forena-100',
   },
   {
-    path: '/site/work-instructions',
-    label: '작업 지시',
-    icon: ClipboardList,
-  },
-  { path: '/site/daily-log', label: '작업 일보', icon: FileText },
-  {
-    path: '/site/weather',
-    label: '기상 관제',
-    icon: CloudSun,
+    key: 'document',
+    label: L.documentGroup,
+    icon: FileText,
+    items: documentNavAll,
+    open: documentOpen,
+    iconClass: 'bg-gradient-to-br from-flare-500 to-flare-600',
+    borderClass: 'border-flare-100',
   },
 ]
 
@@ -187,100 +225,67 @@ function linkClassCollapsed(item) {
       :aria-label="sidebarExpanded ? 'Navigation' : 'Navigation compact'"
     >
       <template v-if="sidebarExpanded">
-        <button
-          type="button"
-          class="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-[10px] font-bold tracking-wider text-forena-400 uppercase transition hover:bg-white/60"
-          @click="personnelOpen = !personnelOpen"
-        >
-          <span class="flex items-center gap-2 text-forena-800">
-            <span
-              class="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-flare-500 to-flare-600 text-white shadow-md shadow-forena-900/20"
-            >
-              <HardHat class="h-3.5 w-3.5" />
-            </span>
-            {{ L.personnelGroup }}
-          </span>
-          <ChevronDown v-if="personnelOpen" class="h-4 w-4 shrink-0 text-flare-500" />
-          <ChevronRight v-else class="h-4 w-4 shrink-0 text-slate-400" />
-        </button>
-        <div v-show="personnelOpen" class="ml-1 space-y-0.5 border-l border-flare-100 pl-2">
-          <RouterLink
-            v-for="item in personnelNavAll"
-            :key="item.path + (item.exact ? ':exact' : '')"
-            :to="item.path"
-            class="group"
-            :class="linkClass(item)"
+        <div v-for="group in navGroups" :key="group.key" :class="group.key === 'schedule' ? '' : 'mt-4'">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-[10px] font-bold tracking-wider text-forena-400 uppercase transition hover:bg-white/60"
+            @click="group.open.value = !group.open.value"
           >
-            <component
-              :is="item.icon"
-              class="h-4 w-4 shrink-0"
-              :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
-            />
-            {{ item.label }}
-          </RouterLink>
-        </div>
-
-        <button
-          type="button"
-          class="mt-4 flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-[10px] font-bold tracking-wider text-forena-400 uppercase transition hover:bg-white/60"
-          @click="scheduleOpen = !scheduleOpen"
-        >
-          <span class="flex items-center gap-2 text-forena-800">
-            <span
-              class="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-forena-500 to-forena-700 text-white shadow-md shadow-forena-900/20"
-            >
-              <CalendarRange class="h-3.5 w-3.5" />
+            <span class="flex items-center gap-2 text-forena-800">
+              <span
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-md shadow-forena-900/20"
+                :class="group.iconClass"
+              >
+                <component :is="group.icon" class="h-3.5 w-3.5" />
+              </span>
+              {{ group.label }}
             </span>
-            {{ L.scheduleGroup }}
-          </span>
-          <ChevronDown v-if="scheduleOpen" class="h-4 w-4 shrink-0 text-flare-500" />
-          <ChevronRight v-else class="h-4 w-4 shrink-0 text-slate-400" />
-        </button>
-        <div v-show="scheduleOpen" class="ml-1 space-y-0.5 border-l border-forena-100 pl-2">
-          <RouterLink
-            v-for="item in scheduleNavAll"
-            :key="item.path + (item.exact ? ':exact' : '')"
-            :to="item.path"
-            class="group"
-            :class="linkClass(item)"
+            <ChevronDown v-if="group.open.value" class="h-4 w-4 shrink-0 text-flare-500" />
+            <ChevronRight v-else class="h-4 w-4 shrink-0 text-slate-400" />
+          </button>
+          <div
+            v-show="group.open.value"
+            class="ml-1 space-y-0.5 border-l pl-2"
+            :class="group.borderClass"
           >
-            <component
-              :is="item.icon"
-              class="h-4 w-4 shrink-0"
-              :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
-            />
-            {{ item.label }}
-          </RouterLink>
+            <RouterLink
+              v-for="item in group.items"
+              :key="item.path + (item.exact ? ':exact' : '')"
+              :to="item.path"
+              class="group"
+              :class="linkClass(item)"
+            >
+              <component
+                :is="item.icon"
+                class="h-4 w-4 shrink-0"
+                :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
+              />
+              {{ item.label }}
+            </RouterLink>
+          </div>
         </div>
       </template>
       <template v-else>
-        <RouterLink
-          v-for="item in personnelNavAll"
-          :key="'c-' + item.path + (item.exact ? ':exact' : '')"
-          :to="item.path"
-          :title="item.label"
-          :class="linkClassCollapsed(item)"
-        >
-          <component
-            :is="item.icon"
-            class="h-4 w-4 shrink-0"
-            :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
+        <template v-for="(group, groupIndex) in navGroups" :key="'compact-' + group.key">
+          <div
+            v-if="groupIndex > 0"
+            class="my-2 h-px w-8 shrink-0 bg-forena-100"
+            aria-hidden="true"
           />
-        </RouterLink>
-        <div class="my-2 h-px w-8 shrink-0 bg-forena-100" aria-hidden="true" />
-        <RouterLink
-          v-for="item in scheduleNavAll"
-          :key="'c-' + item.path + (item.exact ? ':exact' : '')"
-          :to="item.path"
-          :title="item.label"
-          :class="linkClassCollapsed(item)"
-        >
-          <component
-            :is="item.icon"
-            class="h-4 w-4 shrink-0"
-            :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
-          />
-        </RouterLink>
+          <RouterLink
+            v-for="item in group.items"
+            :key="'c-' + item.path + (item.exact ? ':exact' : '')"
+            :to="item.path"
+            :title="item.label"
+            :class="linkClassCollapsed(item)"
+          >
+            <component
+              :is="item.icon"
+              class="h-4 w-4 shrink-0"
+              :class="navItemActive(item) ? 'text-flare-600' : 'text-slate-400'"
+            />
+          </RouterLink>
+        </template>
       </template>
     </nav>
 
