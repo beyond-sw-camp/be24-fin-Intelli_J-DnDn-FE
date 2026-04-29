@@ -63,7 +63,7 @@ const scheduleNavAll = [
   },
   {
     path: '/site/work-plan',
-    label: '작업 계획',
+    label: '공정 계획',
     icon: ClipboardList,
   },
   {
@@ -225,7 +225,11 @@ function linkClassCollapsed(item) {
       :aria-label="sidebarExpanded ? 'Navigation' : 'Navigation compact'"
     >
       <template v-if="sidebarExpanded">
-        <div v-for="group in navGroups" :key="group.key" :class="group.key === 'schedule' ? '' : 'mt-4'">
+        <div
+          v-for="group in navGroups"
+          :key="group.key"
+          :class="group.key === 'schedule' ? '' : 'mt-4'"
+        >
           <button
             type="button"
             class="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-[10px] font-bold tracking-wider text-forena-400 uppercase transition hover:bg-white/60"
