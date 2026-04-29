@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   MapPin,
@@ -11,10 +11,12 @@ import {
   Trash2,
   ChevronRight,
   ChevronDown,
+  Search,
 } from 'lucide-vue-next'
 import {
   getAffiliationKind,
   formatAffiliationDisplay,
+  getPartnerCompanyName,
 } from '@/utils/workerAffiliation'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 
@@ -35,10 +37,13 @@ const T = {
   colFatigue: '피로도 점수',
   colPlacement: '투입 현황',
   colProfile: '상세 프로필',
-  selectAll: '모두 선택',
+  poolHeaderSelectAll: '표시된 미투입 인원 전체 선택',
   showUnassignedOnly: '미투입 인원만 보기',
-  pageLabel: '표시',
-  pageUnit: '명',
+  filterAffil: '소속 구분',
+  filterPartnerCompany: '협력사 세부',
+  allPartnerCompanies: '협력사 전체',
+  searchWorker: '작업자 검색',
+  searchPh: '이름 또는 소속으로 검색',
   assignTarget: '투입 구역',
   assignBtn: '선택 인력 투입',
   assignNeedSelection: '투입할 작업자와 구역을 선택해 주세요.',
@@ -507,10 +512,35 @@ function removeFromSubZone(subZoneId, workerId) {
   syncPublish()
 }
 
-/** 작업자 투입 현황 — 표시 행 */
+/** 작업자 투입 현황 — 필터 */
 const showOnlyUnassignedInPool = ref(false)
-const poolPageSize = ref(10)
-const poolPage = ref(1)
+const poolAffiliationFilter = ref('')
+const poolPartnerCompanyFilter = ref('')
+const workerPoolSearch = ref('')
+
+const poolAffiliationOptions = [
+  { value: '', label: '전체' },
+  { value: 'direct', label: '본사 소속' },
+  { value: 'partner', label: '협력사' },
+]
+
+/** 화면에 등장 가능한 작업자 기준 협력사 목록 (미투입·구역 배치 모두) */
+const poolPartnerCompanyOptions = computed(() => {
+  const set = new Set()
+  const consider = (w) => {
+    if (!workerTagOk(w)) return
+    if (getAffiliationKind(w.affiliation) !== 'partner') return
+    const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
+    if (n) set.add(n)
+  }
+  for (const w of waiting.value) consider(w)
+  for (const g of zoneGroups.value) {
+    for (const sz of g.subZones) {
+      for (const w of sz.workers) consider(w)
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'ko'))
+})
 
 const staffingTableRows = computed(() => {
   const rows = []
@@ -538,32 +568,71 @@ const staffingTableRows = computed(() => {
       }
     }
   }
-  return rows
+
+  let out = rows
+  const cat = poolAffiliationFilter.value
+  if (cat) {
+    out = out.filter((r) => getAffiliationKind(r.worker.affiliation) === cat)
+  }
+  const partnerCo = poolPartnerCompanyFilter.value
+  if (cat === 'partner' && partnerCo) {
+    out = out.filter(
+      (r) =>
+        getPartnerCompanyName(r.worker.affiliation, r.worker.affiliationLine) === partnerCo,
+    )
+  }
+  const q = workerPoolSearch.value.trim().toLowerCase()
+  if (q) {
+    out = out.filter((r) => {
+      const name = String(r.worker.name ?? '').toLowerCase()
+      const aff = affiliationDisplayCell(r.worker).toLowerCase()
+      const rawAff = String(r.worker.affiliation ?? '').toLowerCase()
+      return name.includes(q) || aff.includes(q) || rawAff.includes(q)
+    })
+  }
+  return out
 })
 
-const poolTotalPages = computed(() =>
-  Math.max(1, Math.ceil(staffingTableRows.value.length / poolPageSize.value)),
+watch(poolAffiliationFilter, (v) => {
+  if (v !== 'partner') poolPartnerCompanyFilter.value = ''
+})
+
+watch([poolAffiliationFilter, poolPartnerCompanyFilter, workerPoolSearch, showOnlyUnassignedInPool], () => {
+  selectedWaitingIds.value = []
+})
+
+const poolSelectableWaitingIds = computed(() =>
+  staffingTableRows.value.filter((r) => r.selectable && r.waitingId).map((r) => r.waitingId),
 )
 
-const paginatedPoolRows = computed(() => {
-  const start = (poolPage.value - 1) * poolPageSize.value
-  return staffingTableRows.value.slice(start, start + poolPageSize.value)
+const poolHeaderAllChecked = computed(() => {
+  const ids = poolSelectableWaitingIds.value
+  return ids.length > 0 && ids.every((id) => selectedWaitingIds.value.includes(id))
 })
 
-function setPoolPageSize(n) {
-  poolPageSize.value = n
-  poolPage.value = 1
-  selectedWaitingIds.value = []
-}
+const poolHeaderSomeChecked = computed(() => {
+  const ids = poolSelectableWaitingIds.value
+  return ids.some((id) => selectedWaitingIds.value.includes(id)) && !poolHeaderAllChecked.value
+})
 
-function selectAllOnPage() {
-  const ids = paginatedPoolRows.value.filter((r) => r.selectable && r.waitingId).map((r) => r.waitingId)
-  const allSelected = ids.length > 0 && ids.every((id) => selectedWaitingIds.value.includes(id))
-  if (allSelected) {
+const poolHeaderCheckboxRef = ref(null)
+
+watch([poolHeaderAllChecked, poolHeaderSomeChecked, selectedWaitingIds, staffingTableRows], () => {
+  nextTick(() => {
+    const el = poolHeaderCheckboxRef.value
+    if (el && 'indeterminate' in el) {
+      el.indeterminate = poolHeaderSomeChecked.value
+    }
+  })
+})
+
+function togglePoolHeaderSelectAll() {
+  const ids = poolSelectableWaitingIds.value
+  if (!ids.length) return
+  if (poolHeaderAllChecked.value) {
     selectedWaitingIds.value = selectedWaitingIds.value.filter((id) => !ids.includes(id))
   } else {
-    const set = new Set([...selectedWaitingIds.value, ...ids])
-    selectedWaitingIds.value = [...set]
+    selectedWaitingIds.value = [...new Set([...selectedWaitingIds.value, ...ids])]
   }
 }
 
@@ -688,8 +757,6 @@ function toastClass(v) {
 
 function onToggleUnassignedFilter() {
   showOnlyUnassignedInPool.value = !showOnlyUnassignedInPool.value
-  poolPage.value = 1
-  selectedWaitingIds.value = []
 }
 </script>
 
@@ -899,66 +966,95 @@ function onToggleUnassignedFilter() {
     <section class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card sm:p-5">
       <h2 class="mb-4 text-base font-bold text-forena-900">{{ T.workerPoolTitle }}</h2>
 
-      <div
-        class="mb-4 flex flex-col gap-3 rounded-xl border border-forena-100 bg-forena-50/40 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
-      >
-        <div class="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            class="rounded-lg border border-forena-200 bg-white px-3 py-2 text-xs font-bold text-forena-700 shadow-sm hover:bg-forena-50"
-            @click="selectAllOnPage"
+      <div class="mb-4 flex flex-col gap-3 rounded-xl border border-forena-100 bg-forena-50/40 p-3">
+        <div class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end lg:gap-x-3 lg:gap-y-2">
+          <div class="flex w-full min-w-0 flex-col gap-1 sm:w-auto">
+            <label class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{ T.filterAffil }}</label>
+            <select
+              v-model="poolAffiliationFilter"
+              class="w-full min-w-[9rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/25 sm:w-44"
+            >
+              <option v-for="opt in poolAffiliationOptions" :key="opt.value || 'all'" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+          </div>
+
+          <div
+            v-if="poolAffiliationFilter === 'partner'"
+            class="flex w-full min-w-0 flex-col gap-1 sm:w-auto"
           >
-            {{ T.selectAll }}
-          </button>
-          <button
-            type="button"
-            class="rounded-lg px-3 py-2 text-xs font-bold shadow-sm ring-1 transition"
-            :class="
-              showOnlyUnassignedInPool
-                ? 'bg-forena-800 text-white ring-forena-800'
-                : 'bg-white text-forena-700 ring-forena-200 hover:bg-forena-50'
-            "
-            @click="onToggleUnassignedFilter"
+            <label class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
+              T.filterPartnerCompany
+            }}</label>
+            <select
+              v-model="poolPartnerCompanyFilter"
+              class="w-full min-w-[9rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/25 sm:w-56"
+            >
+              <option value="">{{ T.allPartnerCompanies }}</option>
+              <option v-for="name in poolPartnerCompanyOptions" :key="name" :value="name">
+                {{ name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="w-full min-w-0 flex-1 lg:min-w-[220px]">
+            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
+              T.searchWorker
+            }}</label>
+            <div class="relative">
+              <Search
+                class="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-flare-500/80"
+                aria-hidden="true"
+              />
+              <input
+                v-model="workerPoolSearch"
+                type="search"
+                :placeholder="T.searchPh"
+                class="w-full rounded-xl border border-forena-200 bg-white py-2 pr-3 pl-9 text-xs text-forena-900 outline-none placeholder:text-slate-400 focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+              />
+            </div>
+          </div>
+
+          <div
+            class="flex w-full shrink-0 flex-wrap items-end gap-2 sm:w-auto"
+            :class="selectedWaitingIds.length ? '' : 'lg:ml-auto'"
           >
-            {{ T.showUnassignedOnly }}
-          </button>
-          <div class="flex items-center gap-1 text-[11px] font-bold text-forena-600">
-            <span>{{ T.pageLabel }}</span>
             <button
-              v-for="n in [10, 20, 30]"
-              :key="n"
               type="button"
-              class="rounded-md px-2 py-1 ring-1 transition"
+              class="rounded-lg px-3 py-2 text-xs font-bold shadow-sm ring-1 transition"
               :class="
-                poolPageSize === n
-                  ? 'bg-flare-600 text-white ring-flare-600'
+                showOnlyUnassignedInPool
+                  ? 'bg-forena-800 text-white ring-forena-800'
                   : 'bg-white text-forena-700 ring-forena-200 hover:bg-forena-50'
               "
-              @click="setPoolPageSize(n)"
+              @click="onToggleUnassignedFilter"
             >
-              {{ n }}
+              {{ T.showUnassignedOnly }}
             </button>
-            <span>{{ T.pageUnit }}</span>
           </div>
-        </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <select
-            v-model="assignTargetSubZoneId"
-            class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/30"
+          <div
+            v-if="selectedWaitingIds.length"
+            class="flex w-full flex-wrap items-end gap-2 sm:w-auto lg:ml-auto"
           >
-            <option value="" disabled>{{ T.assignTarget }}</option>
-            <option v-for="opt in assignOptions" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <button
-            type="button"
-            class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-xs font-bold text-white shadow-md hover:from-forena-800 hover:to-forena-950"
-            @click="assignSelectedWorkers"
-          >
-            {{ T.assignBtn }}
-          </button>
+            <select
+              v-model="assignTargetSubZoneId"
+              class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/30"
+            >
+              <option value="" disabled>{{ T.assignTarget }}</option>
+              <option v-for="opt in assignOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-xs font-bold text-white shadow-md hover:from-forena-800 hover:to-forena-950"
+              @click="assignSelectedWorkers"
+            >
+              {{ T.assignBtn }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -967,16 +1063,27 @@ function onToggleUnassignedFilter() {
           >{{ T.totalWorkers }} <strong class="text-forena-800">{{ boardKindBreakdown.total }}</strong
           >{{ T.countUnit }}</span
         >
-        <span v-if="staffingTableRows.length"
-          >{{ poolPage }} / {{ poolTotalPages }} 페이지 · {{ staffingTableRows.length }}명</span
-        >
+        <span v-if="staffingTableRows.length">{{ staffingTableRows.length }}명</span>
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-forena-100">
         <table class="w-full min-w-[800px] text-left text-sm">
           <thead class="border-b border-forena-100 bg-forena-50/70 text-[11px] font-bold uppercase tracking-wide text-forena-500">
             <tr>
-              <th class="w-12 px-3 py-3" />
+              <th class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                <div class="flex items-center justify-center">
+                  <input
+                    ref="poolHeaderCheckboxRef"
+                    type="checkbox"
+                    class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500 disabled:cursor-not-allowed disabled:opacity-40"
+                    :checked="poolHeaderAllChecked"
+                    :disabled="!poolSelectableWaitingIds.length"
+                    :title="T.poolHeaderSelectAll"
+                    :aria-label="T.poolHeaderSelectAll"
+                    @change="togglePoolHeaderSelectAll"
+                  />
+                </div>
+              </th>
               <th class="px-3 py-3">{{ T.workerTableName }}</th>
               <th class="px-3 py-3">{{ T.colAffil }}</th>
               <th class="px-3 py-3">{{ T.colFatigue }}</th>
@@ -985,22 +1092,24 @@ function onToggleUnassignedFilter() {
             </tr>
           </thead>
           <tbody class="text-forena-800">
-            <tr v-if="paginatedPoolRows.length === 0">
+            <tr v-if="staffingTableRows.length === 0">
               <td colspan="6" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
             </tr>
             <tr
-              v-for="row in paginatedPoolRows"
+              v-for="row in staffingTableRows"
               :key="(row.waitingId || row.worker.id) + row.placement"
               class="border-b border-forena-50 transition hover:bg-flare-50/30"
             >
-              <td class="px-3 py-3 align-middle">
-                <input
-                  v-if="row.selectable && row.waitingId"
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
-                  :checked="selectedWaitingIds.includes(row.waitingId)"
-                  @change="toggleSelectWaiting(row.waitingId)"
-                />
+              <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                <div class="flex items-center justify-center">
+                  <input
+                    v-if="row.selectable && row.waitingId"
+                    type="checkbox"
+                    class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
+                    :checked="selectedWaitingIds.includes(row.waitingId)"
+                    @change="toggleSelectWaiting(row.waitingId)"
+                  />
+                </div>
               </td>
               <td class="px-3 py-3">
                 <div class="flex items-center gap-2">
@@ -1042,26 +1151,6 @@ function onToggleUnassignedFilter() {
             </tr>
           </tbody>
         </table>
-      </div>
-
-      <div v-if="poolTotalPages > 1" class="mt-3 flex justify-center gap-2">
-        <button
-          type="button"
-          class="rounded-lg border border-forena-200 px-3 py-1.5 text-xs font-bold text-forena-700 disabled:opacity-40"
-          :disabled="poolPage <= 1"
-          @click="poolPage--"
-        >
-          이전
-        </button>
-        <span class="px-2 py-1.5 text-xs font-semibold text-forena-600">{{ poolPage }} / {{ poolTotalPages }}</span>
-        <button
-          type="button"
-          class="rounded-lg border border-forena-200 px-3 py-1.5 text-xs font-bold text-forena-700 disabled:opacity-40"
-          :disabled="poolPage >= poolTotalPages"
-          @click="poolPage++"
-        >
-          다음
-        </button>
       </div>
     </section>
 
