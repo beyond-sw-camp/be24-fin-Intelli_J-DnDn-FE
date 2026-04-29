@@ -48,9 +48,12 @@ spec:
     stage('Prepare') {
       steps {
         script {
-          // #1
-          env.TARGET_NAMESPACE = env.BRANCH_NAME == 'main' ? 'default' : 'test'
-          env.IMAGE_TAG = env.BRANCH_NAME == 'main' ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
+          def gitShort = (env.GIT_BRANCH ?: '')
+            .replaceFirst(/^refs\/heads\//, '')
+            .replaceFirst(/^origin\//, '')
+          def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
+          env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
+          env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
         }
       }
     }
