@@ -82,6 +82,12 @@ const router = createRouter({
       meta: meta('공정 지표보고'),
     },
     {
+      path: '/site/process-analysis',
+      name: 'siteProcessAnalysis',
+      component: () => import('../views/misc/PlaceholderView.vue'),
+      meta: meta('공정 분석'),
+    },
+    {
       path: '/site/gate',
       name: 'HeavyEquipmentGate',
       component: () => import('../views/schedule/HeavyEquipmentGateView.vue'),
@@ -98,6 +104,18 @@ const router = createRouter({
       name: 'siteWeather',
       component: () => import('../views/schedule/WeatherControlView.vue'),
       meta: meta('기상 관제'),
+    },
+    {
+      path: '/site/documents/upload',
+      name: 'siteDocumentUpload',
+      component: () => import('../views/misc/PlaceholderView.vue'),
+      meta: meta('업로드 문서'),
+    },
+    {
+      path: '/site/documents/ai-history',
+      name: 'siteDocumentAiHistory',
+      component: () => import('../views/misc/PlaceholderView.vue'),
+      meta: meta('AI 분석 이력'),
     },
     { path: '/site/alerts', redirect: '/site/dashboard' },
 

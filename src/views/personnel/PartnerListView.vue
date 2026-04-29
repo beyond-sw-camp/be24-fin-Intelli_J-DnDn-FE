@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Handshake,
@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   CircleCheck,
 } from 'lucide-vue-next'
+import { fetchPartnerList, createPartner } from '@/api/partner'
 
 const router = useRouter()
 
@@ -51,11 +52,11 @@ const T = {
   labelEnd: '계약 종료일 *',
   submit: '등록 완료',
   alertFields: '필수 정보를 모두 입력해주세요.',
-  alertAi:
-    'AI 문서 인식이 완료되었습니다. 추출된 데이터를 확인해주세요.',
+  alertAi: 'AI 문서 인식이 완료되었습니다. 추출된 데이터를 확인해주세요.',
   alertOk: '협력사가 등록되었습니다.',
-  alertExcel:
-    '협력사 리스트 엑셀 다운로드를 시작합니다.',
+  alertExcel: '협력사 리스트 엑셀 다운로드를 시작합니다.',
+  loadFail: '협력사 목록을 불러오는데 실패했습니다.',
+  saveFail: '협력사 등록에 실패했습니다.',
 }
 
 const showRegisterDrawer = ref(false)
@@ -63,87 +64,84 @@ const searchQuery = ref('')
 const currentTab = ref(T.tabAll)
 const tabs = [T.tabAll, T.tabActive, T.tabExpiring, T.tabEnded]
 const isParsing = ref(false)
+const isLoading = ref(false)
+const isSubmitting = ref(false)
+
+// 백엔드에서 받은 협력사 목록 (PartnerDto.partnerRes 형태)
+const partners = ref([])
 
 const newPartner = ref({
   name: '',
   bizNumber: '',
   repName: '',
-  trade: '',
   contact: '',
+  trade: '',
+  unitPrice: '',
   startDate: '',
   endDate: '',
-  unitPrice: '',
 })
 
-const partners = ref([
-  {
-    name: '태양건설',
-    repName: '김태양',
-    trade: '형틀',
-    workers: 45,
-    unitPrice: '250,000',
-    period: '2024.01.01 ~ 2025.12.31',
-    status: '계약 유지',
-    evaluation: 'A · 92점',
-  },
-  {
-    name: '우주산업',
-    repName: '박우주',
-    trade: '철근',
-    workers: 32,
-    unitPrice: '260,000',
-    period: '2023.05.01 ~ 2024.05.15',
-    status: '만료 예정',
-    evaluation: 'B+ · 81점',
-  },
-  {
-    name: '제일환경',
-    repName: '이환경',
-    trade: '비계',
-    workers: 18,
-    unitPrice: '230,000',
-    period: '2024.03.01 ~ 2026.02.28',
-    status: '계약 유지',
-    evaluation: 'A · 89점',
-  },
-])
+// 협력사 목록 로딩
+const loadPartners = async () => {
+  isLoading.value = true
+  try {
+    const data = await fetchPartnerList()
+    console.log('📥 받은 데이터:', data) // ← 디버깅용, 일단 추가
+    partners.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('❌ 협력사 목록 조회 실패:', e)
+    alert(e.message || T.loadFail)
+    partners.value = []
+  } finally {
+    isLoading.value = false
+  }
+}
 
+onMounted(loadPartners)
+
+// 통계 카드 - 프론트에서 status 필드 기준으로 집계
 const summary = computed(() => ({
   total: partners.value.length,
-  active: partners.value.filter((p) => p.status === '계약 유지').length,
+  active: partners.value.filter((p) => p.status === '계약 중' || p.status === '계약 유지').length,
   expiring: partners.value.filter((p) => p.status === '만료 예정').length,
 }))
 
+// 탭 + 검색 필터링
 const filteredPartners = computed(() => {
-  let result = partners.value
+  // partners.value가 배열이 아니면 빈 배열로 시작
+  let result = Array.isArray(partners.value) ? partners.value : []
 
   if (currentTab.value !== T.tabAll) {
-    result = result.filter((p) => p.status === currentTab.value)
+    result = result.filter((p) => {
+      if (currentTab.value === T.tabActive) {
+        return p.status === '계약 중' || p.status === '계약 유지'
+      }
+      return p.status === currentTab.value
+    })
   }
 
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(
       (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.trade.toLowerCase().includes(q) ||
-        p.repName.toLowerCase().includes(q),
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.trade || '').toLowerCase().includes(q) ||
+        (p.repName || '').toLowerCase().includes(q),
     )
   }
 
-  return result.sort((a, b) =>
-    a.status === '만료 예정' && b.status !== '만료 예정' ? -1 : 1,
-  )
+  return [...result].sort((a, b) => (a.status === '만료 예정' && b.status !== '만료 예정' ? -1 : 1))
 })
 
-const goToDetail = (id) => {
-  router.push(`/hr/partners/${id}`)
+const goToDetail = (idx) => {
+  router.push(`/hr/partners/${idx}`)
 }
 
 const downloadExcel = () => {
   alert(T.alertExcel)
 }
 
+// AI 문서 분석은 일단 더미 그대로 (백엔드 연동 전)
 const handleFileUpload = (e) => {
   if (!e.target.files[0]) return
   isParsing.value = true
@@ -153,18 +151,19 @@ const handleFileUpload = (e) => {
       name: '스마트안전(주)',
       bizNumber: '123-45-67890',
       repName: '최스마트',
-      trade: '전기',
       contact: '010-9999-8888',
+      trade: '전기',
+      unitPrice: '240000',
       startDate: '2024-05-01',
       endDate: '2025-04-30',
-      unitPrice: '240,000',
     }
     isParsing.value = false
     alert(T.alertAi)
   }, 1500)
 }
 
-const registerPartner = () => {
+// 협력사 등록 - 백엔드 호출
+const registerPartner = async () => {
   if (
     !newPartner.value.name ||
     !newPartner.value.trade ||
@@ -174,45 +173,59 @@ const registerPartner = () => {
     alert(T.alertFields)
     return
   }
-  partners.value.unshift({
-    id: `PTN-00${partners.value.length + 1}`,
-    name: newPartner.value.name,
-    repName: newPartner.value.repName,
-    trade: newPartner.value.trade,
-    contact: newPartner.value.contact,
-    workers: 0,
-    unitPrice: newPartner.value.unitPrice,
-    period: `${newPartner.value.startDate.replace(/-/g, '.')} ~ ${newPartner.value.endDate.replace(/-/g, '.')}`,
-    status: '계약 유지',
-    evaluation: '-',
-  })
 
-  alert(T.alertOk)
-  showRegisterDrawer.value = false
+  isSubmitting.value = true
+  try {
+    // 백엔드 PartnerDto.Req 형태로 변환
+    // unitPrice는 화면에서 "240,000" 처럼 입력될 수 있으므로 숫자로 변환
+    const payload = {
+      name: newPartner.value.name,
+      bizNumber: newPartner.value.bizNumber || null,
+      repName: newPartner.value.repName || null,
+      contact: newPartner.value.contact || null,
+      trade: newPartner.value.trade,
+      unitPrice: newPartner.value.unitPrice
+        ? Number(String(newPartner.value.unitPrice).replace(/[^\d]/g, ''))
+        : null,
+      startDate: newPartner.value.startDate, // "yyyy-MM-dd" → LocalDate 매핑됨
+      endDate: newPartner.value.endDate,
+    }
 
-  newPartner.value = {
-    name: '',
-    bizNumber: '',
-    repName: '',
-    trade: '',
-    contact: '',
-    startDate: '',
-    endDate: '',
-    unitPrice: '',
+    await createPartner(payload)
+    alert(T.alertOk)
+    showRegisterDrawer.value = false
+
+    newPartner.value = {
+      name: '',
+      bizNumber: '',
+      repName: '',
+      contact: '',
+      trade: '',
+      unitPrice: '',
+      startDate: '',
+      endDate: '',
+    }
+
+    // 등록 후 목록 다시 불러오기
+    await loadPartners()
+  } catch (e) {
+    console.error(e)
+    alert(e.message || T.saveFail)
+  } finally {
+    isSubmitting.value = false
   }
 }
 
 const statusBadgeClass = (status) => {
-  if (status === '만료 예정')
-    return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
-  if (status === '계약 종료')
-    return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'
+  if (status === '만료 예정') return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
+  if (status === '계약 종료') return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'
   return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80'
 }
 </script>
 
 <template>
   <div class="space-y-6 pb-10">
+    <!-- 헤더 -->
     <div
       class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-forena-50/50 to-flare-50/30 p-6 shadow-card"
     >
@@ -236,27 +249,25 @@ const statusBadgeClass = (status) => {
         </div>
         <div class="flex flex-wrap items-center gap-2 sm:justify-end">
           <div class="relative min-w-[220px] flex-1 sm:flex-initial">
-            <Search
-              class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-flare-500/80"
-            />
+            <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-forena-400" />
             <input
               v-model="searchQuery"
               type="text"
               :placeholder="T.searchPh"
-              class="w-full rounded-xl border border-forena-200 bg-white py-2.5 pr-4 pl-9 text-sm text-forena-900 outline-none transition placeholder:text-slate-400 focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+              class="w-full rounded-xl border border-forena-200 bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
             />
           </div>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-xl border border-forena-200 bg-white px-4 py-2.5 text-sm font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm font-semibold text-forena-700 transition hover:bg-forena-50"
             @click="downloadExcel"
           >
-            <Download class="h-4 w-4 text-flare-600" />
+            <Download class="h-4 w-4" />
             {{ T.excel }}
           </button>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
+            class="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-3 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
             @click="showRegisterDrawer = true"
           >
             <Plus class="h-4 w-4" />
@@ -266,68 +277,55 @@ const statusBadgeClass = (status) => {
       </div>
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-3">
-      <article class="rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card">
-        <div class="flex items-center gap-2 text-sm font-semibold text-forena-900">
-          <Building2 class="h-4 w-4 text-flare-600" />
-          {{ T.statTotal }}
+    <!-- 통계 카드 -->
+    <div class="grid gap-3 sm:grid-cols-3">
+      <div class="rounded-2xl border border-forena-100 bg-white p-4 shadow-card">
+        <div class="flex items-center gap-2">
+          <Building2 class="h-4 w-4 text-forena-500" />
+          <p class="text-xs font-bold text-forena-500">{{ T.statTotal }}</p>
         </div>
-        <p class="mt-3 text-3xl font-light tabular-nums text-forena-900">
-          {{ summary.total
-          }}<span class="ml-1 text-sm font-normal text-slate-500">{{ T.unit }}</span>
+        <p class="mt-2 text-2xl font-bold tabular-nums text-forena-900">
+          {{ summary.total }}<span class="ml-1 text-sm text-forena-500">{{ T.unit }}</span>
         </p>
-      </article>
-      <article class="rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card">
-        <div class="flex items-center gap-2 text-sm font-semibold text-forena-900">
+      </div>
+      <div class="rounded-2xl border border-emerald-100 bg-white p-4 shadow-card">
+        <div class="flex items-center gap-2">
           <CircleCheck class="h-4 w-4 text-emerald-600" />
-          {{ T.statActive }}
+          <p class="text-xs font-bold text-emerald-700">{{ T.statActive }}</p>
         </div>
-        <p class="mt-3 text-3xl font-light tabular-nums text-emerald-800">
-          {{ summary.active
-          }}<span class="ml-1 text-sm font-normal text-emerald-600/80">{{ T.unit }}</span>
+        <p class="mt-2 text-2xl font-bold tabular-nums text-emerald-700">
+          {{ summary.active }}<span class="ml-1 text-sm text-emerald-500">{{ T.unit }}</span>
         </p>
-      </article>
-      <article
-        class="rounded-2xl border border-rose-100/90 bg-gradient-to-br from-rose-50/40 to-white p-5 shadow-card"
-      >
-        <div class="flex items-center gap-2 text-sm font-semibold text-rose-800">
-          <AlertTriangle class="h-4 w-4 shrink-0" />
-          {{ T.statExpiring }}
+      </div>
+      <div class="rounded-2xl border border-rose-100 bg-white p-4 shadow-card">
+        <div class="flex items-center gap-2">
+          <AlertTriangle class="h-4 w-4 text-rose-600" />
+          <p class="text-xs font-bold text-rose-700">{{ T.statExpiring }}</p>
+          <span class="text-[10px] text-rose-400">{{ T.statExpiringHint }}</span>
         </div>
-        <div class="mt-3 flex items-end justify-between gap-2">
-          <p class="text-3xl font-light tabular-nums text-rose-700">
-            {{ summary.expiring
-            }}<span class="ml-1 text-sm font-normal text-rose-500">{{ T.unit }}</span>
-          </p>
-          <span class="rounded-lg bg-rose-100 px-2 py-1 text-[10px] font-bold text-rose-700">{{
-            T.statExpiringHint
-          }}</span>
-        </div>
-      </article>
+        <p class="mt-2 text-2xl font-bold tabular-nums text-rose-700">
+          {{ summary.expiring }}<span class="ml-1 text-sm text-rose-500">{{ T.unit }}</span>
+        </p>
+      </div>
     </div>
 
-    <div
-      class="flex flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
-    >
-      <div
-        class="flex flex-col gap-3 border-b border-forena-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
-      >
-        <div class="flex gap-1 overflow-x-auto pb-1 sm:pb-0">
-          <button
-            v-for="tab in tabs"
-            :key="tab"
-            type="button"
-            class="relative shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition"
-            :class="
-              currentTab === tab
-                ? 'bg-flare-50 font-bold text-forena-900 ring-1 ring-flare-200/80'
-                : 'text-slate-500 hover:bg-forena-50/80 hover:text-forena-800'
-            "
-            @click="currentTab = tab"
-          >
-            {{ tab }}
-          </button>
-        </div>
+    <!-- 탭 + 테이블 -->
+    <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+      <div class="flex gap-1 overflow-x-auto px-4 pt-3 pb-1 sm:pb-0">
+        <button
+          v-for="tab in tabs"
+          :key="tab"
+          type="button"
+          class="relative shrink-0 rounded-lg px-3 py-2 text-sm font-medium transition"
+          :class="
+            currentTab === tab
+              ? 'bg-flare-50 font-bold text-forena-900 ring-1 ring-flare-200/80'
+              : 'text-slate-500 hover:bg-forena-50/80 hover:text-forena-800'
+          "
+          @click="currentTab = tab"
+        >
+          {{ tab }}
+        </button>
       </div>
 
       <div class="overflow-x-auto">
@@ -343,7 +341,12 @@ const statusBadgeClass = (status) => {
             </tr>
           </thead>
           <tbody class="text-forena-800">
-            <tr v-if="filteredPartners.length === 0">
+            <tr v-if="isLoading">
+              <td colspan="4" class="px-6 py-14 text-center text-sm text-slate-400">
+                <Loader2 class="mx-auto h-5 w-5 animate-spin" />
+              </td>
+            </tr>
+            <tr v-else-if="filteredPartners.length === 0">
               <td colspan="4" class="px-6 py-14 text-center text-sm text-slate-400">
                 {{ T.empty }}
               </td>
@@ -351,19 +354,21 @@ const statusBadgeClass = (status) => {
             <tr
               v-else
               v-for="partner in filteredPartners"
-              :key="partner.id"
+              :key="partner.idx"
               class="cursor-pointer border-b border-forena-50 transition hover:bg-flare-50/40"
-              @click="goToDetail(partner.id)"
+              @click="goToDetail(partner.idx)"
             >
               <td class="px-6 py-4">
                 <div class="font-semibold text-forena-900">{{ partner.name }}</div>
-                <div class="text-[11px] text-slate-500">{{ partner.id }}</div>
+                <div class="text-[11px] text-slate-500">
+                  PTN-{{ String(partner.idx).padStart(3, '0') }}
+                </div>
               </td>
               <td class="px-6 py-4">
                 <span class="font-semibold text-forena-800">{{ partner.trade }}</span>
-                <span class="ml-2 text-xs text-slate-500">| {{ partner.repName }}</span>
+                <span class="ml-2 text-xs text-slate-500">| {{ partner.repName || '-' }}</span>
               </td>
-              <td class="px-6 py-4 text-xs text-slate-600">{{ partner.period }}</td>
+              <td class="px-6 py-4 text-xs text-slate-600">{{ partner.period || '-' }}</td>
               <td class="px-6 py-4 text-center">
                 <span
                   class="inline-flex rounded-lg bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-forena-800 ring-1 ring-flare-200/70"
@@ -377,6 +382,7 @@ const statusBadgeClass = (status) => {
       </div>
     </div>
 
+    <!-- 등록 Drawer -->
     <Teleport to="body">
       <div
         v-if="showRegisterDrawer"
@@ -518,10 +524,12 @@ const statusBadgeClass = (status) => {
 
             <button
               type="button"
-              class="w-full rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 py-3 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
+              :disabled="isSubmitting"
+              class="w-full rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 py-3 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:opacity-60"
               @click="registerPartner"
             >
-              {{ T.submit }}
+              <span v-if="!isSubmitting">{{ T.submit }}</span>
+              <Loader2 v-else class="mx-auto h-4 w-4 animate-spin" />
             </button>
           </div>
         </aside>
