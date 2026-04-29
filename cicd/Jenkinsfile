@@ -42,11 +42,22 @@ spec:
 
   environment {
     IMAGE_NAME = 'seungwoo0128/dndn-frontend'
-    TARGET_NAMESPACE = "${env.BRANCH_NAME == 'main' ? 'default' : 'test'}"
-    IMAGE_TAG = "${env.BRANCH_NAME == 'main' ? '2.' + env.BUILD_NUMBER : 'test-2.' + env.BUILD_NUMBER}"
   }
 
   stages {
+    stage('Prepare') {
+      steps {
+        script {
+          def gitShort = (env.GIT_BRANCH ?: '')
+            .replaceFirst(/^refs\/heads\//, '')
+            .replaceFirst(/^origin\//, '')
+          def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
+          env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
+          env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
+        }
+      }
+    }
+
     stage('Gradle Build') {
       steps {
         container('node') {
@@ -65,8 +76,8 @@ spec:
             /kaniko/executor \
               --context=${WORKSPACE} \
               --dockerfile=${WORKSPACE}/Dockerfile \
-              --destination=${IMAGE_NAME}:${IMAGE_TAG} \
-              --destination=${IMAGE_NAME}:latest \
+              --destination=${env.IMAGE_NAME}:${env.IMAGE_TAG} \
+              --destination=${env.IMAGE_NAME}:latest \
               --single-snapshot \
               --use-new-run \
               --cache=true \
@@ -78,8 +89,8 @@ spec:
 
     stage('Result') {
       steps {
-        echo "Pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
-        echo "Deploying to Namespace: ${TARGET_NAMESPACE}"
+        echo "Pushed: ${env.IMAGE_NAME}:${env.IMAGE_TAG}"
+        echo "Deploying to Namespace: ${env.TARGET_NAMESPACE}"
       }
     }
 
@@ -88,8 +99,8 @@ spec:
         container('kubectl'){
           script {
             // -n 옵션을 통해 TARGET_NAMESPACE에 배포하도록 수정
-            sh "kubectl set image deployment/dndn-frontend frontend=${IMAGE_NAME}:${IMAGE_TAG} -n ${TARGET_NAMESPACE}"
-            sh "kubectl rollout restart deployment/dndn-frontend -n ${TARGET_NAMESPACE}"
+            sh "kubectl set image deployment/dndn-frontend frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl rollout restart deployment/dndn-frontend -n ${env.TARGET_NAMESPACE}"
           }
         }
       }
