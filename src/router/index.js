@@ -17,7 +17,7 @@ const router = createRouter({
     {
       path: '/site/dashboard',
       name: 'siteDashboard',
-      component: () => import('../views/personnel/SiteDashboardView.vue'),
+      component: () => import('../views/schedule/EsgDashboardView.vue'),
       meta: meta('인사 대시보드'),
     },
     {
