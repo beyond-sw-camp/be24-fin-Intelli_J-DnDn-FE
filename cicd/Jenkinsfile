@@ -1,3 +1,5 @@
+echo "BRANCH_NAME=${env.BRANCH_NAME} TARGET_NAMESPACE=${TARGET_NAMESPACE}"
+
 pipeline {
   agent {
     kubernetes {
@@ -42,7 +44,6 @@ spec:
 
   environment {
     IMAGE_NAME = 'seungwoo0128/dndn-frontend'
-    // cicd #1
     TARGET_NAMESPACE = "${env.BRANCH_NAME == 'main' ? 'default' : 'test'}"
     IMAGE_TAG = "${env.BRANCH_NAME == 'main' ? '2.' + env.BUILD_NUMBER : 'test-2.' + env.BUILD_NUMBER}"
   }
