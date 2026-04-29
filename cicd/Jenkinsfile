@@ -41,21 +41,13 @@ spec:
   }
 
   environment {
-    IMAGE_NAME = 'seungwoo0128/dndn-frontend'   
-    IMAGE_TAG  = "1.${env.BUILD_NUMBER}"
+    IMAGE_NAME = 'seungwoo0128/dndn-frontend'
+    // 브랜치 이름에 따라 Namespace와 Tag를 동적으로 결정
+    TARGET_NAMESPACE = "${env.BRANCH_NAME == 'main' ? 'default' : 'test'}"
+    IMAGE_TAG = "${env.BRANCH_NAME == 'main' ? '2.' + env.BUILD_NUMBER : 'test-2.' + env.BUILD_NUMBER}"
   }
-  stages {
-    stage('Checkout') {
-      steps {
-        container('node') {
-          checkout([$class: 'GitSCM',
-            branches: [[name: '*/main']],
-            userRemoteConfigs: [[url: 'https://github.com/beyond-sw-camp/be24-fin-Intelli_J-DnDn-FE.git']]
-          ])
-        }
-      }
-    }
 
+  stages {
     stage('Gradle Build') {
       steps {
         container('node') {
@@ -88,14 +80,17 @@ spec:
     stage('Result') {
       steps {
         echo "Pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
+        echo "Deploying to Namespace: ${TARGET_NAMESPACE}"
       }
     }
+
     stage('Deploy to Kubernetes') {
       steps {
         container('kubectl'){
           script {
-              sh "kubectl set image deployment/dndn-frontend frontend=${IMAGE_NAME}:${IMAGE_TAG}"
-              sh "kubectl rollout restart deployment/dndn-frontend"
+            // -n 옵션을 통해 TARGET_NAMESPACE에 배포하도록 수정
+            sh "kubectl set image deployment/dndn-frontend frontend=${IMAGE_NAME}:${IMAGE_TAG} -n ${TARGET_NAMESPACE}"
+            sh "kubectl rollout restart deployment/dndn-frontend -n ${TARGET_NAMESPACE}"
           }
         }
       }
