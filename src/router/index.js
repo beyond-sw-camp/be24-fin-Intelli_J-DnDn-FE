@@ -15,12 +15,6 @@ const router = createRouter({
       meta: meta('로그인'),
     },
     {
-      path: '/site/dashboard',
-      name: 'siteDashboard',
-      component: () => import('../views/personnel/SiteDashboardView.vue'),
-      meta: meta('인사 대시보드'),
-    },
-    {
       path: '/site/onboarding',
       name: 'siteOnboarding',
       component: () => import('../views/personnel/WorkerOnboardingView.vue'),
@@ -106,6 +100,12 @@ const router = createRouter({
       meta: meta('기상 관제'),
     },
     {
+      path: '/site/dashboard',
+      name: 'siteDashboard',
+      component: () => import('../views/schedule/EsgDashboardView.vue'),
+      meta: meta('ESG 통합 대시보드'),
+    },
+    {
       path: '/site/documents/upload',
       name: 'siteDocumentUpload',
       component: () => import('../views/misc/PlaceholderView.vue'),
@@ -165,7 +165,10 @@ const router = createRouter({
     { path: '/SiteManagement', redirect: '/site/dashboard' },
     { path: '/SiteManagement/:id', redirect: '/site/dashboard' },
     { path: '/PartnerManagement', redirect: '/hr/partners' },
-    { path: '/PartnerManagement/:id', redirect: (to) => ({ path: `/hr/partners/${to.params.id}` }) },
+    {
+      path: '/PartnerManagement/:id',
+      redirect: (to) => ({ path: `/hr/partners/${to.params.id}` }),
+    },
     { path: '/Attendance/List', redirect: '/site/workers/manage' },
     { path: '/Attendance/Closing', redirect: '/site/dashboard' },
     { path: '/Payroll/Calculation', redirect: '/site/man-days' },
