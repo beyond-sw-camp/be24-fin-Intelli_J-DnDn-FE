@@ -48,8 +48,13 @@ spec:
     stage('Prepare') {
       steps {
         script {
-          env.TARGET_NAMESPACE = env.BRANCH_NAME == 'main' ? 'default' : 'test'
-          env.IMAGE_TAG = env.BRANCH_NAME == 'main' ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
+          // BRANCH_NAME은 Multibranch에서만 보통 설정됨. 일반 Pipeline은 checkout만 main이고 BRANCH_NAME이 비어 있을 수 있음.
+          def gitShort = (env.GIT_BRANCH ?: '')
+            .replaceFirst(/^refs\/heads\//, '')
+            .replaceFirst(/^origin\//, '')
+          def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
+          env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
+          env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
         }
       }
     }
