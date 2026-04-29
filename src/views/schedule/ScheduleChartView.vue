@@ -820,7 +820,7 @@ onMounted(async () => {
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-forena-100 px-5 py-3">
           <div class="flex items-center gap-2">
             <CalendarRange class="h-4 w-4 text-flare-600" />
-            <h2 class="text-sm font-bold text-forena-900">전체 간트차트</h2>
+            <h2 class="text-sm font-bold text-forena-900">전체 간트차트dsffd</h2>
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <!-- 보기 전환 -->
