@@ -42,7 +42,7 @@ spec:
 
   environment {
     IMAGE_NAME = 'seungwoo0128/dndn-frontend'
-    // 브랜치 이름에 따라 Namespace와 Tag를 동적으로 결정
+    // cicd #1
     TARGET_NAMESPACE = "${env.BRANCH_NAME == 'main' ? 'default' : 'test'}"
     IMAGE_TAG = "${env.BRANCH_NAME == 'main' ? '2.' + env.BUILD_NUMBER : 'test-2.' + env.BUILD_NUMBER}"
   }
