@@ -1,3 +1,5 @@
+echo "BRANCH_NAME=${env.BRANCH_NAME} TARGET_NAMESPACE=${TARGET_NAMESPACE}"
+
 pipeline {
   agent {
     kubernetes {
