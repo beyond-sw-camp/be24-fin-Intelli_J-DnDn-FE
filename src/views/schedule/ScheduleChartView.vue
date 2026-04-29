@@ -1079,18 +1079,6 @@ onMounted(async () => {
                 <strong class="block text-[10px] uppercase">메모</strong>
                 {{ selectedTask.memo }}
               </div>
-
-              <!-- 액션 -->
-              <div v-if="canEdit" class="flex gap-2">
-                <button v-if="!isConfirmed" @click="openEdit(selectedTask)"
-                        class="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-forena-800 py-2 text-xs font-bold text-white hover:bg-forena-900">
-                  <Pencil class="h-3.5 w-3.5" /> 수정
-                </button>
-                <button v-else @click="openChangeRequestForm(selectedTask)"
-                        class="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-flare-600 py-2 text-xs font-bold text-white hover:bg-flare-700">
-                  <GitBranch class="h-3.5 w-3.5" /> 변경 요청
-                </button>
-              </div>
             </div><!-- /space-y-4 p-4 -->
           </div><!-- /overflow-y-auto -->
         </div><!-- /w-80 shrink-0 -->
@@ -1277,54 +1265,46 @@ onMounted(async () => {
           <table class="w-full min-w-[1100px] text-xs">
             <thead class="sticky top-0 bg-forena-50/95 text-[10px] font-bold uppercase text-forena-500 shadow-sm">
             <tr>
-              <th class="w-8 px-2 py-2.5"><input type="checkbox" disabled /></th>
-              <th class="px-3 py-2.5 text-left">공종</th>
-              <th class="px-3 py-2.5 text-left">작업명</th>
-              <th class="px-3 py-2.5 text-left">시작일</th>
-              <th class="px-3 py-2.5 text-left">종료일</th>
-              <th class="px-3 py-2.5 text-right">기간</th>
-              <th class="px-3 py-2.5 text-left">선행</th>
-              <th class="px-3 py-2.5 text-left">후속</th>
+              <th class="w-8 px-3 py-2.5"><input type="checkbox" disabled /></th>
+              <th class="px-3 py-2.5 text-center">공종</th>
+              <th class="px-3 py-2.5 text-center">작업명</th>
+              <th class="px-3 py-2.5 text-center">시작일</th>
+              <th class="px-3 py-2.5 text-center">종료일</th>
+              <th class="px-3 py-2.5 text-center">기간</th>
+              <th class="px-3 py-2.5 text-center">선행</th>
+              <th class="px-3 py-2.5 text-center">후속</th>
               <th class="px-3 py-2.5 text-center">CP</th>
-              <th class="px-3 py-2.5 text-right">보할</th>
-              <th class="px-3 py-2.5 text-right">신뢰도</th>
-              <th class="px-3 py-2.5 text-left">상태</th>
+              <th class="px-3 py-2.5 text-center">보할</th>
+              <th class="px-3 py-2.5 text-center">신뢰도</th>
+              <th class="px-3 py-2.5 text-center">상태</th>
               <th class="px-3 py-2.5"></th>
             </tr>
             </thead>
             <tbody class="divide-y divide-forena-50">
             <tr v-for="t in filteredTasks" :key="t.id"
                 class="cursor-pointer transition hover:bg-forena-50/40"
-                :class="selectedTaskId === t.id ? 'bg-flare-50/50' : ''"
-                @click="openEdit(t)">
-              <td class="px-2 py-2" @click.stop>
+                :class="selectedTaskId === t.id ? 'bg-flare-50/50' : ''">
+              <td class="px-5 py-2" @click.stop>
                 <input type="checkbox" v-model="t.checked" :disabled="isConfirmed" />
               </td>
-              <td class="px-3 py-2">
+              <td class="px-3 py-2 text-center">
                 <p class="font-semibold text-forena-700">{{ t.group }}</p>
                 <p class="text-[10px] text-slate-400">{{ t.sub }}</p>
               </td>
-              <td class="px-3 py-2 font-semibold text-forena-900">{{ t.name }}</td>
-              <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.start }}</td>
-              <td class="px-3 py-2 tabular-nums text-slate-600">{{ t.end }}</td>
-              <td class="px-3 py-2 text-right tabular-nums text-slate-500">{{ t.durDays }}일</td>
-              <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.prev || '-' }}</td>
-              <td class="px-3 py-2 text-[11px] text-slate-500">{{ t.next || '-' }}</td>
+              <td class="px-3 py-2 text-center font-semibold text-forena-900">{{ t.name }}</td>
+              <td class="px-3 py-2 text-center tabular-nums text-slate-600">{{ t.start }}</td>
+              <td class="px-3 py-2 text-center tabular-nums text-slate-600">{{ t.end }}</td>
+              <td class="px-3 py-2 text-center tabular-nums text-slate-500">{{ t.durDays }}일</td>
+              <td class="px-3 py-2 text-center text-[11px] text-slate-500">{{ t.prev || '-' }}</td>
+              <td class="px-3 py-2 text-center text-[11px] text-slate-500">{{ t.next || '-' }}</td>
               <td class="px-3 py-2 text-center">
                 <span v-if="t.isCritical" class="rounded bg-rose-100 px-1.5 py-0.5 text-[9px] font-bold text-rose-700">CP</span>
                 <span v-else class="text-slate-300">—</span>
               </td>
-              <td class="px-3 py-2 text-right tabular-nums font-bold text-forena-700">{{ t.weight }}%</td>
-              <td class="px-3 py-2 text-right tabular-nums font-bold" :class="confidenceClass(t.confidence)">{{ t.confidence }}%</td>
-              <td class="px-3 py-2">
-                <span class="rounded-md px-1.5 py-0.5 text-[10px] font-bold" :class="reviewStatusClass(t.reviewStatus)">{{ t.reviewStatus }}</span>
-              </td>
-              <td class="px-3 py-2 text-right" @click.stop>
-                <button v-if="canEdit" @click="openEdit(t)"
-                        class="rounded p-1 text-forena-500 hover:bg-forena-100"
-                        :title="isConfirmed ? '변경 요청' : '수정'">
-                  <Pencil class="h-3.5 w-3.5" />
-                </button>
+              <td class="px-3 py-2 text-center tabular-nums font-bold text-forena-700">{{ t.weight }}%</td>
+              <td class="px-3 py-2 text-center tabular-nums font-bold" :class="confidenceClass(t.confidence)">{{ t.confidence }}%</td>
+              <td class="px-3 py-2 flex items-center justify-center">
+                <span class="rounded-md px-1.5 py-0.5 text-[10px] font-bold " :class="reviewStatusClass(t.reviewStatus)">{{ t.reviewStatus }}</span>
               </td>
             </tr>
             <tr v-if="!filteredTasks.length">
@@ -1379,8 +1359,8 @@ onMounted(async () => {
               </div>
             </td>
             <td class="px-3 py-2 tabular-nums text-slate-600">{{ m.date }}</td>
-            <td class="px-3 py-2 text-slate-500">{{ m.relatedTask }}</td>
-            <td class="px-3 py-2 text-center">
+            <td class="px-3 py-2 text-center text-slate-500">{{ m.relatedTask }}</td>
+            <td class="px-3 py-2 flex items-center justify-center">
               <span class="rounded px-1.5 py-0.5 text-[10px] font-bold" :class="milestoneStatusClass(m.status)">{{ m.status }}</span>
             </td>
             <td class="px-3 py-2 text-center">
@@ -1443,82 +1423,6 @@ onMounted(async () => {
           <p class="mt-1 text-[11px] text-slate-500">{{ log.who }} · {{ log.detail }}</p>
         </li>
       </ul>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- 모달: 작업 수정 (확정 전)                                     -->
-    <!-- ============================================================ -->
-    <div v-if="editModalOpen && editForm" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" @click.self="editModalOpen = false">
-      <div class="w-full max-w-2xl overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div class="flex items-center justify-between border-b border-forena-100 px-5 py-3">
-          <h3 class="text-sm font-bold text-forena-900">작업 수정 — {{ editForm._original.name }}</h3>
-          <button @click="editModalOpen = false"><X class="h-4 w-4 text-slate-400" /></button>
-        </div>
-        <div class="grid grid-cols-2 gap-3 p-5 max-h-[70vh] overflow-y-auto">
-          <div class="col-span-2">
-            <label class="text-[10px] font-bold uppercase text-forena-400">작업명</label>
-            <input v-model="editForm.name" type="text"
-                   class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-            <p v-if="editForm.name !== editForm._original.name" class="mt-0.5 text-[10px] text-amber-600">
-              변경 전: <span class="line-through">{{ editForm._original.name }}</span>
-            </p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">공종</label>
-            <input v-model="editForm.group" type="text" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">작업 위치</label>
-            <input v-model="editForm.location" type="text" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">시작일</label>
-            <input v-model="editForm.start" type="date" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-            <p v-if="editForm.start !== editForm._original.start" class="mt-0.5 text-[10px] text-amber-600">변경 전: {{ editForm._original.start }}</p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">종료일</label>
-            <input v-model="editForm.end" type="date" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-            <p v-if="editForm.end !== editForm._original.end" class="mt-0.5 text-[10px] text-amber-600">변경 전: {{ editForm._original.end }}</p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">CP 여부</label>
-            <select v-model="editForm.isCritical" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400">
-              <option :value="true">CP</option>
-              <option :value="false">비CP</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">보할 (%)</label>
-            <input v-model.number="editForm.weight" type="number" min="0" max="100" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-            <p v-if="editForm.weight !== editForm._original.weight" class="mt-0.5 text-[10px] text-amber-600">변경 전: {{ editForm._original.weight }}%</p>
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">선행 작업</label>
-            <input v-model="editForm.prev" type="text" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">후속 작업</label>
-            <input v-model="editForm.next" type="text" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">담당 책임자</label>
-            <input v-model="editForm.responsible" type="text" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div>
-            <label class="text-[10px] font-bold uppercase text-forena-400">필요 인원</label>
-            <input v-model.number="editForm.requiredCount" type="number" min="0" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400" />
-          </div>
-          <div class="col-span-2">
-            <label class="text-[10px] font-bold uppercase text-forena-400">메모</label>
-            <textarea v-model="editForm.memo" rows="2" class="mt-1 w-full rounded-lg border border-forena-200 bg-white px-2.5 py-2 text-xs outline-none focus:border-flare-400"></textarea>
-          </div>
-        </div>
-        <div class="flex justify-end gap-2 border-t border-forena-100 px-5 py-3">
-          <button @click="editModalOpen = false" class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50">취소</button>
-          <button @click="saveEdit" class="rounded-lg bg-forena-800 px-4 py-2 text-xs font-bold text-white hover:bg-forena-900">저장</button>
-        </div>
-      </div>
     </div>
 
     <!-- ============================================================ -->
