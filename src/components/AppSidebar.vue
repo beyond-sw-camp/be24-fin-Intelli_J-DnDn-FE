@@ -71,7 +71,7 @@ const scheduleNavAll = [
     label: '작업 지시',
     icon: FileText,
   },
-  { path: '/site/daily-log', label: '작업 실적', icon: CalendarDays },
+  { path: '/site/daily-log', label: '공사 일보', icon: CalendarDays },
   {
     path: '/site/process-analysis',
     label: '공정 분석',
