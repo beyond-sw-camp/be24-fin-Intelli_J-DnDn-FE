@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { Upload, BrainCircuit, X, Users, Wrench, MapPin, ChevronDown, ChevronLeft, ChevronRight, CalendarDays, CalendarRange, CalendarPlus } from 'lucide-vue-next'
+import { Upload, BrainCircuit, X, Users, Wrench, MapPin, ChevronDown, ChevronLeft, ChevronRight, CalendarRange, CalendarPlus, FileCheck2, AlertTriangle, CheckCircle2, Plus, Trash2, ClipboardList, Save } from 'lucide-vue-next'
 import { workPlans, yearlyWorkPlans } from '@/data/mockData'
 import { planStore } from '@/data/planStore'
 
@@ -19,7 +19,6 @@ const statuses = ['계획','검토 중','확정','진행 중']
 const showUploadMenu = ref(false)
 const uploadMenuRef = ref(null)
 const yearlyInputRef = ref(null)
-const weeklyInputRef = ref(null)
 const monthlyInputRef = ref(null)
 
 // 연장 정보 헬퍼 (planStore 기반)
@@ -95,17 +94,162 @@ function plansForDay(dateStr) {
 }
 
 // =========================
-// 업로드
+// 업로드 (연간/월간 → 간트차트 검증 모달)
 // =========================
 function toggleUploadMenu() { showUploadMenu.value = !showUploadMenu.value }
 function pickYearly() { showUploadMenu.value = false; yearlyInputRef.value?.click() }
-function pickWeekly() { showUploadMenu.value = false; weeklyInputRef.value?.click() }
 function pickMonthly() { showUploadMenu.value = false; monthlyInputRef.value?.click() }
+// 주간은 업로드가 아니라 협력사 작성 모달을 띄움
+function openWeeklyComposer() { showUploadMenu.value = false; openWeeklyForm() }
+
+// 검증 모달 상태
+const showVerifyModal = ref(false)
+const verifyCategory = ref('')        // '연간' | '월간'
+const verifyFileName = ref('')
+const verifyRows = ref([])            // 파싱된 행 (데모: 모의 데이터)
+
 function onFileChange(e, category) {
   const f = e.target.files?.[0]
-  if (f) { uploadFileName.value = f.name; uploadCategory.value = category }
+  if (!f) { e.target.value = ''; return }
+  uploadFileName.value = f.name
+  uploadCategory.value = category
+  // 검증 모달용 모의 파싱 결과 생성 (실제 환경에서는 백엔드 파싱 결과로 교체)
+  verifyCategory.value = category
+  verifyFileName.value = f.name
+  verifyRows.value = generateMockParseRows(category)
+  showVerifyModal.value = true
   e.target.value = ''
 }
+
+// 데모용: 업로드 파일에서 추출되었다고 가정하는 행
+function generateMockParseRows(category) {
+  if (category === '연간') {
+    return [
+      { id: 'r1', name: '본동 골조 공사',     trade: '골조', location: '본동 1~10층', start: '2026-03-01', end: '2026-08-31', issue: null },
+      { id: 'r2', name: '지하주차장 방수',     trade: '방수', location: '지하 1~3층',   start: '2026-04-15', end: '2026-06-30', issue: null },
+      { id: 'r3', name: '전기 간선 설치',     trade: '전기', location: '전 층',         start: '2026-05-01', end: '2026-09-15', issue: 'warning' },
+      { id: 'r4', name: '외부 마감',           trade: '형틀', location: '외벽',          start: '',           end: '2026-10-31', issue: 'error' },
+    ]
+  }
+  // 월간
+  return [
+    { id: 'm1', name: 'B2층 전기 배관 설치', trade: '전기', location: 'B2층 전기실',     start: '2026-04-29', end: '2026-05-08', issue: null },
+    { id: 'm2', name: '본동 3층 슬라브 철근 박·고정', trade: '철근', location: '본동 3층', start: '2026-04-25', end: '2026-05-02', issue: null },
+    { id: 'm3', name: 'B1층 슬라브 형틀 조립', trade: '형틀', location: 'B1층 전체',      start: '2026-04-28', end: '2026-05-05', issue: null },
+    { id: 'm4', name: '지하주차장 방수 공사',  trade: '방수', location: '지하 주차구역 A', start: '2026-05-03', end: '',           issue: 'error' },
+  ]
+}
+
+const verifyStats = computed(() => {
+  const total = verifyRows.value.length
+  const errors = verifyRows.value.filter(r => r.issue === 'error').length
+  const warnings = verifyRows.value.filter(r => r.issue === 'warning').length
+  const ok = total - errors - warnings
+  return { total, ok, warnings, errors }
+})
+
+function fixVerifyRow(row) {
+  // 데모: 누락된 날짜를 임의의 합리적 값으로 채움
+  if (!row.start) row.start = row.end || new Date().toISOString().slice(0, 10)
+  if (!row.end)   row.end   = row.start
+  row.issue = null
+}
+function removeVerifyRow(row) {
+  verifyRows.value = verifyRows.value.filter(r => r.id !== row.id)
+}
+function confirmVerifyAndApply() {
+  // 실제로는 verifyRows를 plans/yearlyPlans에 머지. 여기서는 데모로 알림.
+  showVerifyModal.value = false
+  alert(`${verifyCategory.value} 계획서 ${verifyRows.value.length}건이 간트차트에 반영되었습니다.`)
+}
+function cancelVerify() {
+  showVerifyModal.value = false
+  verifyRows.value = []
+  uploadFileName.value = ''
+}
+
+// =========================
+// 주간 계획서 작성 (협력사/공정 담당자)
+// =========================
+const showWeeklyForm = ref(false)
+const weeklyForm = ref(null) // { partner, manager, weekStart, items: [...] }
+
+function openWeeklyForm() {
+  // 이번 주 시작일(일요일 기준)
+  const t = new Date()
+  const ws = new Date(t); ws.setDate(t.getDate() - t.getDay())
+  weeklyForm.value = {
+    partner: '',
+    manager: '',
+    contact: '',
+    weekStart: ws.toISOString().slice(0, 10),
+    items: [makeWeeklyItem(ws.toISOString().slice(0, 10))],
+  }
+  showWeeklyForm.value = true
+}
+
+function makeWeeklyItem(date) {
+  return {
+    id: `wi_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    date,
+    processName: '',  // 공정명 (필수)
+    zone: '',         // 작업구역 (필수)
+    workers: '',      // 인력 (필수) - "형틀공 4명, 보통공 2명" 형식
+    equipment: '',    // 장비 (필수) - "타워크레인 1대, 펌프카 1대"
+    note: '',
+  }
+}
+
+function addWeeklyItem() {
+  weeklyForm.value.items.push(makeWeeklyItem(weeklyForm.value.weekStart))
+}
+function removeWeeklyItem(idx) {
+  if (weeklyForm.value.items.length <= 1) return
+  weeklyForm.value.items.splice(idx, 1)
+}
+
+const weeklyFormValid = computed(() => {
+  if (!weeklyForm.value) return false
+  const w = weeklyForm.value
+  if (!w.partner.trim() || !w.manager.trim()) return false
+  return w.items.every(it =>
+    it.date && it.processName.trim() && it.zone.trim() && it.workers.trim() && it.equipment.trim()
+  )
+})
+
+function submitWeeklyForm() {
+  if (!weeklyFormValid.value) return
+  // 데모: 입력된 항목을 plans에 추가 (실제로는 서버 전송)
+  const w = weeklyForm.value
+  w.items.forEach((it, i) => {
+    plans.value.push({
+      id: `weekly_${Date.now()}_${i}`,
+      name: it.processName,
+      trade: '협력사',
+      location: it.zone,
+      start: it.date,
+      end: it.date,
+      status: '검토 중',
+      requiredCount: parseWorkersCount(it.workers),
+      workers: [it.workers],
+      equipment: it.equipment ? [it.equipment] : [],
+      partner: w.partner,
+      manager: w.manager,
+    })
+  })
+  showWeeklyForm.value = false
+  alert(`${w.partner} (${w.manager}) 주간 계획서 ${w.items.length}건이 제출되었습니다.`)
+}
+function parseWorkersCount(str) {
+  // "형틀공 4명, 보통공 2명" → 6
+  const matches = str.match(/(\d+)\s*명/g) || []
+  return matches.reduce((s, m) => s + parseInt(m, 10), 0) || 0
+}
+function cancelWeeklyForm() {
+  showWeeklyForm.value = false
+  weeklyForm.value = null
+}
+
 function handleClickOutside(e) {
   if (uploadMenuRef.value && !uploadMenuRef.value.contains(e.target)) showUploadMenu.value = false
 }
@@ -320,11 +464,11 @@ const extensionCount = computed(() => Object.keys(planStore.extensions).length)
               <div class="h-px bg-forena-100"></div>
               <button type="button"
                 class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
-                @click="pickWeekly">
-                <CalendarDays class="h-4 w-4 shrink-0 text-flare-600" />
+                @click="openWeeklyComposer">
+                <ClipboardList class="h-4 w-4 shrink-0 text-flare-600" />
                 <div class="flex flex-col">
-                  <span>주간 계획서 업로드</span>
-                  <span class="text-[10px] font-normal text-slate-400">이번 주 협력사별 작업 계획 · 매주 작성</span>
+                  <span>주간 계획서 작성</span>
+                  <span class="text-[10px] font-normal text-slate-400">협력사 담당자가 직접 입력 · 매주 작성</span>
                 </div>
               </button>
               <div class="h-px bg-forena-100"></div>
@@ -343,9 +487,6 @@ const extensionCount = computed(() => Object.keys(planStore.extensions).length)
           <input ref="yearlyInputRef" type="file" class="sr-only"
             accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
             @change="(e) => onFileChange(e, '연간')" />
-          <input ref="weeklyInputRef" type="file" class="sr-only"
-            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
-            @change="(e) => onFileChange(e, '주간')" />
           <input ref="monthlyInputRef" type="file" class="sr-only"
             accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
             @change="(e) => onFileChange(e, '월간')" />
@@ -580,19 +721,14 @@ const extensionCount = computed(() => Object.keys(planStore.extensions).length)
                   <div v-if="!plansForDay(day.date).length"
                     class="py-4 text-center text-[10px] text-slate-300">—</div>
                   <div v-for="p in plansForDay(day.date)" :key="p.id"
-                    class="cursor-pointer rounded-md border-l-2 px-1.5 py-1 text-[10px] font-semibold transition hover:opacity-80"
-                    :class="p.isExtensionDay
-                          ? 'border-l-emerald-500 bg-emerald-50 text-emerald-800'
-                          : p.status === '확정'   ? 'border-l-emerald-500 bg-emerald-50/40 text-forena-800'
-                          : p.status === '진행 중' ? 'border-l-amber-500 bg-amber-50 text-amber-800'
-                          : p.status === '검토 중' ? 'border-l-sky-500 bg-sky-50 text-sky-800'
-                          : 'border-l-slate-400 bg-slate-50 text-slate-700'"
+                    class="cursor-pointer rounded-md border-l-[3px] border-l-flare-500 bg-flare-50 px-1.5 py-1 text-[10px] font-semibold text-flare-900 transition hover:bg-flare-100"
+                    :class="p.isExtensionDay ? 'ring-1 ring-emerald-300' : ''"
                     @click="selectedPlan = p">
                     <div class="flex items-center gap-1">
                       <CalendarPlus v-if="p.isExtensionDay" class="h-2.5 w-2.5 shrink-0" />
                       <p class="truncate">{{ p.name }}</p>
                     </div>
-                    <p class="mt-0.5 truncate text-[9px] font-normal opacity-70">
+                    <p class="mt-0.5 truncate text-[9px] font-normal text-flare-700">
                       <span v-if="p.isExtensionDay">연장 일정</span>
                       <span v-else>{{ p.location }}</span>
                     </p>
@@ -771,5 +907,293 @@ const extensionCount = computed(() => Object.keys(planStore.extensions).length)
         </template>
       </div>
     </div>
+
+    <!-- ========================================================== -->
+    <!-- 연간/월간 업로드 검증 모달                                    -->
+    <!-- 업로드된 계획서가 간트차트에 정확히 반영되었는지 확인 후 적용  -->
+    <!-- ========================================================== -->
+    <transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-100 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0">
+      <div v-if="showVerifyModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+        @click.self="cancelVerify">
+        <div class="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+          <!-- 헤더 -->
+          <div class="flex shrink-0 items-start justify-between border-b border-forena-100 px-6 py-4">
+            <div class="flex items-start gap-3">
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-flare-50">
+                <FileCheck2 class="h-5 w-5 text-flare-600" />
+              </div>
+              <div>
+                <p class="text-base font-bold text-forena-900">{{ verifyCategory }} 계획서 반영 확인</p>
+                <p class="mt-0.5 text-xs text-forena-500">
+                  <span class="font-semibold text-forena-700">{{ verifyFileName }}</span> 에서 추출한 작업이
+                  간트차트에 정확히 반영되었는지 확인해주세요.
+                </p>
+              </div>
+            </div>
+            <button @click="cancelVerify" class="text-slate-400 hover:text-forena-700">
+              <X class="h-5 w-5" />
+            </button>
+          </div>
+
+          <!-- 요약 통계 -->
+          <div class="grid shrink-0 grid-cols-4 gap-3 border-b border-forena-100 bg-forena-50/40 px-6 py-3">
+            <div class="rounded-lg bg-white px-3 py-2 ring-1 ring-forena-100">
+              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">전체</p>
+              <p class="mt-0.5 text-xl font-bold tabular-nums text-forena-900">{{ verifyStats.total }}</p>
+            </div>
+            <div class="rounded-lg bg-emerald-50 px-3 py-2 ring-1 ring-emerald-100">
+              <p class="text-[10px] font-bold uppercase tracking-wide text-emerald-600">정상</p>
+              <p class="mt-0.5 text-xl font-bold tabular-nums text-emerald-700">{{ verifyStats.ok }}</p>
+            </div>
+            <div class="rounded-lg bg-amber-50 px-3 py-2 ring-1 ring-amber-100">
+              <p class="text-[10px] font-bold uppercase tracking-wide text-amber-600">경고</p>
+              <p class="mt-0.5 text-xl font-bold tabular-nums text-amber-700">{{ verifyStats.warnings }}</p>
+            </div>
+            <div class="rounded-lg bg-rose-50 px-3 py-2 ring-1 ring-rose-100">
+              <p class="text-[10px] font-bold uppercase tracking-wide text-rose-600">오류</p>
+              <p class="mt-0.5 text-xl font-bold tabular-nums text-rose-700">{{ verifyStats.errors }}</p>
+            </div>
+          </div>
+
+          <!-- 파싱된 작업 목록 (간트차트 미리보기 + 행별 상세) -->
+          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <p class="mb-2 text-[11px] font-bold uppercase tracking-wide text-forena-400">파싱된 작업 ({{ verifyRows.length }}건)</p>
+            <div class="overflow-hidden rounded-lg border border-forena-100">
+              <table class="w-full text-xs">
+                <thead class="bg-forena-50/60 text-forena-500">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-bold">상태</th>
+                    <th class="px-3 py-2 text-left font-bold">공정명</th>
+                    <th class="px-3 py-2 text-left font-bold">공종</th>
+                    <th class="px-3 py-2 text-left font-bold">위치</th>
+                    <th class="px-3 py-2 text-left font-bold tabular-nums">시작일</th>
+                    <th class="px-3 py-2 text-left font-bold tabular-nums">종료일</th>
+                    <th class="px-3 py-2 text-right font-bold">처리</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-forena-100 bg-white">
+                  <tr v-for="row in verifyRows" :key="row.id"
+                    :class="row.issue === 'error' ? 'bg-rose-50/40' : row.issue === 'warning' ? 'bg-amber-50/40' : ''">
+                    <td class="px-3 py-2">
+                      <span v-if="row.issue === 'error'" class="inline-flex items-center gap-1 rounded-md bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                        <AlertTriangle class="h-3 w-3" /> 오류
+                      </span>
+                      <span v-else-if="row.issue === 'warning'" class="inline-flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                        <AlertTriangle class="h-3 w-3" /> 경고
+                      </span>
+                      <span v-else class="inline-flex items-center gap-1 rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                        <CheckCircle2 class="h-3 w-3" /> 정상
+                      </span>
+                    </td>
+                    <td class="px-3 py-2 font-semibold text-forena-900">
+                      <input v-model="row.name" class="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-forena-200 focus:border-flare-400 focus:bg-white focus:outline-none" />
+                    </td>
+                    <td class="px-3 py-2 text-forena-600">
+                      <input v-model="row.trade" class="w-16 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-forena-200 focus:border-flare-400 focus:bg-white focus:outline-none" />
+                    </td>
+                    <td class="px-3 py-2 text-forena-600">
+                      <input v-model="row.location" class="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-forena-200 focus:border-flare-400 focus:bg-white focus:outline-none" />
+                    </td>
+                    <td class="px-3 py-2 tabular-nums">
+                      <input type="date" v-model="row.start"
+                        class="rounded border px-1 py-0.5 text-[11px]"
+                        :class="!row.start ? 'border-rose-300 bg-rose-50' : 'border-forena-200'" />
+                    </td>
+                    <td class="px-3 py-2 tabular-nums">
+                      <input type="date" v-model="row.end"
+                        class="rounded border px-1 py-0.5 text-[11px]"
+                        :class="!row.end ? 'border-rose-300 bg-rose-50' : 'border-forena-200'" />
+                    </td>
+                    <td class="px-3 py-2 text-right">
+                      <button v-if="row.issue" @click="fixVerifyRow(row)"
+                        class="rounded-md bg-flare-50 px-2 py-1 text-[10px] font-bold text-flare-700 ring-1 ring-flare-200 hover:bg-flare-100">
+                        자동 수정
+                      </button>
+                      <button @click="removeVerifyRow(row)"
+                        class="ml-1 rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                        <Trash2 class="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <p v-if="verifyStats.errors > 0" class="mt-3 flex items-center gap-1.5 text-[11px] text-rose-600">
+              <AlertTriangle class="h-3.5 w-3.5" />
+              오류 {{ verifyStats.errors }}건이 있습니다. 자동 수정 또는 직접 수정 후 반영해주세요.
+            </p>
+          </div>
+
+          <!-- 푸터 -->
+          <div class="flex shrink-0 items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/40 px-6 py-3">
+            <button @click="cancelVerify"
+              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50">
+              취소
+            </button>
+            <button @click="confirmVerifyAndApply"
+              :disabled="verifyStats.errors > 0"
+              class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600 disabled:cursor-not-allowed disabled:bg-slate-300">
+              <CheckCircle2 class="h-3.5 w-3.5" />
+              간트차트에 반영
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- ========================================================== -->
+    <!-- 주간 계획서 작성 모달 (협력사 / 공정 담당자 입력)             -->
+    <!-- 일자별: 공정명·작업구역·인력·장비 (필수)                      -->
+    <!-- ========================================================== -->
+    <transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-100 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0">
+      <div v-if="showWeeklyForm && weeklyForm"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+        @click.self="cancelWeeklyForm">
+        <div class="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+          <!-- 헤더 -->
+          <div class="flex shrink-0 items-start justify-between border-b border-forena-100 px-6 py-4">
+            <div class="flex items-start gap-3">
+              <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-flare-50">
+                <ClipboardList class="h-5 w-5 text-flare-600" />
+              </div>
+              <div>
+                <p class="text-base font-bold text-forena-900">주간 계획서 작성</p>
+                <p class="mt-0.5 text-xs text-forena-500">
+                  협력사 담당자가 직접 작성합니다. 일자별 <span class="font-bold text-flare-700">공정명·작업구역·인력·장비</span>는 모두 필수입니다.
+                </p>
+              </div>
+            </div>
+            <button @click="cancelWeeklyForm" class="text-slate-400 hover:text-forena-700">
+              <X class="h-5 w-5" />
+            </button>
+          </div>
+
+          <!-- 협력사 정보 -->
+          <div class="grid shrink-0 grid-cols-1 gap-3 border-b border-forena-100 bg-forena-50/40 px-6 py-4 sm:grid-cols-4">
+            <div>
+              <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">협력사 <span class="text-rose-500">*</span></label>
+              <input v-model="weeklyForm.partner" placeholder="예: (주)대우전기"
+                class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">담당자 <span class="text-rose-500">*</span></label>
+              <input v-model="weeklyForm.manager" placeholder="예: 김현수 반장"
+                class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">연락처</label>
+              <input v-model="weeklyForm.contact" placeholder="010-0000-0000"
+                class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">주 시작일(일)</label>
+              <input type="date" v-model="weeklyForm.weekStart"
+                class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400" />
+            </div>
+          </div>
+
+          <!-- 일자별 작업 입력 -->
+          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <div class="mb-2 flex items-center justify-between">
+              <p class="text-[11px] font-bold uppercase tracking-wide text-forena-400">
+                일자별 작업 ({{ weeklyForm.items.length }}건)
+              </p>
+              <button @click="addWeeklyItem"
+                class="inline-flex items-center gap-1 rounded-md border border-flare-200 bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-100">
+                <Plus class="h-3 w-3" /> 작업 추가
+              </button>
+            </div>
+
+            <div class="space-y-3">
+              <div v-for="(item, idx) in weeklyForm.items" :key="item.id"
+                class="rounded-xl border border-forena-100 bg-white p-3.5">
+                <div class="mb-2.5 flex items-center justify-between">
+                  <span class="rounded-md bg-forena-50 px-2 py-0.5 text-[10px] font-bold text-forena-600">#{{ idx + 1 }}</span>
+                  <button v-if="weeklyForm.items.length > 1" @click="removeWeeklyItem(idx)"
+                    class="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600">
+                    <Trash2 class="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div class="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-5">
+                  <div>
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">작업일자 <span class="text-rose-500">*</span></label>
+                    <input type="date" v-model="item.date"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                  <div class="lg:col-span-2">
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">공정명 <span class="text-rose-500">*</span></label>
+                    <input v-model="item.processName" placeholder="예: B2층 전기 배관 설치"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                  <div class="lg:col-span-2">
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">작업구역 <span class="text-rose-500">*</span></label>
+                    <input v-model="item.zone" placeholder="예: B2층 전기실"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                  <div class="lg:col-span-2">
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">
+                      <Users class="mr-0.5 inline h-3 w-3" />인력 <span class="text-rose-500">*</span>
+                    </label>
+                    <input v-model="item.workers" placeholder="예: 전공 4명, 보통공 2명"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                  <div class="lg:col-span-3">
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">
+                      <Wrench class="mr-0.5 inline h-3 w-3" />장비 <span class="text-rose-500">*</span>
+                    </label>
+                    <input v-model="item.equipment" placeholder="예: 고소작업대 1대, 전동드릴 4대"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                  <div class="lg:col-span-5">
+                    <label class="mb-1 block text-[10px] font-bold text-forena-500">비고</label>
+                    <input v-model="item.note" placeholder="안전 유의사항, 선·후행 공정과의 협의사항 등"
+                      class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs outline-none focus:border-flare-400" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 푸터 -->
+          <div class="flex shrink-0 items-center justify-between gap-2 border-t border-forena-100 bg-forena-50/40 px-6 py-3">
+            <p class="text-[11px] text-forena-500">
+              <span v-if="!weeklyFormValid" class="text-rose-600">
+                <AlertTriangle class="mr-0.5 inline h-3 w-3" />
+                협력사·담당자 및 모든 작업의 필수 항목을 입력해주세요.
+              </span>
+              <span v-else class="text-emerald-700">
+                <CheckCircle2 class="mr-0.5 inline h-3 w-3" />
+                제출 준비가 완료되었습니다.
+              </span>
+            </p>
+            <div class="flex gap-2">
+              <button @click="cancelWeeklyForm"
+                class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50">
+                취소
+              </button>
+              <button @click="submitWeeklyForm" :disabled="!weeklyFormValid"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600 disabled:cursor-not-allowed disabled:bg-slate-300">
+                <Save class="h-3.5 w-3.5" />
+                계획서 제출
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>

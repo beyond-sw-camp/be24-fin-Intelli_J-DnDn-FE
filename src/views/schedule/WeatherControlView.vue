@@ -20,7 +20,7 @@ import {
   Clock,
 } from 'lucide-vue-next'
 
-// ─── 환경 ─────────────────────────────────────────────────────────────────────
+//  환경 
 const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8081').replace(/\/$/, '')
 
 const T = {
@@ -41,7 +41,7 @@ const T = {
   tabMonth: '월간',
 }
 
-// ─── 날짜 헬퍼 ────────────────────────────────────────────────────────────────
+// 날짜 헬퍼
 function getTodayDateText() {
   const now = new Date()
   return [
@@ -53,14 +53,14 @@ function getTodayDateText() {
 
 const KOREAN_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
 
-// ─── 상태 ─────────────────────────────────────────────────────────────────────
+//  상태 
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
 const dashboard = ref(null)
 const forecastTab = ref('week')
 const selectedMonthWeekId = ref(null)
 
-// ─── 데이터 로드 ──────────────────────────────────────────────────────────────
+//  데이터 로드 
 async function loadDashboard() {
   loading.value = true
   try {
@@ -78,7 +78,7 @@ async function loadDashboard() {
 onMounted(loadDashboard)
 watch(reportDate, loadDashboard)
 
-// ─── 파생값 (백엔드 응답 그대로 사용) ──────────────────────────────────────────
+//  파생값 (백엔드 응답 그대로 사용) 
 const today = computed(() => dashboard.value?.today ?? null)
 const week = computed(() => dashboard.value?.week ?? null)
 const rain = computed(() => dashboard.value?.rain ?? null)
@@ -89,7 +89,7 @@ const planRisks = computed(() => dashboard.value?.planRisks ?? [])
 const forecastDays = computed(() => dashboard.value?.forecastDays ?? [])
 const locationLabel = computed(() => dashboard.value?.locationLabel || '현장')
 
-// 종합 위험도 (analysis 플래그 카운트)
+// 종합 위험도
 const riskLevel = computed(() => {
   const a = analysis.value
   if (!a) return { label: '데이터 없음', tone: 'text-slate-600 bg-slate-100 border-slate-200' }
@@ -107,12 +107,11 @@ const riskLevel = computed(() => {
   return { label: '낮음', tone: 'text-emerald-700 bg-emerald-100 border-emerald-200' }
 })
 
-// 대표 위험 (백엔드 RiskItem 리스트에서 첫 번째)
+// 대표 위험
 const equipmentPrimary = computed(() => equipmentRisks.value[0] ?? null)
 const planPrimary = computed(() => planRisks.value[0] ?? null)
 
 // 실시간 위험 통제 — '지금 현장에서 즉시 해야 하는 액션' 체크리스트
-// (AI 위험 통제 추천이 '분석/판단'이라면, 여기는 '액션/타임라인' 관점)
 const liveRiskActions = computed(() => {
   const a = analysis.value
   if (!a) return []
@@ -232,7 +231,7 @@ const liveRiskActions = computed(() => {
 
 const liveRiskCount = computed(() => liveRiskActions.value.length)
 
-// 3일 예보 (forecastDays 의 오늘부터 3개)
+// 3일 예보
 const threeDayForecast = computed(() => {
   const todayText = getTodayDateText()
   return forecastDays.value
@@ -249,7 +248,7 @@ const weeklyForecast = computed(() => {
 })
 
 // 월간 — 현재 주차(이번 주)부터 4주만 표시 (지난 주차 제외)
-// 주차 기준: 일요일 시작 ~ 토요일 끝 (KMA 일자 그룹핑)
+// 주차 기준: 일요일 시작 ~ 토요일 끝
 function getWeekStart(date) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
   d.setDate(d.getDate() - d.getDay()) // 그 주 일요일로 정렬
@@ -380,7 +379,7 @@ function selectMonthWeek(weekId) {
   selectedMonthWeekId.value = selectedMonthWeekId.value === weekId ? null : weekId
 }
 
-// ─── 표시 헬퍼 ────────────────────────────────────────────────────────────────
+//  표시
 function levelBadgeClass(level) {
   if (level === '경고' || level === '제한') return 'bg-rose-600 text-white'
   if (level === '주의') return 'bg-amber-100 text-amber-900'

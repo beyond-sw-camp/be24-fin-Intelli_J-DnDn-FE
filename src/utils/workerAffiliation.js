@@ -24,6 +24,27 @@ export function formatAffiliationDisplay(text) {
   return s
 }
 
+/**
+ * 협력사 소속 문자열에서 협력사명 추출 (필터·그룹용).
+ * `협력사 (회사명)` 형식이 아니면 `affiliationLine` 앞구간 등으로 보조 추출합니다.
+ * @param {string} [affiliation]
+ * @param {string} [affiliationLine]
+ */
+export function getPartnerCompanyName(affiliation, affiliationLine) {
+  const s = String(affiliation ?? '')
+  const m = s.match(/^협력사\s*\(([^)]+)\)\s*$/)
+  if (m) return m[1].trim()
+  if (getAffiliationKind(s) !== 'partner') return ''
+  const line = String(affiliationLine ?? '').trim()
+  if (line) {
+    const seg = line.split('/')[0].trim()
+    if (seg) return seg
+  }
+  const disp = formatAffiliationDisplay(s)
+  if (disp && !/^협력사\s*$/i.test(disp)) return disp
+  return ''
+}
+
 /** @param {AffiliationKind} kind */
 export function affiliationKindBadgeClass(kind) {
   if (kind === 'direct') return 'bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200/80'
