@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import siteLayout from '@/assets/Firefly_Gemini Flash.png'
 import {
   Navigation,
@@ -12,6 +12,8 @@ import {
   Map as MapIcon,
   Trash2,
   X,
+  Upload,
+  RotateCcw,
 } from 'lucide-vue-next'
 import {
   fetchGateList,
@@ -31,6 +33,20 @@ const gates = ref([])
 const selectedGateId = ref(null)
 const isAddMode = ref(false)
 const isLoading = ref(false)
+
+// 사용자 업로드 도면 (localStorage 보존, 미업로드 시 기본 siteLayout 사용)
+const BLUEPRINT_STORAGE_KEY = 'dndn-gate-blueprint'
+const customBlueprint = ref(null)
+const blueprintInputRef = ref(null)
+const blueprintAspectRatio = ref('16 / 10')
+const blueprintZoom = ref(1)
+const MIN_BLUEPRINT_ZOOM = 0.75
+const MAX_BLUEPRINT_ZOOM = 1.4
+const BLUEPRINT_ZOOM_STEP = 0.05
+
+const activeBlueprint = computed(() => customBlueprint.value || siteLayout)
+const blueprintZoomPercent = computed(() => `${Math.round(blueprintZoom.value * 100)}%`)
+const gateMarkerScale = computed(() => Math.max(0.82, Math.min(1.12, 0.88 + blueprintZoom.value * 0.12)))
 
 const selectedGate = computed(() => gates.value.find((g) => g.idx === selectedGateId.value))
 
@@ -60,6 +76,9 @@ const dragMoved = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 const lastDragPoint = ref({ x: 0, y: 0 })
 const DRAG_THRESHOLD_PX = 5
+const mapViewportRef = ref(null)
+const isPanningBlueprint = ref(false)
+const blueprintPanStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
 
 // TODO: 작업 지시서 / 작업 일보 도메인 연동 후 실데이터로 교체
 const todayEquipments = ref([
@@ -165,7 +184,151 @@ const refreshGate = async (gateId) => {
 
 onMounted(() => {
   loadGates()
+  loadBlueprintFromStorage()
 })
+
+// 사용자 업로드 도면 핸들러 (백엔드 미연동, 로컬 보존)
+function loadBlueprintFromStorage() {
+  try {
+    const saved = window.localStorage.getItem(BLUEPRINT_STORAGE_KEY)
+    if (saved) customBlueprint.value = saved
+  } catch (error) {
+    console.error(error)
+  }
+}
+
+function triggerBlueprintUpload() {
+  if (blueprintInputRef.value) blueprintInputRef.value.click()
+}
+
+function handleBlueprintUpload(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    window.alert('이미지 파일만 업로드할 수 있습니다.')
+    event.target.value = ''
+    return
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    window.alert('5MB 이하 이미지만 업로드할 수 있습니다.')
+    event.target.value = ''
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    const dataUrl = e.target?.result
+    if (typeof dataUrl !== 'string') return
+    customBlueprint.value = dataUrl
+    try {
+      window.localStorage.setItem(BLUEPRINT_STORAGE_KEY, dataUrl)
+    } catch (error) {
+      console.error(error)
+      window.alert('저장 용량이 초과되었습니다. 더 작은 이미지를 사용해 주세요.')
+    }
+  }
+  reader.readAsDataURL(file)
+  event.target.value = ''
+}
+
+function updateBlueprintAspect(event) {
+  const image = event.target
+  if (!image?.naturalWidth || !image?.naturalHeight) return
+  blueprintAspectRatio.value = `${image.naturalWidth} / ${image.naturalHeight}`
+  centerBlueprintView()
+}
+
+function setBlueprintZoom(nextZoom) {
+  const viewport = mapViewportRef.value
+  const centerRatio = viewport
+    ? {
+        x: (viewport.scrollLeft + viewport.clientWidth / 2) / Math.max(1, viewport.scrollWidth),
+        y: (viewport.scrollTop + viewport.clientHeight / 2) / Math.max(1, viewport.scrollHeight),
+      }
+    : null
+  const clamped = Math.max(MIN_BLUEPRINT_ZOOM, Math.min(MAX_BLUEPRINT_ZOOM, nextZoom))
+  blueprintZoom.value = Math.round(clamped * 100) / 100
+
+  if (centerRatio) {
+    nextTick(() => {
+      viewport.scrollLeft = viewport.scrollWidth * centerRatio.x - viewport.clientWidth / 2
+      viewport.scrollTop = viewport.scrollHeight * centerRatio.y - viewport.clientHeight / 2
+    })
+  }
+}
+
+function zoomBlueprint(delta) {
+  setBlueprintZoom(blueprintZoom.value + delta)
+}
+
+function resetBlueprintZoom() {
+  setBlueprintZoom(1)
+  centerBlueprintView()
+}
+
+function onBlueprintWheel(event) {
+  if (!event.ctrlKey) return
+  event.preventDefault()
+  zoomBlueprint(event.deltaY > 0 ? -BLUEPRINT_ZOOM_STEP : BLUEPRINT_ZOOM_STEP)
+}
+
+function centerBlueprintView() {
+  nextTick(() => {
+    const viewport = mapViewportRef.value
+    if (!viewport) return
+    viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2)
+    viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2)
+  })
+}
+
+function startBlueprintPan(event) {
+  if (event.button !== 0 || isAddMode.value || draggingGateId.value !== null) return
+  if (event.target.closest?.('button, input, [data-gate-marker]')) return
+
+  const viewport = mapViewportRef.value
+  if (!viewport) return
+
+  isPanningBlueprint.value = true
+  blueprintPanStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    scrollLeft: viewport.scrollLeft,
+    scrollTop: viewport.scrollTop,
+  }
+  viewport.setPointerCapture?.(event.pointerId)
+}
+
+function moveBlueprintPan(event) {
+  if (!isPanningBlueprint.value) return
+  event.preventDefault()
+  const viewport = mapViewportRef.value
+  if (!viewport) return
+
+  const deltaX = event.clientX - blueprintPanStart.value.x
+  const deltaY = event.clientY - blueprintPanStart.value.y
+  viewport.scrollLeft = blueprintPanStart.value.scrollLeft - deltaX
+  viewport.scrollTop = blueprintPanStart.value.scrollTop - deltaY
+}
+
+function stopBlueprintPan(event) {
+  if (!isPanningBlueprint.value) return
+  isPanningBlueprint.value = false
+  mapViewportRef.value?.releasePointerCapture?.(event.pointerId)
+}
+
+function resetBlueprint() {
+  if (!customBlueprint.value) return
+  const ok = window.confirm('도면을 기본 이미지로 되돌리시겠습니까?')
+  if (!ok) return
+  customBlueprint.value = null
+  try {
+    window.localStorage.removeItem(BLUEPRINT_STORAGE_KEY)
+  } catch (error) {
+    console.error(error)
+  }
+}
 
 // 4. 인원 / 차량 / 기계 / 좌표 제어
 const updateManpower = async (delta) => {
@@ -330,188 +493,194 @@ const onGateClick = (gateId, event) => {
 <template>
   <div class="space-y-6 pb-10">
     <div class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-white p-6 shadow-card">
-      <div class="flex items-center gap-3">
-        <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md">
-          <Navigation class="h-5 w-5" />
-        </span>
-        <div>
-          <h1 class="text-xl font-bold text-forena-900">중장비 입출차 현황 관제</h1>
-          <p class="text-sm text-forena-600">실시간 게이트별 중장비 밀집도 및 세척 설비/인원 배치 관리</p>
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-3">
+          <span
+            class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md">
+            <Navigation class="h-5 w-5" />
+          </span>
+          <div>
+            <h1 class="text-xl font-bold text-forena-900">중장비 입출차 현황 관제</h1>
+            <p class="text-sm text-forena-600">실시간 게이트별 중장비 밀집도 및 세척 설비/인원 배치 관리</p>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <input ref="blueprintInputRef" type="file" accept="image/*" class="hidden" @change="handleBlueprintUpload" />
+          <button type="button"
+            class="inline-flex items-center gap-2 rounded-xl border border-forena-100 bg-white px-3 py-2 text-xs font-bold text-forena-700 shadow-sm transition-all hover:bg-forena-50"
+            @click.stop="triggerBlueprintUpload">
+            <Upload class="h-4 w-4" />
+            도면 업로드
+          </button>
+          <button v-if="customBlueprint" type="button"
+            class="inline-flex items-center gap-1.5 rounded-xl border border-rose-100 bg-white px-2.5 py-2 text-xs font-bold text-rose-700 shadow-sm transition-all hover:bg-rose-50"
+            title="기본 도면으로 초기화" @click.stop="resetBlueprint">
+            <RotateCcw class="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>
 
     <div class="grid gap-6 lg:grid-cols-3">
-      <div class="lg:col-span-2 relative flex min-h-[600px] flex-col overflow-auto rounded-3xl border border-forena-100 shadow-card">
-        <div class="absolute right-4 top-4 z-20 flex items-center gap-2">
-          <button
-            type="button"
+      <div
+        class="lg:col-span-2 relative overflow-visible rounded-3xl border border-forena-100 bg-white p-3 shadow-card">
+        <div class="absolute right-4 top-4 z-30 flex items-center gap-2">
+          <button type="button"
             class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
             :class="isAddMode ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse' : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'"
-            @click.stop="isAddMode = !isAddMode"
-          >
+            @click.stop="isAddMode = !isAddMode">
             <MapIcon class="h-4 w-4" />
             게이트 추가 모드
           </button>
-          <span class="inline-flex h-8 items-center rounded-xl border border-forena-100 bg-white px-3 text-xs font-bold text-forena-700 shadow-sm">
+          <span
+            class="inline-flex h-8 items-center rounded-xl border border-forena-100 bg-white px-3 text-xs font-bold text-forena-700 shadow-sm">
             총 {{ gates.length }}개
           </span>
         </div>
 
-        <div
-          ref="mapRef"
-          class="relative h-full min-h-[650px] w-full min-w-[130%]"
-          :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''"
-          :style="{
-            backgroundImage: `url(${siteLayout})`,
-            backgroundSize: 'contain',
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'center',
-          }"
-          @click="isAddMode && addCustomGate($event)"
-          @dragover="onMapDragOver"
-        >
-          <button
-            v-for="gate in gates"
-            :key="gate.idx"
-            class="absolute flex flex-col items-center gap-1 transition-all"
-            :class="draggingGateId === gate.idx ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
-            :style="{
-              left: gate.x + '%',
-              top: gate.y + '%',
-              transform: 'translate(-50%, -50%)',
-              zIndex: draggingGateId === gate.idx ? 50 : 10,
-            }"
-            :draggable="!isAddMode"
-            @dragstart="onMarkerDragStart(gate, $event)"
-            @drag="onMarkerDrag($event)"
-            @dragend="onMarkerDragEnd(gate, $event)"
-            @click="onGateClick(gate.idx, $event)"
-          >
-            <div
-              class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"
-              :class="[getMarkerColor(gate), draggingGateId === gate.idx ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']"
-            >
-              <Truck class="h-5 w-5" />
-              <AlertCircle
-                v-if="gate.inefficient"
-                class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
-              />
-            </div>
-            <div class="rounded-lg bg-white/90 px-2 py-1 text-[10px] font-bold shadow-sm border border-forena-100 flex flex-col items-center gap-0.5">
-              <span class="whitespace-nowrap">G{{ gate.idx }} (총 {{ gate.vehicles }}대)</span>
-            </div>
+        <div class="absolute bottom-6 right-6 z-40 flex items-center gap-1 rounded-lg border border-forena-100 bg-white/95 p-1 text-[10px] font-bold text-forena-700 shadow-sm backdrop-blur">
+          <button type="button" class="flex h-6 w-6 items-center justify-center rounded-md hover:bg-forena-50"
+            title="도면 축소" @click.stop="zoomBlueprint(-BLUEPRINT_ZOOM_STEP)">-</button>
+          <button type="button" class="min-w-[42px] rounded-md px-1.5 py-0.5 hover:bg-forena-50"
+            title="기본 배율로 초기화" @click.stop="resetBlueprintZoom">{{ blueprintZoomPercent }}</button>
+          <button type="button" class="flex h-6 w-6 items-center justify-center rounded-md hover:bg-forena-50"
+            title="도면 확대" @click.stop="zoomBlueprint(BLUEPRINT_ZOOM_STEP)">+</button>
+          <button type="button"
+            class="inline-flex h-6 items-center gap-1 rounded-md border border-forena-100 px-1.5 text-[10px] font-black text-forena-700 hover:bg-forena-50"
+            title="도면 배율 원복" @click.stop="resetBlueprintZoom">
+            <RotateCcw class="h-3 w-3" />
+            원복
           </button>
+        </div>
+
+        <div
+          ref="mapViewportRef"
+          class="relative h-[58vw] min-h-[520px] max-h-[650px] overflow-auto rounded-2xl bg-slate-100 p-2 select-none"
+          :class="isPanningBlueprint ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : 'cursor-grab'"
+          @wheel="onBlueprintWheel"
+          @pointerdown="startBlueprintPan"
+          @pointermove="moveBlueprintPan"
+          @pointerup="stopBlueprintPan"
+          @pointerleave="stopBlueprintPan"
+        >
+          <div ref="mapRef" class="relative mx-auto min-w-[560px] overflow-hidden rounded-xl bg-white shadow-inner"
+            :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''" :style="{
+              aspectRatio: blueprintAspectRatio,
+              width: `${blueprintZoom * 100}%`,
+            }" @click="isAddMode && addCustomGate($event)" @dragover="onMapDragOver">
+            <img
+              :src="activeBlueprint"
+              alt="공사현장 도면"
+              class="absolute inset-0 h-full w-full select-none object-fill"
+              draggable="false"
+              @load="updateBlueprintAspect"
+            />
+
+            <button v-for="gate in gates" :key="gate.idx" data-gate-marker class="absolute flex flex-col items-center gap-1 transition-all"
+              :class="draggingGateId === gate.idx ? 'cursor-grabbing opacity-50' : 'cursor-grab'" :style="{
+                left: gate.x + '%',
+                top: gate.y + '%',
+                transform: `translate(-50%, -50%) scale(${draggingGateId === gate.idx ? gateMarkerScale * 1.08 : gateMarkerScale})`,
+                zIndex: draggingGateId === gate.idx ? 50 : 10,
+              }" :draggable="!isAddMode" @dragstart="onMarkerDragStart(gate, $event)" @drag="onMarkerDrag($event)"
+              @dragend="onMarkerDragEnd(gate, $event)" @click="onGateClick(gate.idx, $event)">
+              <div
+                class="relative flex h-8 w-8 items-center justify-center rounded-full border-[3px] border-white text-white shadow-xl transition-colors sm:h-9 sm:w-9 xl:h-10 xl:w-10 xl:border-4"
+                :class="[getMarkerColor(gate), draggingGateId === gate.idx ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']">
+                <Truck class="h-4 w-4 sm:h-5 sm:w-5" />
+                <AlertCircle v-if="gate.inefficient"
+                  class="absolute -right-2 -top-2 h-4 w-4 rounded-full fill-amber-500 text-white sm:h-5 sm:w-5" />
+              </div>
+              <div
+                class="flex flex-col items-center gap-0.5 rounded-lg border border-forena-100 bg-white/90 px-1.5 py-0.5 text-[9px] font-bold shadow-sm sm:px-2 sm:py-1 sm:text-[10px]">
+                <span class="whitespace-nowrap">G{{ gate.idx }} (총 {{ gate.vehicles }}대)</span>
+              </div>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div class="space-y-4">
-        <div
-          v-if="selectedGate"
-          class="overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50"
-        >
-          <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-6 py-4">
+      <div class="space-y-4 lg:flex lg:h-[58vw] lg:min-h-[520px] lg:max-h-[650px] lg:flex-col">
+        <div v-if="selectedGate"
+          class="overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50 lg:flex lg:h-full lg:flex-col">
+          <div class="flex flex-col gap-3 border-b border-forena-100 bg-forena-50/50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div class="flex items-center gap-3">
-              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm">
-                <span class="text-lg font-black text-forena-900">{{ selectedGate.idx }}</span>
+              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm sm:h-10 sm:w-10">
+                <span class="text-base font-black text-forena-900 sm:text-lg">{{ selectedGate.idx }}</span>
               </div>
-              <div>
-                <h3 class="text-lg font-bold text-forena-900">{{ selectedGate.name }}</h3>
+              <div class="min-w-0">
+                <h3 class="truncate text-base font-bold text-forena-900 sm:text-lg">{{ selectedGate.name }}</h3>
                 <p class="text-xs font-semibold text-slate-500">게이트 상세 정보</p>
               </div>
             </div>
 
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1">
-                <button
-                  type="button"
-                  class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:bg-amber-50 hover:scale-105"
-                  @click="updateVehicles(-1)"
-                >-</button>
-                <span class="px-1 text-sm font-bold text-amber-800">대기 {{ selectedGate.vehicles }}대</span>
-                <button
-                  type="button"
-                  class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:bg-amber-50 hover:scale-105"
-                  @click="updateVehicles(1)"
-                >+</button>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <div class="flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-1 sm:gap-1.5">
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-full bg-white text-sm font-black text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
+                  @click="updateVehicles(-1)">-</button>
+                <span class="px-1 text-xs font-bold text-amber-800 sm:text-sm">대기 {{ selectedGate.vehicles }}대</span>
+                <button type="button"
+                  class="flex h-7 w-7 items-center justify-center rounded-full bg-white text-sm font-black text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
+                  @click="updateVehicles(1)">+</button>
               </div>
 
-              <span
-                class="rounded-full px-3 py-1 text-xs font-bold border"
-                :class="getStatusColor(selectedGate)"
-              >
+              <span class="rounded-full border px-2.5 py-1 text-xs font-bold sm:px-3" :class="getStatusColor(selectedGate)">
                 {{ selectedGate.congestionLabel }}
               </span>
 
-              <button
-                type="button"
-                class="rounded-full p-2 text-rose-400 transition hover:bg-rose-50 hover:text-rose-600"
-                title="게이트 삭제"
-                @click="removeGate(selectedGate.idx)"
-              >
-                <Trash2 class="h-5 w-5" />
+              <button type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-full text-rose-400 transition hover:bg-rose-50 hover:text-rose-600" title="게이트 삭제"
+                @click="removeGate(selectedGate.idx)">
+                <Trash2 class="h-4 w-4 sm:h-5 sm:w-5" />
               </button>
 
-              <button
-                type="button"
-                class="rounded-full p-2 text-forena-400 transition hover:bg-forena-100 hover:text-forena-600"
-                @click="selectedGateId = null"
-              >
-                <X class="h-5 w-5" />
+              <button type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-full text-forena-400 transition hover:bg-forena-100 hover:text-forena-600"
+                @click="selectedGateId = null">
+                <X class="h-4 w-4 sm:h-5 sm:w-5" />
               </button>
             </div>
           </div>
 
-          <div class="p-6">
-            <div class="mt-6">
+          <div class="space-y-7 overflow-y-auto p-5 sm:p-6 lg:flex-1">
+            <div>
               <div class="flex items-center justify-between text-sm font-bold text-forena-500 uppercase tracking-wider">
                 <span>현재 진입 중장비</span>
                 <span :class="getStatusColor(selectedGate).split(' ')[0]">{{ selectedGate.vehicles }}대</span>
               </div>
               <div class="mt-2 h-3 overflow-hidden rounded-full bg-slate-100">
-                <div
-                  class="h-full transition-all duration-500"
-                  :class="getMarkerColor(selectedGate)"
-                  :style="{ width: Math.min((selectedGate.vehicles / 20) * 100, 100) + '%' }"
-                ></div>
+                <div class="h-full transition-all duration-500" :class="getMarkerColor(selectedGate)"
+                  :style="{ width: Math.min((selectedGate.vehicles / 20) * 100, 100) + '%' }"></div>
               </div>
             </div>
 
-            <div class="mt-8">
+            <div>
               <div class="flex items-center justify-between">
                 <h3 class="flex items-center gap-2 text-sm font-bold text-forena-900">
                   <Settings2 class="h-4 w-4 text-flare-600" />
                   세척 설비 가동 ({{ selectedGate.machines.length }}대)
                 </h3>
-                <button
-                  type="button"
-                  class="bg-slate-100 text-slate-600 rounded-lg p-1 hover:bg-slate-200"
-                  @click="addMachine"
-                >
+                <button type="button" class="bg-slate-100 text-slate-600 rounded-lg p-1 hover:bg-slate-200"
+                  @click="addMachine">
                   <span class="text-sm font-bold leading-none">+</span>
                 </button>
               </div>
 
-              <div
-                v-if="selectedGate.machines.length === 0"
-                class="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800"
-              >
+              <div v-if="selectedGate.machines.length === 0"
+                class="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800">
                 현재 인력 세척 모드로 가동 중입니다. (배치 인원 2명당 트럭 3대 수용 가능)
               </div>
 
               <div v-else class="mt-3 grid grid-cols-2 gap-3">
-                <button
-                  v-for="(machine, idx) in selectedGate.machines"
-                  :key="machine.idx"
-                  class="relative flex flex-col items-center gap-2 rounded-2xl border p-4 transition-all"
+                <button v-for="(machine, idx) in selectedGate.machines" :key="machine.idx"
+                  class="relative flex min-h-[82px] flex-col items-center justify-center gap-2 rounded-2xl border p-3 transition-all sm:p-4 xl:min-h-[88px]"
                   :class="machine.active ? 'border-flare-200 bg-flare-50 text-flare-700' : 'border-slate-100 bg-slate-50 text-slate-400'"
-                  @click="toggleMachine(machine.idx)"
-                >
-                  <button
-                    type="button"
+                  @click="toggleMachine(machine.idx)">
+                  <button type="button"
                     class="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100"
-                    @click.stop="removeMachine(machine.idx)"
-                  >
+                    @click.stop="removeMachine(machine.idx)">
                     <X class="h-3 w-3" />
                   </button>
                   <component :is="machine.active ? Power : PowerOff" class="h-6 w-6" />
@@ -520,49 +689,46 @@ const onGateClick = (gateId, event) => {
               </div>
             </div>
 
-            <div class="mt-8">
+            <div>
               <h3 class="flex items-center gap-2 text-sm font-bold text-forena-900">
                 <Users class="h-4 w-4 text-flare-600" />
                 게이트 배치 인원
               </h3>
-              <div class="mt-3 flex items-center justify-between rounded-2xl border border-forena-100 bg-forena-50/30 p-2">
+              <div
+                class="mt-3 flex items-center justify-between rounded-2xl border border-forena-100 bg-forena-50/30 p-2">
                 <button
-                  class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm hover:bg-slate-50 text-xl font-bold"
-                  @click="updateManpower(-1)"
-                >-</button>
+                  class="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-lg font-bold shadow-sm hover:bg-slate-50 sm:h-10 sm:w-10 sm:text-xl"
+                  @click="updateManpower(-1)">-</button>
                 <div class="text-center">
-                  <span class="text-xl font-black text-forena-900">{{ selectedGate.manpower }}</span>
+                  <span class="text-lg font-black text-forena-900 sm:text-xl">{{ selectedGate.manpower }}</span>
                   <span class="text-xs font-bold text-forena-500 ml-1">명</span>
                 </div>
                 <button
-                  class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm hover:bg-slate-50 text-xl font-bold"
-                  @click="updateManpower(1)"
-                >+</button>
+                  class="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-lg font-bold shadow-sm hover:bg-slate-50 sm:h-10 sm:w-10 sm:text-xl"
+                  @click="updateManpower(1)">+</button>
               </div>
             </div>
 
-            <div class="mt-6 flex items-start gap-2 rounded-xl p-3 text-[10px]" :class="getNoticeClass(selectedGate)">
-              <AlertCircle class="h-3 w-3 shrink-0" />
-              <p>{{ selectedGate.noticeMessage }}</p>
-            </div>
+            <div>
+              <div class="flex items-start gap-2 rounded-xl p-3 text-[10px]" :class="getNoticeClass(selectedGate)">
+                <AlertCircle class="h-3 w-3 shrink-0" />
+                <p>{{ selectedGate.noticeMessage }}</p>
+              </div>
 
-            <div
-              v-if="recommendedGate"
-              class="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-800 shadow-sm"
-            >
-              <p class="text-sm font-semibold">현재 게이트가 매우 혼잡합니다.</p>
-              <p class="mt-2 text-sm font-bold text-blue-900">
-                가장 가까운 우회 경로: {{ recommendedGate.name }} (현재 진입: {{ recommendedGate.vehicles }}대)
-              </p>
+              <div v-if="recommendedGate"
+                class="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-800 shadow-sm">
+                <p class="text-sm font-semibold">현재 게이트가 매우 혼잡합니다.</p>
+                <p class="mt-2 text-sm font-bold text-blue-900">
+                  가장 가까운 우회 경로: {{ recommendedGate.name }} (현재 진입: {{ recommendedGate.vehicles }}대)
+                </p>
+              </div>
             </div>
           </div>
         </div>
 
         <!-- 게이트가 하나도 없을 때 -->
-        <div
-          v-else-if="!isLoading && gates.length === 0"
-          class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-forena-100 bg-white/60 p-8 text-center"
-        >
+        <div v-else-if="!isLoading && gates.length === 0"
+          class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-forena-100 bg-white/60 p-8 text-center">
           <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-flare-50 text-flare-600">
             <MapIcon class="h-6 w-6" />
           </span>
@@ -573,10 +739,8 @@ const onGateClick = (gateId, event) => {
         </div>
 
         <!-- 게이트는 있는데 선택 해제된 상태 -->
-        <div
-          v-else-if="gates.length > 0"
-          class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border border-forena-100 bg-white/60 p-8 text-center shadow-card"
-        >
+        <div v-else-if="gates.length > 0"
+          class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border border-forena-100 bg-white/60 p-8 text-center shadow-card">
           <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-forena-50 text-forena-600">
             <Navigation class="h-6 w-6" />
           </span>
@@ -585,10 +749,8 @@ const onGateClick = (gateId, event) => {
         </div>
 
         <!-- 로딩 중 -->
-        <div
-          v-else
-          class="flex min-h-[400px] items-center justify-center rounded-3xl border border-forena-100 bg-white/60 text-sm text-forena-500 shadow-card"
-        >
+        <div v-else
+          class="flex min-h-[400px] items-center justify-center rounded-3xl border border-forena-100 bg-white/60 text-sm text-forena-500 shadow-card">
           게이트 정보를 불러오는 중...
         </div>
       </div>
@@ -597,7 +759,8 @@ const onGateClick = (gateId, event) => {
     <div class="w-full rounded-3xl border border-forena-100 bg-white p-6 shadow-card ring-1 ring-forena-50">
       <div class="flex flex-col gap-3 border-b border-forena-50 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex items-center gap-3">
-          <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-forena-700 to-forena-900 text-white shadow-md">
+          <span
+            class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-forena-700 to-forena-900 text-white shadow-md">
             <Truck class="h-5 w-5" />
           </span>
           <div>
@@ -605,7 +768,8 @@ const onGateClick = (gateId, event) => {
             <p class="text-sm text-forena-500">작업 지시서 자재/장비 데이터 연동 전 임시 표시 목록</p>
           </div>
         </div>
-        <span class="inline-flex w-fit items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 ring-1 ring-sky-200">
+        <span
+          class="inline-flex w-fit items-center rounded-full bg-sky-50 px-3 py-1 text-xs font-bold text-sky-700 ring-1 ring-sky-200">
           지시서 연동 예정
         </span>
       </div>
@@ -622,11 +786,7 @@ const onGateClick = (gateId, event) => {
             </tr>
           </thead>
           <tbody class="divide-y divide-forena-50">
-            <tr
-              v-for="equipment in todayEquipments"
-              :key="equipment.id"
-              class="transition-colors hover:bg-slate-50/80"
-            >
+            <tr v-for="equipment in todayEquipments" :key="equipment.id" class="transition-colors hover:bg-slate-50/80">
               <td class="px-4 py-4">
                 <div class="font-bold text-forena-900">{{ equipment.name }}</div>
                 <div class="mt-1 text-xs font-medium text-forena-500">{{ equipment.type }}</div>
@@ -639,10 +799,8 @@ const onGateClick = (gateId, event) => {
                 </a>
               </td>
               <td class="px-4 py-4">
-                <span
-                  class="inline-flex items-center rounded-full px-3 py-1 text-xs font-bold"
-                  :class="getEquipStatusClass(equipment.status)"
-                >
+                <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-bold"
+                  :class="getEquipStatusClass(equipment.status)">
                   {{ equipment.status }}
                 </span>
               </td>
