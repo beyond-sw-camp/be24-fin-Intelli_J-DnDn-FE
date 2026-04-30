@@ -1,808 +1,1041 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  Leaf,
-  Users,
-  ShieldCheck,
-  Truck,
-  CloudSun,
-  Wind,
-  Droplets,
-  Sparkles,
   AlertTriangle,
-  CheckCircle2,
-  Activity,
-  FileText,
-  Gauge,
+  ArrowUpRight,
+  CalendarDays,
+  ChevronDown,
+  Droplets,
   Factory,
+  Gauge,
   HardHat,
-  ClipboardList,
+  Leaf,
+  Medal,
   RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  Trophy,
+  Users,
+  Zap,
 } from 'lucide-vue-next'
+import api from '@/api/index.js'
 
-// ─── 기본 설정 ─────────────────────────────────────────────────────────────────
-const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8081').replace(/\/$/, '')
-
-function getTodayDateText() {
-  const now = new Date()
-  const year = now.getFullYear()
-  const month = String(now.getMonth() + 1).padStart(2, '0')
-  const day = String(now.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-const T = {
-  title: 'ESG · 기상 통합 대시보드',
-  desc: '환경(E)·사회(S)·지배구조(G) 지표를 실시간 기상 관제 및 중장비 입출차 데이터와 연계해 한 화면에서 보여줍니다.',
-  refresh: '새로고침',
-  liveTag: '실시간',
-  cycleTag: '30분 주기 갱신',
-}
-
-// ─── 상태 ─────────────────────────────────────────────────────────────────────
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
 const lastUpdatedAt = ref('')
+const dashboard = ref(null)
+const selectedSiteId = ref('mokdong')
+const selectedZoneId = ref('zone-a')
+const activeEsgKey = ref('E')
+let refreshTimer = null
 
-const weather = ref(null)
-const workLogList = ref([])
-const workLogHistory = ref([])
+const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
 
-// 중장비 입출차 (현재 백엔드 API 미연동 상태이므로 UI 데모 데이터 유지)
-const equipments = ref([
-  { id: 1, name: 'CAT 320 굴착기', type: '굴착기', status: '작업중', gate: 'Gate 5 (토목)', partner: '동남건기', powered: true },
-  { id: 2, name: 'HYUNDAI 25T 덤프', type: '덤프트럭', status: '대기', gate: 'Gate 4 (자재)', partner: '한빛로지스', powered: false },
-  { id: 3, name: 'VOLVO 휠로더 L90', type: '휠로더', status: '작업중', gate: 'Gate 2 (서측)', partner: '서진중기', powered: true },
-  { id: 4, name: 'KOBELCO 50T 크레인', type: '크레인', status: '입차예정', gate: 'Gate 1 (정문)', partner: '대흥크레인', powered: false },
-  { id: 5, name: 'DOOSAN 5T 지게차', type: '지게차', status: '작업중', gate: 'Gate 3 (동측)', partner: '대성중기', powered: true },
+const sites = ref([
+  {
+    id: 'mokdong',
+    name: '목동 복합개발 2공구',
+    shortName: '목동',
+    address: '서울 양천구 목동',
+    contractor: '한화건설',
+    manager: '현장 총괄자',
+    score: 62.0,
+    level: 3,
+    carbon: 24.8,
+    powerSaving: 86,
+    riskCount: 0,
+    missionRate: 62,
+    trend: 3.0,
+    accent: 'emerald',
+  },
+  {
+    id: 'deungchon',
+    name: '등촌동 현장',
+    shortName: '등촌동',
+    address: '서울 강서구 등촌동',
+    contractor: '한화건설',
+    manager: '안전관리자',
+    score: 88.1,
+    level: 6,
+    carbon: 42.5,
+    powerSaving: 146,
+    riskCount: 2,
+    missionRate: 88,
+    trend: 4.6,
+    accent: 'sky',
+  },
+  {
+    id: 'singil',
+    name: '신길동 현장',
+    shortName: '신길동',
+    address: '서울 영등포구 신길동',
+    contractor: '한화건설',
+    manager: '품질관리자',
+    score: 76.2,
+    level: 4,
+    carbon: 31.2,
+    powerSaving: 104,
+    riskCount: 5,
+    missionRate: 76,
+    trend: 2.2,
+    accent: 'violet',
+  },
+  {
+    id: 'sindaebang',
+    name: '신대방 현장',
+    shortName: '신대방',
+    address: '서울 동작구 신대방동',
+    contractor: '한화건설',
+    manager: '품질관리자',
+    score: 72.5,
+    level: 4,
+    carbon: 28.4,
+    powerSaving: 92,
+    riskCount: 7,
+    missionRate: 72,
+    trend: 1.9,
+    accent: 'amber',
+  },
 ])
 
-// ─── 데이터 로드 ─────────────────────────────────────────────────────────────
-async function loadWeather() {
-  try {
-    const response = await fetch(`${API_BASE_URL}/weather/dashboard?reportDate=${reportDate.value}`)
-    if (!response.ok) throw new Error('기상 관제 조회 실패')
-    weather.value = await response.json()
-  } catch (error) {
-    console.error(error)
-    weather.value = null
-  }
-}
+const zones = ref([
+  {
+    id: 'zone-a',
+    siteId: 'mokdong',
+    name: 'A 게이트',
+    type: '차량 대기 동선',
+    score: 62.0,
+    level: 3,
+    rank: 1,
+    carbon: 18,
+    powerSaving: 74,
+    risk: 3,
+    missionRate: 62,
+    lead: 0,
+    status: '시공',
+  },
+  {
+    id: 'zone-b',
+    siteId: 'mokdong',
+    name: '골조 구역',
+    type: '양중 작업 가능',
+    score: 58.5,
+    level: 3,
+    rank: 2,
+    carbon: 14,
+    powerSaving: 61,
+    risk: 5,
+    missionRate: 58,
+    lead: -3.5,
+    status: '관리',
+  },
+  {
+    id: 'zone-c',
+    siteId: 'mokdong',
+    name: '세척장',
+    type: '전력 절감 강화',
+    score: 66.3,
+    level: 3,
+    rank: 3,
+    carbon: 22,
+    powerSaving: 86,
+    risk: 4,
+    missionRate: 66,
+    lead: 4.3,
+    status: '우수',
+  },
+  {
+    id: 'zone-d',
+    siteId: 'mokdong',
+    name: '민원 구역',
+    type: '소음/먼지 감시',
+    score: 55.8,
+    level: 2,
+    rank: 4,
+    carbon: 11,
+    powerSaving: 45,
+    risk: 8,
+    missionRate: 52,
+    lead: -6.2,
+    status: '위험',
+  },
+  {
+    id: 'deungchon-a',
+    siteId: 'deungchon',
+    name: 'A 동 골조',
+    type: '양중 작업 집중',
+    score: 78.2,
+    level: 3,
+    rank: 1,
+    carbon: 34,
+    powerSaving: 98,
+    risk: 5,
+    missionRate: 70,
+    lead: 2.4,
+    status: '관리',
+  },
+  {
+    id: 'deungchon-b',
+    siteId: 'deungchon',
+    name: 'B 동 외부',
+    type: '비산먼지 관리',
+    score: 72.6,
+    level: 3,
+    rank: 2,
+    carbon: 24,
+    powerSaving: 73,
+    risk: 8,
+    missionRate: 59,
+    lead: -1.2,
+    status: '주의',
+  },
+  {
+    id: 'sindaebang-a',
+    siteId: 'sindaebang',
+    name: '업무동 코어',
+    type: '전력 사용 집중',
+    score: 74.9,
+    level: 3,
+    rank: 1,
+    carbon: 30,
+    powerSaving: 76,
+    risk: 6,
+    missionRate: 64,
+    lead: 1.9,
+    status: '관리',
+  },
+  {
+    id: 'sindaebang-b',
+    siteId: 'sindaebang',
+    name: '지하 굴착',
+    type: '배수·안전 통제',
+    score: 68.4,
+    level: 2,
+    rank: 2,
+    carbon: 21,
+    powerSaving: 58,
+    risk: 9,
+    missionRate: 55,
+    lead: -2.8,
+    status: '위험',
+  },
+])
 
-async function loadWorkLogList() {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/worklog/list?reportDate=${reportDate.value}`)
-    if (!response.ok) throw new Error('작업 일보 조회 실패')
-    const data = await response.json()
-    workLogList.value = Array.isArray(data.workList) ? data.workList : []
-  } catch (error) {
-    console.error(error)
-    workLogList.value = []
-  }
-}
+const currentSite = computed(() => sites.value.find((site) => site.id === selectedSiteId.value) ?? sites.value[0])
+const siteZones = computed(() => zones.value.filter((zone) => zone.siteId === currentSite.value.id))
+const selectedZone = computed(() => {
+  return siteZones.value.find((zone) => zone.id === selectedZoneId.value) ?? siteZones.value[0]
+})
 
-async function loadWorkLogHistory() {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/worklog/history?reportDate=${reportDate.value}`)
-    if (!response.ok) throw new Error('작업 이력 조회 실패')
-    const data = await response.json()
-    workLogHistory.value = Array.isArray(data.history) ? data.history : []
-  } catch (error) {
-    console.error(error)
-    workLogHistory.value = []
-  }
-}
+const weatherToday = computed(() => dashboard.value?.today ?? null)
+const weatherAnalysis = computed(() => dashboard.value?.analysis ?? null)
+const airQuality = computed(() => dashboard.value?.airQuality ?? null)
+const equipmentRisks = computed(() => normalizeArray(dashboard.value?.equipmentRisks))
+const planRisks = computed(() => normalizeArray(dashboard.value?.planRisks))
 
-async function loadAll() {
+const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
+const activeLevel = computed(() => {
+  const index = LEVEL_THRESHOLDS.findLastIndex((score) => activeScore.value >= score)
+  return Math.max(1, Math.min(7, index + 1))
+})
+const levelProgress = computed(() => {
+  const current = LEVEL_THRESHOLDS[activeLevel.value - 1] ?? 0
+  const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
+  return Math.min(100, Math.max(0, Math.round(((activeScore.value - current) / Math.max(1, next - current)) * 100)))
+})
+const nextLevelPoint = computed(() => {
+  const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
+  return Math.max(0, next - activeScore.value).toFixed(1)
+})
+const buildingFloors = computed(() => Array.from({ length: 8 }, (_, index) => index + 1))
+
+const weatherImpact = computed(() => {
+  const analysis = weatherAnalysis.value
+  if (!analysis) {
+    return { label: '기상 데이터 연결 대기', tone: 'text-slate-700 bg-slate-100 border-slate-200', score: 0 }
+  }
+
+  let score = 0
+  if (analysis.hasRain || (analysis.precipitationProbability ?? 0) >= 60) score += 2
+  if (analysis.windRisk || (analysis.maxWindSpeed ?? 0) >= 8) score += 2
+  if (analysis.hasSnow) score += 2
+  if (analysis.heatRisk) score += 1
+  if (analysis.coldRisk) score += 1
+  if (analysis.fineDustRisk) score += 1
+
+  if (score >= 4) return { label: '통제 필요', tone: 'text-rose-700 bg-rose-50 border-rose-200', score }
+  if (score >= 2) return { label: '주의 관찰', tone: 'text-amber-700 bg-amber-50 border-amber-200', score }
+  return { label: '정상 운영', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200', score }
+})
+
+const esgBreakdown = computed(() => {
+  const zone = selectedZone.value
+  const rain = weatherAnalysis.value?.precipitationProbability ?? 30
+  const wind = weatherAnalysis.value?.maxWindSpeed ?? 2.4
+  const fineDust = airQuality.value?.value ?? 37
+
+  const environment = clampScore(zone.score - rain * 0.05 - fineDust * 0.03 + zone.powerSaving * 0.04)
+  const social = clampScore(zone.score + zone.missionRate * 0.12 - zone.risk * 1.4)
+  const governance = clampScore(zone.score + (100 - zone.risk * 5) * 0.1 - wind * 0.8)
+
+  return [
+    {
+      key: 'E',
+      title: 'Environment',
+      subtitle: '탄소 저감 · 세척 전력 · 비산먼지',
+      score: environment,
+      color: 'emerald',
+      icon: Leaf,
+      description: '장비 공회전, 세척 전력, 미세먼지 대응을 합산한 환경 점수입니다.',
+      details: [
+        { label: '탄소 저감량', value: `${zone.carbon}kg`, caption: '대기 장비 공회전 감소 기준' },
+        { label: '세척 전력 절감', value: `-${zone.powerSaving}kWh`, caption: '세척장 전력 사용 최적화' },
+        { label: '비산먼지 대응', value: `${airQuality.value?.value ?? 36}㎍/㎥`, caption: 'PM10 기준 살수/차폐 대응' },
+      ],
+      guide: '중장비 공회전을 줄이고 세척장 전력 피크를 낮추면 다음 레벨에 가장 빠르게 도달합니다.',
+    },
+    {
+      key: 'S',
+      title: 'Social',
+      subtitle: '무사고 · 안전 교육 · 민원 대응',
+      score: social,
+      color: 'sky',
+      icon: ShieldCheck,
+      description: '근로자 안전, 민원 리스크, 보호구 지급 상태를 반영한 사회 점수입니다.',
+      details: [
+        { label: '안전 무사고', value: '87일', caption: '목표 90일 임박' },
+        { label: '보호구 지급률', value: `${Math.max(72, zone.missionRate + 18)}%`, caption: '구역 투입 인원 기준' },
+        { label: '민원 리스크', value: `${zone.risk}건`, caption: '소음/분진/동선 신고 포함' },
+      ],
+      guide: '보행 동선과 장비 진입 동선을 분리하고 민원 구역 모니터링을 유지하면 S 점수가 안정적으로 오릅니다.',
+    },
+    {
+      key: 'G',
+      title: 'Governance',
+      subtitle: '작업일보 · 위험 추적 · 점검 기록',
+      score: governance,
+      color: 'violet',
+      icon: Gauge,
+      description: '작업 기록의 투명성, 위험 조치 추적, 점검 누락 여부를 반영한 거버넌스 점수입니다.',
+      details: [
+        { label: '작업일보 기록률', value: `${Math.min(98, Math.round(zone.score + 24))}%`, caption: '금일 공정 기록 기준' },
+        { label: '위험 조치 완료', value: `${Math.max(0, 10 - zone.risk)}/10`, caption: 'AI 추천 조치 추적' },
+        { label: '점검 누락', value: `${Math.max(0, zone.risk - 3)}건`, caption: '최근 7일 기준' },
+      ],
+      guide: '위험 조치 결과를 작업일보와 함께 남기면 현장 간 비교에서 G 점수가 크게 올라갑니다.',
+    },
+  ]
+})
+
+const zoneMetricCards = computed(() => {
+  const zone = selectedZone.value
+  const idleMinutes = Math.max(8, 24 - zone.level * 3)
+  const protectionRate = Math.max(72, zone.missionRate + 18)
+
+  if (activeEsgKey.value === 'S') {
+    return [
+      {
+        id: 'safe-days',
+        title: '무사고 일수',
+        subtitle: '목표 90일 임박',
+        value: '87일',
+        badge: '우수',
+        icon: ShieldCheck,
+        iconClass: 'bg-sky-50 text-sky-700',
+        valueClass: 'text-sky-800',
+      },
+      {
+        id: 'protection',
+        title: '근로자 보호',
+        subtitle: '안전 교육/보호구',
+        value: `${protectionRate}%`,
+        badge: '관리',
+        icon: Users,
+        iconClass: 'bg-emerald-50 text-emerald-700',
+        valueClass: 'text-emerald-800',
+      },
+      {
+        id: 'complaint',
+        title: '민원 리스크',
+        subtitle: '소음/분진 신고',
+        value: `${zone.risk}건`,
+        badge: zone.risk >= 7 ? '위험' : '관리',
+        icon: AlertTriangle,
+        iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
+        valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-amber-700',
+      },
+      {
+        id: 'education',
+        title: '안전 교육',
+        subtitle: '구역 투입 인원 기준',
+        value: `${Math.min(98, zone.missionRate + 24)}%`,
+        badge: '관리',
+        icon: Medal,
+        iconClass: 'bg-violet-50 text-violet-700',
+        valueClass: 'text-violet-800',
+      },
+    ]
+  }
+
+  if (activeEsgKey.value === 'G') {
+    return [
+      {
+        id: 'daily-log',
+        title: '작업일보 기록률',
+        subtitle: '금일 공정 기록',
+        value: `${Math.min(98, Math.round(zone.score + 24))}%`,
+        badge: '관리',
+        icon: Gauge,
+        iconClass: 'bg-violet-50 text-violet-700',
+        valueClass: 'text-violet-800',
+      },
+      {
+        id: 'action-done',
+        title: '위험 조치 완료',
+        subtitle: 'AI 추천 조치 추적',
+        value: `${Math.max(0, 10 - zone.risk)}/10`,
+        badge: zone.risk >= 7 ? '주의' : '우수',
+        icon: ShieldCheck,
+        iconClass: 'bg-emerald-50 text-emerald-700',
+        valueClass: 'text-emerald-800',
+      },
+      {
+        id: 'missing-check',
+        title: '점검 누락',
+        subtitle: '최근 7일 기준',
+        value: `${Math.max(0, zone.risk - 3)}건`,
+        badge: zone.risk >= 7 ? '위험' : '관리',
+        icon: AlertTriangle,
+        iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
+        valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-amber-700',
+      },
+      {
+        id: 'evidence',
+        title: '증빙 이력',
+        subtitle: '사진/점검표 업로드',
+        value: `${Math.min(96, zone.missionRate + 30)}%`,
+        badge: '관리',
+        icon: Medal,
+        iconClass: 'bg-sky-50 text-sky-700',
+        valueClass: 'text-sky-800',
+      },
+    ]
+  }
+
+  return [
+    {
+      id: 'gate',
+      title: zone.name,
+      subtitle: zone.type,
+      value: `대기 ${idleMinutes}분`,
+      badge: zone.status,
+      icon: HardHat,
+      iconClass: 'bg-emerald-50 text-emerald-700',
+      valueClass: 'text-emerald-800',
+    },
+    {
+      id: 'wash',
+      title: '세척장',
+      subtitle: '전력 절감 강화',
+      value: `-${currentSite.value.powerSaving}kWh`,
+      badge: '우수',
+      icon: Droplets,
+      iconClass: 'bg-emerald-50 text-emerald-700',
+      valueClass: 'text-emerald-800',
+    },
+    {
+      id: 'process-risk',
+      title: '공정 리스크',
+      subtitle: '기상 영향 가능',
+      value: `${zone.risk}건`,
+      badge: zone.risk >= 7 ? '위험' : '관리',
+      icon: AlertTriangle,
+      iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
+      valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-emerald-800',
+    },
+    {
+      id: 'carbon',
+      title: '탄소 저감량',
+      subtitle: '공회전 감소 기준',
+      value: `${zone.carbon}kg`,
+      badge: '개선',
+      icon: Leaf,
+      iconClass: 'bg-emerald-50 text-emerald-700',
+      valueClass: 'text-emerald-800',
+    },
+  ]
+})
+
+const missions = computed(() => [
+  {
+    id: 'idle',
+    title: '장비 대기시간 20% 줄이기',
+    description: '입출차 대기 흐름 개선',
+    progress: selectedZone.value.missionRate,
+    color: 'emerald',
+  },
+  {
+    id: 'power',
+    title: '세척장 전력 절감 25% 달성',
+    description: '세척 설비 가동 최적화',
+    progress: Math.min(100, Math.round(currentSite.value.powerSaving / 1.55)),
+    color: 'lime',
+  },
+  {
+    id: 'complaint',
+    title: '민원 경고 이하 유지',
+    description: '소음·먼지 기준 관리',
+    progress: Math.max(40, 100 - selectedZone.value.risk * 8),
+    color: 'sky',
+  },
+])
+
+const siteRankingItems = computed(() => [...sites.value].sort((a, b) => b.score - a.score))
+const siteLeader = computed(() => siteRankingItems.value[0])
+const currentSiteRank = computed(() => {
+  return siteRankingItems.value.findIndex((site) => site.id === selectedSiteId.value) + 1
+})
+const scoreGapToLeader = computed(() => {
+  return Math.max(0, (siteLeader.value?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
+})
+
+const riskActions = computed(() => {
+  const risks = [...equipmentRisks.value, ...planRisks.value].slice(0, 3)
+  if (risks.length) {
+    return risks.map((risk, index) => ({
+      id: `risk-${index}`,
+      title: risk.title || risk.reason || '기상 연동 위험 항목',
+      detail: risk.action || risk.subtitle || '작업 계획과 장비 운용 조건을 다시 확인하세요.',
+      level: risk.level || '주의',
+    }))
+  }
+
+  if (weatherImpact.value.score >= 2) {
+    return [
+      {
+        id: 'weather',
+        title: '기상 조건에 따른 작업 순서 조정',
+        detail: '강수·풍속·미세먼지 기준을 반영해 외부 작업 우선순위를 조정하세요.',
+        level: weatherImpact.value.score >= 4 ? '경고' : '주의',
+      },
+    ]
+  }
+
+  return [
+    {
+      id: 'stable',
+      title: '현재 기상 조건은 평시 운용 범위',
+      detail: '장비 대기시간과 세척 전력 절감 미션 중심으로 관리하면 됩니다.',
+      level: '양호',
+    },
+  ]
+})
+
+async function loadDashboard() {
   loading.value = true
   try {
-    await Promise.all([loadWeather(), loadWorkLogList(), loadWorkLogHistory()])
-    const now = new Date()
-    lastUpdatedAt.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const response = await api.get('/weather/dashboard', {
+      params: { reportDate: reportDate.value },
+    })
+    dashboard.value = unwrapPayload(response)
+    lastUpdatedAt.value = formatTime(new Date())
+  } catch (error) {
+    dashboard.value = null
   } finally {
     loading.value = false
   }
 }
 
-// 30분 주기 자동 갱신
-let refreshTimer = null
+function getTodayDateText() {
+  const now = new Date()
+  return [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+function formatTime(date) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function unwrapPayload(payload) {
+  if (payload && typeof payload === 'object' && 'data' in payload && ('success' in payload || 'isSuccess' in payload)) {
+    return payload.data
+  }
+  return payload
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function clampScore(value) {
+  return Math.max(0, Math.min(100, Math.round(value * 10) / 10))
+}
+
+function colorClass(color, type) {
+  const map = {
+    emerald: {
+      icon: 'bg-emerald-100 text-emerald-700',
+      text: 'text-emerald-800',
+      bar: 'bg-emerald-500',
+      soft: 'bg-emerald-50 border-emerald-100',
+    },
+    sky: {
+      icon: 'bg-sky-100 text-sky-700',
+      text: 'text-sky-800',
+      bar: 'bg-sky-500',
+      soft: 'bg-sky-50 border-sky-100',
+    },
+    violet: {
+      icon: 'bg-violet-100 text-violet-700',
+      text: 'text-violet-800',
+      bar: 'bg-violet-500',
+      soft: 'bg-violet-50 border-violet-100',
+    },
+    lime: {
+      icon: 'bg-lime-100 text-lime-700',
+      text: 'text-lime-800',
+      bar: 'bg-lime-500',
+      soft: 'bg-lime-50 border-lime-100',
+    },
+  }
+  return map[color]?.[type] ?? map.emerald[type]
+}
+
+function levelTone(level) {
+  if (level === '경고' || level === '위험') return 'bg-rose-100 text-rose-800 border-rose-200'
+  if (level === '주의' || level === '관리') return 'bg-amber-100 text-amber-800 border-amber-200'
+  return 'bg-emerald-100 text-emerald-800 border-emerald-200'
+}
+
 onMounted(() => {
-  loadAll()
-  refreshTimer = setInterval(loadAll, 30 * 60 * 1000)
+  loadDashboard()
+  refreshTimer = setInterval(loadDashboard, 30 * 60 * 1000)
 })
+
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
 })
 
-watch(reportDate, loadAll)
-
-// ─── 파생값 ─────────────────────────────────────────────────────────────────
-const analysis = computed(() => weather.value?.analysis ?? null)
-const airQuality = computed(() => weather.value?.airQuality ?? null)
-const todayCard = computed(() => weather.value?.today ?? null)
-const equipmentRisks = computed(() => weather.value?.equipmentRisks ?? [])
-const planRisks = computed(() => weather.value?.planRisks ?? [])
-
-// 환경(E) - 기상 기반 탄소·분진 저감 지표
-const environmentMetrics = computed(() => {
-  const fineDust = airQuality.value?.value ?? null
-  const rainProb = analysis.value?.precipitationProbability ?? 0
-  const wind = analysis.value?.maxWindSpeed ?? 0
-
-  // 우천/강풍 시 운휴 장비 비율 (탄소 절감 환산)
-  const idleEquipments = equipments.value.filter((eq) => !eq.powered).length
-  const carbonReduction = Math.round((idleEquipments / Math.max(1, equipments.value.length)) * 100)
-
-  // 분진 저감 권장 살수 횟수 (PM10 기반)
-  const sprayCount = fineDust == null ? 0 : fineDust >= 80 ? 6 : fineDust >= 50 ? 4 : 2
-
-  // 우천 폐기물 유출 방지 점수
-  const wasteScore = rainProb >= 70 ? 75 : rainProb >= 40 ? 88 : 95
-
-  return {
-    carbonReduction,
-    carbonLabel: idleEquipments > 0
-      ? `${idleEquipments}대 자율 운휴 적용`
-      : '전체 가동 중 (절감 없음)',
-    sprayCount,
-    spraySource: fineDust == null ? 'PM10 미수신' : `PM10 ${fineDust}㎍/㎥ 기준`,
-    wasteScore,
-    wasteSource: rainProb >= 70 ? '우천 시 유출 위험 점검 강화' : '강수 영향 낮음',
-    wind,
-  }
-})
-
-// 사회(S) - 근로자 안전·보호 지표
-const socialMetrics = computed(() => {
-  const heatRisk = analysis.value?.heatRisk ?? false
-  const coldRisk = analysis.value?.coldRisk ?? false
-  const fineDust = airQuality.value?.value ?? null
-
-  const timeShiftActive = heatRisk || coldRisk
-  const ppeRate = fineDust != null && fineDust >= 80 ? 100 : 92
-  const ppeNote = fineDust != null && fineDust >= 80 ? 'KF94 이상 전원 지급' : '일반 보호구 운영'
-
-  // 무사고 일수 (작업이력 기반 — 데모용 고정값에 history 길이 반영)
-  const safeDays = 87 + Math.min(workLogHistory.value.length, 7)
-
-  return {
-    timeShiftActive,
-    timeShiftLabel: heatRisk ? '폭염 시간대 작업 분산' : coldRisk ? '한파 시간대 작업 분산' : '정상 시간대 운영',
-    ppeRate,
-    ppeNote,
-    safeDays,
-    eduRate: 94,
-  }
-})
-
-// 지배구조(G) - 기록·투명성 지표
-const governanceMetrics = computed(() => {
-  const totalLogs = workLogList.value.length
-  const completedLogs = workLogList.value.filter((log) => log.workStatus === '완료').length
-  const completionRate = totalLogs === 0 ? 0 : Math.round((completedLogs / totalLogs) * 100)
-
-  const aiRiskCount = (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0)
-
-  return {
-    autoRecordRate: totalLogs === 0 ? 0 : 98,
-    completionRate,
-    totalLogs,
-    completedLogs,
-    aiRiskCount,
-    historyDays: workLogHistory.value.length,
-  }
-})
-
-// ESG 종합 점수 산정 (간단 가중치)
-const esgOverall = computed(() => {
-  const e = (environmentMetrics.value.wasteScore + (environmentMetrics.value.sprayCount >= 4 ? 90 : 75)) / 2
-  const s = (socialMetrics.value.ppeRate + socialMetrics.value.eduRate) / 2
-  const g = (governanceMetrics.value.autoRecordRate + governanceMetrics.value.completionRate) / 2
-  const total = Math.round(e * 0.35 + s * 0.35 + g * 0.3)
-
-  let grade = 'C'
-  if (total >= 92) grade = 'A+'
-  else if (total >= 85) grade = 'A'
-  else if (total >= 78) grade = 'B+'
-  else if (total >= 70) grade = 'B'
-  else if (total >= 60) grade = 'C+'
-
-  return { e: Math.round(e), s: Math.round(s), g: Math.round(g), total, grade }
-})
-
-// 기상 영향도 종합
-const weatherImpactLevel = computed(() => {
-  if (!analysis.value) return { label: '데이터 없음', tone: 'text-slate-600 bg-slate-100 border-slate-200' }
-
-  let score = 0
-  if (analysis.value.hasRain || analysis.value.precipitationProbability >= 60) score += 2
-  if (analysis.value.windRisk || analysis.value.maxWindSpeed >= 8) score += 2
-  if (analysis.value.hasSnow) score += 2
-  if (analysis.value.heatRisk) score += 1
-  if (analysis.value.coldRisk) score += 1
-  if (analysis.value.fineDustRisk) score += 1
-
-  if (score >= 4) return { label: '높음', tone: 'text-rose-700 bg-rose-50 border-rose-200' }
-  if (score >= 2) return { label: '보통', tone: 'text-amber-700 bg-amber-50 border-amber-200' }
-  return { label: '낮음', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
-})
-
-// 등급별 색상
-function gradeTone(grade) {
-  if (grade === 'A+' || grade === 'A') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
-  if (grade === 'B+' || grade === 'B') return 'text-sky-700 bg-sky-50 border-sky-200'
-  if (grade === 'C+' || grade === 'C') return 'text-amber-700 bg-amber-50 border-amber-200'
-  return 'text-rose-700 bg-rose-50 border-rose-200'
-}
-
-function levelBadgeClass(level) {
-  if (level === '경고' || level === '제한') return 'bg-rose-600 text-white'
-  if (level === '주의') return 'bg-amber-100 text-amber-900'
-  return 'bg-emerald-100 text-emerald-900'
-}
-
-function progressBarClass(rate) {
-  if (rate >= 90) return 'bg-emerald-500'
-  if (rate >= 70) return 'bg-sky-500'
-  if (rate >= 50) return 'bg-amber-400'
-  return 'bg-rose-400'
-}
-
-// 장비 가동 현황 집계
-const equipmentSummary = computed(() => {
-  const total = equipments.value.length
-  const powered = equipments.value.filter((eq) => eq.powered).length
-  const idle = total - powered
-  return { total, powered, idle, idleRatio: Math.round((idle / Math.max(1, total)) * 100) }
-})
+watch(reportDate, loadDashboard)
 </script>
 
 <template>
-  <div class="space-y-5 pb-10">
-    <!-- 헤더 -->
-    <div
-      class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-emerald-50/40 to-flare-50/30 p-6 shadow-card"
-    >
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 via-flare-500 to-forena-500"
-      />
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div class="flex items-start gap-3">
-          <span
-            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-flare-600 text-white shadow-md"
-          >
-            <Leaf class="h-5 w-5" />
-          </span>
-          <div>
-            <h1 class="text-gradient-brand text-2xl font-bold tracking-tight">{{ T.title }}</h1>
-            <p class="mt-1 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ T.desc }}</p>
+  <div class="min-h-screen space-y-5 bg-gradient-to-br from-slate-50 via-emerald-50/50 to-sky-50/50 p-5 pb-10">
+    <section class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-950 via-emerald-800 to-teal-700 p-6 text-white shadow-card">
+      <div class="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-emerald-300/10" />
+      <div class="pointer-events-none absolute bottom-0 left-1/3 h-24 w-72 rounded-full bg-teal-200/10 blur-2xl" />
+
+      <div class="relative flex flex-col gap-6">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div class="flex items-start gap-4">
+            <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/20">
+              <Leaf class="h-7 w-7" />
+            </span>
+            <div>
+              <h1 class="text-3xl font-black tracking-tight">공사현장 ESG 대시보드</h1>
+              <p class="mt-2 text-sm font-semibold text-emerald-100">
+                {{ currentSite.shortName }} 현장 · 마지막 갱신 {{ lastUpdatedAt || '대기 중' }}
+              </p>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="rounded-xl bg-white/10 px-4 py-3 ring-1 ring-white/15">
+              <p class="text-[10px] font-bold text-emerald-100">현장</p>
+              <p class="mt-1 text-sm font-black">{{ currentSite.shortName }} 현장</p>
+            </div>
+            <label class="flex items-center gap-3 rounded-xl bg-white/10 px-4 py-3 ring-1 ring-white/15">
+              <div>
+                <p class="text-[10px] font-bold text-emerald-100">기준 일자</p>
+                <input v-model="reportDate" type="date" class="mt-1 bg-transparent text-sm font-black text-white focus:outline-none" />
+              </div>
+              <CalendarDays class="h-4 w-4 text-emerald-100" />
+            </label>
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black ring-1 ring-white/15 transition hover:bg-white/15 disabled:opacity-60"
+              :disabled="loading"
+              @click="loadDashboard"
+            >
+              <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />
+              새로고침
+            </button>
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
-          <span
-            class="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-bold text-emerald-700 shadow-sm"
-          >
-            <span class="relative flex h-2 w-2">
-              <span class="absolute inset-0 animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span class="relative h-2 w-2 rounded-full bg-emerald-500" />
-            </span>
-            {{ T.liveTag }}
-          </span>
-          <span class="text-xs font-medium text-forena-500">{{ T.cycleTag }}</span>
-          <span v-if="lastUpdatedAt" class="text-xs text-forena-400">갱신 {{ lastUpdatedAt }}</span>
+        <div class="grid gap-3 lg:grid-cols-4">
+          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
+            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
+              <Trophy class="h-3.5 w-3.5 text-amber-300" />
+              ESG 현장 점수
+            </p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.score }}<span class="text-lg text-emerald-100">/100</span></p>
+            <p class="mt-1 text-xs text-emerald-100">Lv.{{ currentSite.level }} 시공 단계</p>
+          </div>
 
-          <label class="flex items-center gap-2 rounded-xl border border-forena-200 bg-white px-3 py-1.5 shadow-sm">
-            <span class="text-[10px] font-bold uppercase tracking-wide text-forena-500">기준</span>
-            <input
-              v-model="reportDate"
-              type="date"
-              class="text-sm text-forena-800 focus:outline-none"
-            />
-          </label>
+          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
+            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
+              <Factory class="h-3.5 w-3.5 text-sky-200" />
+              미세먼지 PM10
+            </p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ airQuality?.value ?? 36 }}<span class="text-lg text-emerald-100">㎍/㎥</span></p>
+            <p class="mt-1 text-xs text-emerald-100">{{ airQuality?.label || '보통' }}</p>
+          </div>
 
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-xl border border-forena-200 bg-white px-3 py-1.5 text-xs font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
-            :disabled="loading"
-            @click="loadAll"
-          >
-            <RefreshCw class="h-3.5 w-3.5" :class="loading ? 'animate-spin' : ''" />
-            {{ T.refresh }}
-          </button>
+          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
+            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
+              <ShieldCheck class="h-3.5 w-3.5 text-sky-200" />
+              안전 무사고 일수
+            </p>
+            <p class="mt-2 text-4xl font-black tabular-nums">87<span class="text-lg text-emerald-100">일</span></p>
+            <p class="mt-1 text-xs text-emerald-100">목표 90일 임박</p>
+          </div>
+
+          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
+            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
+              <AlertTriangle class="h-3.5 w-3.5 text-amber-200" />
+              운영 리스크
+            </p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.riskCount }}<span class="text-lg text-emerald-100">건</span></p>
+            <p class="mt-1 text-xs text-emerald-100">기상 기반 자동 검출</p>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- ESG 종합 + 기상 요약 KPI -->
-    <div class="grid gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
-      <!-- ESG 종합 점수 카드 -->
-      <article
-        class="relative overflow-hidden rounded-2xl border-2 border-emerald-200/80 bg-gradient-to-br from-white via-emerald-50/40 to-flare-50/40 p-6 shadow-card"
-      >
-        <div class="flex items-start justify-between">
+    <section class="grid gap-4 xl:grid-cols-[390px_minmax(0,1fr)_380px]">
+      <article class="overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-card">
+        <div class="flex items-start justify-between gap-3 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4">
           <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">ESG 종합 점수</p>
-            <p class="mt-1 text-xs leading-relaxed text-forena-600">기상·장비·작업기록 통합 산정</p>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Field Level · 현장 빌딩</p>
+            <h2 class="mt-1 text-xl font-black text-forena-900">ESG 빌딩 성장</h2>
           </div>
-          <span
-            class="inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
-            :class="gradeTone(esgOverall.grade)"
-          >
-            <Sparkles class="h-3 w-3" />
-            {{ esgOverall.grade }}
+          <span class="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-black text-emerald-700">
+            Lv.{{ activeLevel }}
           </span>
         </div>
 
-        <div class="mt-4 flex items-baseline gap-3">
-          <p class="text-5xl font-extrabold tabular-nums text-forena-900">{{ esgOverall.total }}</p>
-          <p class="text-base font-bold text-forena-500">/ 100</p>
-        </div>
-
-        <div class="mt-4 grid grid-cols-3 gap-2">
-          <div class="rounded-lg border border-emerald-200/70 bg-white px-3 py-2 text-center">
-            <p class="text-[10px] font-bold text-emerald-700">E · 환경</p>
-            <p class="mt-0.5 tabular-nums text-lg font-bold text-emerald-900">{{ esgOverall.e }}</p>
-          </div>
-          <div class="rounded-lg border border-sky-200/70 bg-white px-3 py-2 text-center">
-            <p class="text-[10px] font-bold text-sky-700">S · 사회</p>
-            <p class="mt-0.5 tabular-nums text-lg font-bold text-sky-900">{{ esgOverall.s }}</p>
-          </div>
-          <div class="rounded-lg border border-violet-200/70 bg-white px-3 py-2 text-center">
-            <p class="text-[10px] font-bold text-violet-700">G · 지배</p>
-            <p class="mt-0.5 tabular-nums text-lg font-bold text-violet-900">{{ esgOverall.g }}</p>
-          </div>
-        </div>
-      </article>
-
-      <!-- 기상 요약 4분할 -->
-      <div class="grid auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-4">
-        <article class="flex flex-col rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card">
-          <div class="flex items-center gap-2">
-            <CloudSun class="h-4 w-4 text-forena-400" />
-            <p class="text-[11px] font-bold text-forena-500">기상 영향도</p>
-          </div>
-          <p class="mt-3 text-2xl font-bold text-forena-900">{{ weatherImpactLevel.label }}</p>
-          <span
-            class="mt-2 w-fit rounded-full border px-2 py-0.5 text-[10px] font-bold"
-            :class="weatherImpactLevel.tone"
-          >
-            현장 운영 영향
-          </span>
-        </article>
-
-        <article class="flex flex-col rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50 to-cyan-50 p-4 shadow-card">
-          <div class="flex items-center gap-2">
-            <Droplets class="h-4 w-4 text-sky-500" />
-            <p class="text-[11px] font-bold text-sky-800">강수 확률</p>
-          </div>
-          <p class="mt-3 tabular-nums text-2xl font-extrabold text-sky-900">
-            {{ analysis?.precipitationProbability ?? 0 }}%
-          </p>
-          <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
-            <div
-              class="h-full rounded-full bg-sky-400 transition-all duration-500"
-              :style="{ width: `${Math.min(100, analysis?.precipitationProbability ?? 0)}%` }"
-            />
-          </div>
-        </article>
-
-        <article class="flex flex-col rounded-2xl border border-violet-100/90 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-4 shadow-card">
-          <div class="flex items-center gap-2">
-            <Factory class="h-4 w-4 text-violet-500" />
-            <p class="text-[11px] font-bold text-violet-800">미세먼지 PM10</p>
-          </div>
-          <p class="mt-3 tabular-nums text-2xl font-extrabold text-violet-900">
-            <template v-if="airQuality?.value != null">{{ airQuality.value }}<span class="text-sm font-normal">㎍/㎥</span></template>
-            <template v-else>–</template>
-          </p>
-          <p class="mt-1 text-xs text-violet-700/80">{{ airQuality?.label || 'API 미수신' }}</p>
-        </article>
-
-        <article class="flex flex-col rounded-2xl border border-amber-100/90 bg-gradient-to-br from-amber-50 to-orange-50 p-4 shadow-card">
-          <div class="flex items-center gap-2">
-            <Wind class="h-4 w-4 text-amber-600" />
-            <p class="text-[11px] font-bold text-amber-800">최대 풍속</p>
-          </div>
-          <p class="mt-3 tabular-nums text-2xl font-extrabold text-amber-900">
-            {{ Number(analysis?.maxWindSpeed ?? 0).toFixed(1) }}<span class="text-sm font-normal">m/s</span>
-          </p>
-          <p class="mt-1 text-xs text-amber-700/80">
-            {{ (analysis?.maxWindSpeed ?? 0) >= 10 ? '강풍 양중 제한' : (analysis?.maxWindSpeed ?? 0) >= 8 ? '고소 작업 주의' : '정상 운용 범위' }}
-          </p>
-        </article>
-      </div>
-    </div>
-
-    <!-- E · S · G 3-column 메인 영역 -->
-    <div class="grid gap-4 xl:grid-cols-3">
-      <!-- 환경 (E) -->
-      <article class="overflow-hidden rounded-2xl border border-emerald-100/90 bg-white/95 shadow-card">
-        <div class="border-b border-emerald-100 bg-gradient-to-r from-emerald-50/80 to-flare-50/40 px-5 py-3">
-          <div class="flex items-center justify-between">
-            <h2 class="flex items-center gap-2 text-sm font-extrabold text-emerald-900">
-              <Leaf class="h-4 w-4 text-emerald-600" />
-              E · 환경 Environment
-            </h2>
-            <span class="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-              기상 연동
+        <div class="p-5">
+          <div class="relative mx-auto h-72 max-w-[300px] overflow-hidden rounded-2xl bg-gradient-to-b from-sky-50 via-white to-emerald-50">
+            <div class="absolute inset-x-8 top-8 h-px border-t border-dashed border-slate-200" />
+            <div class="absolute inset-x-10 top-20 h-px border-t border-dashed border-slate-200" />
+            <div class="absolute inset-x-12 top-32 h-px border-t border-dashed border-slate-200" />
+            <span class="absolute right-7 top-6 z-10 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-center text-sm font-black leading-4 text-white shadow-xl ring-4 ring-white">
+              Lv.<br />{{ activeLevel }}
             </span>
-          </div>
-          <p class="mt-1 text-[11px] text-emerald-700/70">날씨·장비 가동 기반 환경 영향도</p>
-        </div>
 
-        <div class="space-y-3 p-4">
-          <!-- 탄소 배출 절감 -->
-          <div class="rounded-xl border border-emerald-100 bg-emerald-50/40 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-emerald-900">탄소 배출 절감 (장비 운휴)</p>
-                <p class="mt-0.5 text-[10px] text-emerald-700/80">{{ environmentMetrics.carbonLabel }}</p>
+            <div class="absolute bottom-8 left-1/2 w-44 -translate-x-1/2">
+              <div class="mx-auto flex h-52 w-32 flex-col-reverse justify-start gap-1.5">
+                <div
+                  v-for="floor in buildingFloors"
+                  :key="floor"
+                  class="relative h-6 transition-all duration-500"
+                  :class="[
+                    floor <= activeLevel
+                      ? 'border-x-[5px] border-emerald-950 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 shadow-sm'
+                      : 'border border-dashed border-slate-200 bg-white/45',
+                    floor === activeLevel ? 'border-t-[5px] border-emerald-950' : '',
+                    floor === 1 && floor <= activeLevel ? 'rounded-b-sm' : '',
+                  ]"
+                >
+                  <div class="absolute inset-x-2 top-1.5 grid grid-cols-3 gap-1">
+                    <span
+                      v-for="window in 3"
+                      :key="window"
+                      class="h-2.5 rounded-[2px]"
+                      :class="floor <= activeLevel ? 'bg-emerald-100' : 'bg-slate-100/80'"
+                    />
+                  </div>
+                </div>
               </div>
-              <p class="tabular-nums text-lg font-extrabold text-emerald-900">{{ environmentMetrics.carbonReduction }}%</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-emerald-100">
-              <div
-                class="h-full rounded-full bg-emerald-500"
-                :style="{ width: `${environmentMetrics.carbonReduction}%` }"
-              />
+              <div class="mx-auto mt-1 h-3 w-32 rounded-sm bg-forena-900" />
+              <div class="mx-auto h-1.5 w-44 rounded-full bg-slate-400" />
+              <div class="mx-auto mt-1 h-1 w-36 rounded-full bg-slate-300" />
             </div>
           </div>
 
-          <!-- 분진 저감 살수 -->
-          <div class="rounded-xl border border-violet-100 bg-violet-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-violet-900">분진 저감 살수 권장</p>
-                <p class="mt-0.5 text-[10px] text-violet-700/80">{{ environmentMetrics.spraySource }}</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-violet-900">{{ environmentMetrics.sprayCount }}<span class="text-xs font-bold">회/일</span></p>
-            </div>
+          <div class="mt-5 text-center">
+            <h3 class="text-xl font-black text-forena-900">시공 단계</h3>
+            <p class="mt-2 text-sm font-medium text-forena-600">
+              현재 점수 <span class="font-black text-emerald-700">{{ activeScore }}</span>점 · 다음 레벨까지
+              <span class="font-black text-emerald-700">{{ nextLevelPoint }}</span>점 남음
+            </p>
           </div>
 
-          <!-- 우천 폐기물 유출 방지 -->
-          <div class="rounded-xl border border-sky-100 bg-sky-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-sky-900">우천 폐기물 유출 방지</p>
-                <p class="mt-0.5 text-[10px] text-sky-700/80">{{ environmentMetrics.wasteSource }}</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-sky-900">{{ environmentMetrics.wasteScore }}점</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
-              <div
-                class="h-full rounded-full"
-                :class="progressBarClass(environmentMetrics.wasteScore)"
-                :style="{ width: `${environmentMetrics.wasteScore}%` }"
-              />
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <!-- 사회 (S) -->
-      <article class="overflow-hidden rounded-2xl border border-sky-100/90 bg-white/95 shadow-card">
-        <div class="border-b border-sky-100 bg-gradient-to-r from-sky-50/80 to-cyan-50/40 px-5 py-3">
-          <div class="flex items-center justify-between">
-            <h2 class="flex items-center gap-2 text-sm font-extrabold text-sky-900">
-              <Users class="h-4 w-4 text-sky-600" />
-              S · 사회 Social
-            </h2>
-            <span class="rounded-full border border-sky-200 bg-white px-2 py-0.5 text-[10px] font-bold text-sky-700">
-              근로자 안전
-            </span>
-          </div>
-          <p class="mt-1 text-[11px] text-sky-700/70">기상 위험에 따른 근로자 보호 적용</p>
-        </div>
-
-        <div class="space-y-3 p-4">
-          <!-- 폭염/한파 시간대 작업 분산 -->
-          <div class="rounded-xl border border-amber-100 bg-amber-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-amber-900">기상 시간대 작업 분산</p>
-                <p class="mt-0.5 text-[10px] text-amber-700/80">{{ socialMetrics.timeShiftLabel }}</p>
-              </div>
-              <span
-                class="rounded-md px-2 py-1 text-[10px] font-bold"
-                :class="socialMetrics.timeShiftActive ? 'bg-amber-200 text-amber-900' : 'bg-emerald-100 text-emerald-800'"
-              >
-                {{ socialMetrics.timeShiftActive ? '적용 중' : '평시 운영' }}
-              </span>
-            </div>
+          <div class="mt-4 h-2 overflow-hidden rounded-full bg-emerald-100">
+            <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${levelProgress}%` }" />
           </div>
 
-          <!-- 보호구 지급률 -->
-          <div class="rounded-xl border border-sky-100 bg-sky-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-sky-900">보호구 지급률 (KF94 이상)</p>
-                <p class="mt-0.5 text-[10px] text-sky-700/80">{{ socialMetrics.ppeNote }}</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-sky-900">{{ socialMetrics.ppeRate }}%</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
-              <div
-                class="h-full rounded-full bg-sky-500"
-                :style="{ width: `${socialMetrics.ppeRate}%` }"
-              />
-            </div>
-          </div>
-
-          <!-- 무사고 일수 -->
-          <div class="rounded-xl border border-emerald-100 bg-emerald-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <ShieldCheck class="h-4 w-4 text-emerald-600" />
-                <p class="text-xs font-bold text-emerald-900">안전 무사고 일수</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-emerald-900">{{ socialMetrics.safeDays }}<span class="text-xs">일</span></p>
-            </div>
-          </div>
-
-          <!-- 협력사 안전교육 -->
-          <div class="rounded-xl border border-violet-100 bg-violet-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <p class="text-xs font-bold text-violet-900">협력사 안전교육 이수율</p>
-              <p class="tabular-nums text-lg font-extrabold text-violet-900">{{ socialMetrics.eduRate }}%</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-violet-100">
-              <div
-                class="h-full rounded-full bg-violet-500"
-                :style="{ width: `${socialMetrics.eduRate}%` }"
-              />
-            </div>
+          <div class="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+            <p class="flex items-center gap-2 text-sm font-black text-emerald-900">
+              <Sparkles class="h-4 w-4" />
+              레벨업 가이드
+            </p>
+            <p class="mt-1 text-xs leading-6 text-emerald-700">
+              중장비 공회전을 낮추고 탄소 배출을 줄이면 다음 층이 올라갑니다.
+            </p>
           </div>
         </div>
       </article>
 
-      <!-- 지배구조 (G) -->
-      <article class="overflow-hidden rounded-2xl border border-violet-100/90 bg-white/95 shadow-card">
-        <div class="border-b border-violet-100 bg-gradient-to-r from-violet-50/80 to-fuchsia-50/40 px-5 py-3">
-          <div class="flex items-center justify-between">
-            <h2 class="flex items-center gap-2 text-sm font-extrabold text-violet-900">
-              <Gauge class="h-4 w-4 text-violet-600" />
-              G · 지배구조 Governance
-            </h2>
-            <span class="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-bold text-violet-700">
-              투명성·기록
-            </span>
-          </div>
-          <p class="mt-1 text-[11px] text-violet-700/70">작업일보·AI 위험통제 의사결정 추적</p>
-        </div>
-
-        <div class="space-y-3 p-4">
-          <!-- 작업일보 자동기록률 -->
-          <div class="rounded-xl border border-violet-100 bg-violet-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-violet-900">작업일보 자동 기록률</p>
-                <p class="mt-0.5 text-[10px] text-violet-700/80">금일 {{ governanceMetrics.totalLogs }}건 등록</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-violet-900">{{ governanceMetrics.autoRecordRate }}%</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-violet-100">
-              <div
-                class="h-full rounded-full bg-violet-500"
-                :style="{ width: `${governanceMetrics.autoRecordRate}%` }"
-              />
-            </div>
-          </div>
-
-          <!-- 공정 완료율 -->
-          <div class="rounded-xl border border-emerald-100 bg-emerald-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-xs font-bold text-emerald-900">금일 공정 완료율</p>
-                <p class="mt-0.5 text-[10px] text-emerald-700/80">{{ governanceMetrics.completedLogs }} / {{ governanceMetrics.totalLogs }} 건</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-emerald-900">{{ governanceMetrics.completionRate }}%</p>
-            </div>
-            <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-emerald-100">
-              <div
-                class="h-full rounded-full"
-                :class="progressBarClass(governanceMetrics.completionRate)"
-                :style="{ width: `${governanceMetrics.completionRate}%` }"
-              />
-            </div>
-          </div>
-
-          <!-- AI 위험통제 추적 -->
-          <div class="rounded-xl border border-rose-100 bg-rose-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <div class="flex items-center gap-2">
-                <ClipboardList class="h-4 w-4 text-rose-600" />
-                <p class="text-xs font-bold text-rose-900">AI 위험통제 의사결정 추적</p>
-              </div>
-              <p class="tabular-nums text-lg font-extrabold text-rose-900">{{ governanceMetrics.aiRiskCount }}건</p>
-            </div>
-            <p class="mt-1 text-[10px] text-rose-700/80">기상 기반 자동 추천 항목 (장비 + 계획)</p>
-          </div>
-
-          <!-- 14일 작업 이력 -->
-          <div class="rounded-xl border border-sky-100 bg-sky-50/30 p-3">
-            <div class="flex items-start justify-between gap-2">
-              <p class="text-xs font-bold text-sky-900">최근 14일 작업 이력 보존</p>
-              <p class="tabular-nums text-lg font-extrabold text-sky-900">{{ governanceMetrics.historyDays }}<span class="text-xs">일</span></p>
-            </div>
-          </div>
-        </div>
-      </article>
-    </div>
-
-    <!-- 중장비 입출차 ESG 연동 패널 -->
-    <article class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
-      <div class="border-b border-forena-100 bg-gradient-to-r from-amber-50/40 via-white to-emerald-50/40 px-5 py-3">
-        <div class="flex flex-wrap items-start justify-between gap-2">
+      <article class="rounded-2xl border border-forena-100 bg-white p-6 shadow-card">
+        <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 class="flex items-center gap-2 text-sm font-extrabold text-forena-900">
-              <Truck class="h-4 w-4 text-forena-600" />
-              중장비 입출차 · ESG 운용 현황
-            </h2>
-            <p class="mt-1 text-xs text-forena-500">기상 위험도와 연동된 자율 운휴 / 가동 결정</p>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-forena-700">ESG Score</p>
+            <h2 class="mt-1 text-2xl font-black text-forena-900">{{ selectedZone.name }} 점수 분해</h2>
+            <p class="mt-1 text-xs font-semibold text-forena-500">{{ selectedZone.type }} · {{ selectedZone.status }} 단계</p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-              가동 {{ equipmentSummary.powered }}대
+            <span class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">
+              작업구역 기준
             </span>
-            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700">
-              운휴 {{ equipmentSummary.idle }}대
-            </span>
-            <span class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
-              운휴율 {{ equipmentSummary.idleRatio }}%
-            </span>
-          </div>
-        </div>
-      </div>
-
-      <div class="p-4">
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[720px] border-collapse text-sm">
-            <thead>
-              <tr class="border-b border-forena-100">
-                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">장비명</th>
-                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">유형</th>
-                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">협력사</th>
-                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">게이트</th>
-                <th class="py-2 pr-3 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">상태</th>
-                <th class="py-2 text-right text-[11px] font-bold uppercase tracking-wide text-forena-500">ESG 영향</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="eq in equipments"
-                :key="eq.id"
-                class="border-b border-forena-50 transition-colors hover:bg-forena-50/30"
+            <div class="relative min-w-[170px]">
+              <label class="sr-only" for="zone-select">작업구역 선택</label>
+              <select
+                id="zone-select"
+                v-model="selectedZoneId"
+                class="h-9 w-full appearance-none rounded-full border border-forena-200 bg-white px-3 pr-9 text-xs font-black text-forena-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
               >
-                <td class="py-3 pr-3">
-                  <span class="text-xs font-bold text-forena-800">{{ eq.name }}</span>
-                </td>
-                <td class="py-3 pr-3 text-xs text-slate-600">{{ eq.type }}</td>
-                <td class="py-3 pr-3 text-xs text-slate-600">{{ eq.partner }}</td>
-                <td class="py-3 pr-3 text-xs text-slate-600">{{ eq.gate }}</td>
-                <td class="py-3 pr-3">
-                  <span
-                    class="rounded-md px-2 py-0.5 text-[11px] font-bold"
-                    :class="eq.status === '작업중' ? 'bg-emerald-100 text-emerald-800' : eq.status === '대기' ? 'bg-slate-100 text-slate-700' : 'bg-amber-100 text-amber-800'"
-                  >
-                    {{ eq.status }}
-                  </span>
-                </td>
-                <td class="py-3 text-right">
-                  <span
-                    v-if="eq.powered"
-                    class="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-800"
-                  >
-                    <Activity class="h-3 w-3" />
-                    탄소 배출
-                  </span>
-                  <span
-                    v-else
-                    class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800"
-                  >
-                    <Leaf class="h-3 w-3" />
-                    절감 기여
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </article>
-
-    <!-- AI 위험통제 추천 + 작업이력 2분할 -->
-    <div class="grid gap-4 xl:grid-cols-2">
-      <!-- AI 위험통제 추천 (기상 연동) -->
-      <article class="overflow-hidden rounded-2xl border border-rose-100/90 bg-white/95 shadow-card">
-        <div class="border-b border-rose-100 bg-gradient-to-r from-rose-50/60 via-white to-rose-50/30 px-5 py-3">
-          <h2 class="flex items-center gap-2 text-sm font-extrabold text-rose-900">
-            <AlertTriangle class="h-4 w-4 text-rose-600" />
-            AI 위험통제 추천 (기상 연동)
-          </h2>
-          <p class="mt-1 text-[11px] text-rose-700/70">실시간 기상 기반 장비·공정 위험 자동 분석</p>
-        </div>
-
-        <div class="space-y-2 p-4">
-          <div
-            v-if="(equipmentRisks.length + planRisks.length) === 0"
-            class="rounded-xl border border-emerald-100 bg-emerald-50/30 px-4 py-3 text-center"
-          >
-            <CheckCircle2 class="mx-auto mb-1 h-5 w-5 text-emerald-600" />
-            <p class="text-xs font-bold text-emerald-800">현재 활성 위험 없음</p>
-            <p class="mt-0.5 text-[10px] text-emerald-700/80">장비·공정 모두 정상 운영 가능 범위</p>
+                <option v-for="zone in siteZones" :key="zone.id" :value="zone.id">
+                  {{ zone.name }}
+                </option>
+              </select>
+              <ChevronDown class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-forena-500" />
+            </div>
           </div>
+        </div>
 
+        <div class="mt-5 grid gap-3 lg:grid-cols-3">
+          <button
+            v-for="item in esgBreakdown"
+            :key="item.key"
+            type="button"
+            class="min-h-[150px] rounded-2xl border p-5 text-left transition"
+            :class="activeEsgKey === item.key ? `${colorClass(item.color, 'soft')} shadow-sm ring-2 ring-emerald-100` : `${colorClass(item.color, 'soft')} opacity-85 hover:opacity-100`"
+            @click="activeEsgKey = item.key"
+          >
+            <div class="flex items-start justify-between">
+              <span class="flex h-12 w-12 items-center justify-center rounded-xl" :class="colorClass(item.color, 'icon')">
+                <component :is="item.icon" class="h-5 w-5" />
+              </span>
+              <p class="text-3xl font-black tabular-nums" :class="colorClass(item.color, 'text')">{{ item.score }}</p>
+            </div>
+            <p class="mt-4 text-base font-black text-forena-900">{{ item.key }} · {{ item.title }}</p>
+            <p class="mt-1 text-[11px] leading-5 text-forena-500">{{ item.subtitle }}</p>
+            <div class="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
+              <div class="h-full rounded-full" :class="colorClass(item.color, 'bar')" :style="{ width: `${item.score}%` }" />
+            </div>
+          </button>
+        </div>
+
+        <div class="mt-5 grid gap-4 lg:grid-cols-2">
           <div
-            v-for="(risk, idx) in [...equipmentRisks, ...planRisks].slice(0, 4)"
-            :key="`risk-${idx}`"
-            class="rounded-xl border border-rose-100 bg-white p-3"
+            v-for="card in zoneMetricCards"
+            :key="card.id"
+            class="rounded-2xl border border-forena-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-card"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="flex min-w-0 items-start gap-3">
+                <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" :class="card.iconClass">
+                  <component :is="card.icon" class="h-5 w-5" />
+                </span>
+                <div class="min-w-0">
+                  <p class="truncate text-base font-black text-forena-900">{{ card.title }}</p>
+                  <p class="mt-0.5 text-xs font-semibold text-forena-500">{{ card.subtitle }}</p>
+                </div>
+              </div>
+              <span class="shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-black" :class="levelTone(card.badge)">
+                {{ card.badge }}
+              </span>
+            </div>
+            <p class="mt-4 text-3xl font-black tabular-nums" :class="card.valueClass">{{ card.value }}</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="rounded-2xl border border-amber-100 bg-white p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-amber-600">Rival · 현장 대결</p>
+            <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 순위</h2>
+          </div>
+          <span class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">
+            임시 데이터
+          </span>
+        </div>
+
+        <div class="mt-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-5 text-white shadow-lg">
+          <div class="flex items-center justify-between gap-3">
+            <p class="flex items-center gap-2 text-sm font-black text-emerald-100">
+              <Target class="h-4 w-4" />
+              내 순위
+            </p>
+            <p class="text-3xl font-black tabular-nums">{{ currentSiteRank }}위</p>
+          </div>
+          <p class="mt-3 text-sm font-black">
+            {{ siteLeader.name }}까지 {{ scoreGapToLeader }}점 부족
+          </p>
+        </div>
+
+        <div class="mt-4 space-y-3">
+          <div
+            v-for="(item, index) in siteRankingItems"
+            :key="item.id"
+            class="rounded-2xl border p-3 transition"
+            :class="item.id === selectedSiteId ? 'border-emerald-300 bg-emerald-50 ring-2 ring-emerald-100' : 'border-forena-100 bg-white'"
+          >
+            <div class="flex items-center gap-3">
+              <span
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black"
+                :class="index === 0 ? 'bg-amber-100 text-amber-700' : item.id === selectedSiteId ? 'bg-sky-100 text-sky-700' : 'bg-forena-100 text-forena-700'"
+              >
+                <Trophy v-if="index === 0" class="h-4 w-4" />
+                <span v-else>{{ index + 1 }}</span>
+              </span>
+              <div class="min-w-0 flex-1">
+                <div class="flex min-w-0 items-center gap-2">
+                  <p class="truncate text-sm font-black text-forena-900">{{ item.name }}</p>
+                  <span
+                    v-if="item.id === selectedSiteId"
+                    class="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white"
+                  >
+                    현재
+                  </span>
+                </div>
+                <p class="mt-0.5 text-[11px] text-forena-500">{{ item.address }}</p>
+              </div>
+              <p class="text-lg font-black tabular-nums text-emerald-800">{{ item.score }}</p>
+            </div>
+            <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
+              <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${item.score}%` }" />
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+      <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Mission</p>
+            <h2 class="mt-1 text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
+          </div>
+          <Target class="h-6 w-6 text-emerald-600" />
+        </div>
+
+        <div class="mt-5 grid gap-3 lg:grid-cols-3">
+          <div
+            v-for="mission in missions"
+            :key="mission.id"
+            class="rounded-2xl border p-4"
+            :class="colorClass(mission.color, 'soft')"
           >
             <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <span class="rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold text-violet-800">{{ risk.badge || 'AI' }}</span>
-                  <span class="text-xs font-bold text-forena-900">{{ risk.title }}</span>
-                </div>
-                <p class="mt-1 text-[11px] text-slate-600">{{ risk.subtitle }}</p>
-                <p class="mt-1 text-[10px] leading-relaxed text-slate-500">{{ risk.action || risk.reason }}</p>
+              <div>
+                <p class="text-sm font-black text-forena-900">{{ mission.title }}</p>
+                <p class="mt-1 text-[11px] text-forena-500">{{ mission.description }}</p>
               </div>
-              <span
-                class="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold"
-                :class="levelBadgeClass(risk.level)"
-              >
-                {{ risk.level }}
-              </span>
+              <p class="text-lg font-black tabular-nums" :class="colorClass(mission.color, 'text')">{{ mission.progress }}%</p>
+            </div>
+            <div class="mt-4 h-2 overflow-hidden rounded-full bg-white">
+              <div class="h-full rounded-full" :class="colorClass(mission.color, 'bar')" :style="{ width: `${mission.progress}%` }" />
             </div>
           </div>
         </div>
       </article>
 
-      <!-- 14일 작업 이력 (지배구조 추적) -->
-      <article class="overflow-hidden rounded-2xl border border-violet-100/90 bg-white/95 shadow-card">
-        <div class="border-b border-violet-100 bg-gradient-to-r from-violet-50/60 via-white to-fuchsia-50/30 px-5 py-3">
-          <h2 class="flex items-center gap-2 text-sm font-extrabold text-violet-900">
-            <FileText class="h-4 w-4 text-violet-600" />
-            최근 14일 작업 이력 (G · 추적)
-          </h2>
-          <p class="mt-1 text-[11px] text-violet-700/70">투명한 의사결정 추적을 위한 일자별 기록</p>
+      <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-rose-700">Action</p>
+            <h2 class="mt-1 text-xl font-black text-forena-900">기상 기반 즉시 조치</h2>
+          </div>
+          <Zap class="h-6 w-6 text-rose-500" />
         </div>
 
-        <div class="p-4">
+        <div class="mt-4 space-y-3">
           <div
-            v-if="workLogHistory.length === 0"
-            class="rounded-xl border border-violet-100 bg-violet-50/30 px-4 py-6 text-center text-xs text-violet-700/70"
+            v-for="action in riskActions"
+            :key="action.id"
+            class="rounded-2xl border border-forena-100 bg-forena-50/40 p-4"
           >
-            저장된 작업 이력이 없습니다.
-          </div>
-
-          <ul v-else class="space-y-2">
-            <li
-              v-for="history in workLogHistory.slice(0, 7)"
-              :key="history.reportDate"
-              class="flex items-center justify-between rounded-lg border border-violet-100 bg-violet-50/20 px-3 py-2"
-            >
-              <div class="flex items-center gap-3">
-                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100">
-                  <HardHat class="h-4 w-4 text-violet-700" />
-                </div>
-                <div>
-                  <p class="text-xs font-bold text-violet-900">{{ history.reportDate }}</p>
-                  <p class="text-[10px] text-violet-700/70">
-                    작업 {{ history.workCount }}건 · 완료 {{ history.completedCount }}건 · 인원 {{ history.totalPersonnel }}명
-                  </p>
-                </div>
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-black text-forena-900">{{ action.title }}</p>
+                <p class="mt-1 text-xs leading-5 text-forena-500">{{ action.detail }}</p>
               </div>
-              <span
-                class="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-bold tabular-nums"
-                :class="history.workCount === history.completedCount ? 'text-emerald-700 border-emerald-200' : 'text-amber-700 border-amber-200'"
-              >
-                {{ history.workCount === 0 ? 0 : Math.round((history.completedCount / history.workCount) * 100) }}%
+              <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold" :class="levelTone(action.level)">
+                {{ action.level }}
               </span>
-            </li>
-          </ul>
+            </div>
+          </div>
         </div>
       </article>
-    </div>
+    </section>
+
+    <section class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wide text-forena-500">Competition Log</p>
+          <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 성과 요약</h2>
+        </div>
+        <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
+          <ArrowUpRight class="h-3.5 w-3.5" />
+          {{ currentSite.shortName }} 현장 {{ currentSite.trend }}점 상승
+        </span>
+      </div>
+
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full min-w-[760px] text-sm">
+          <thead>
+            <tr class="border-b border-forena-100 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">
+              <th class="py-3 pr-4">구분</th>
+              <th class="py-3 pr-4">대상</th>
+              <th class="py-3 pr-4">ESG 점수</th>
+              <th class="py-3 pr-4">레벨</th>
+              <th class="py-3 pr-4">주요 기여</th>
+              <th class="py-3 text-right">상태</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="zone in siteZones"
+              :key="zone.id"
+              class="border-b border-forena-50 transition hover:bg-forena-50/40"
+            >
+              <td class="py-3 pr-4">
+                <span class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
+                  <Medal class="h-3 w-3" />
+                  {{ zone.rank }}위
+                </span>
+              </td>
+              <td class="py-3 pr-4">
+                <p class="font-bold text-forena-900">{{ zone.name }}</p>
+                <p class="mt-0.5 text-[11px] text-forena-500">{{ zone.type }}</p>
+              </td>
+              <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ zone.score }}</td>
+              <td class="py-3 pr-4">
+                <span class="rounded-full border border-forena-200 bg-white px-2 py-0.5 text-[11px] font-bold text-forena-700">
+                  Lv.{{ zone.level }}
+                </span>
+              </td>
+              <td class="py-3 pr-4 text-xs text-forena-600">
+                탄소 {{ zone.carbon }}kg · 전력 {{ zone.powerSaving }}kWh · 리스크 {{ zone.risk }}건
+              </td>
+              <td class="py-3 text-right">
+                <span class="rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="levelTone(zone.status)">
+                  {{ zone.status }}
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
 </template>
