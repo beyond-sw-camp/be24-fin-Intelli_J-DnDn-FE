@@ -15,6 +15,12 @@ const router = createRouter({
       meta: meta('로그인'),
     },
     {
+      path: '/site/upload',
+      name: 'siteUpload',
+      component: () => import('../views/schedule/FirstDocumentUpload.vue'), // 실제 경로로 수정
+      meta: meta('최초 공정표 문서 등록'),
+    },
+    {
       path: '/site/onboarding',
       name: 'siteOnboarding',
       component: () => import('../views/personnel/WorkerOnboardingView.vue'),
@@ -78,7 +84,7 @@ const router = createRouter({
     {
       path: '/site/process-analysis',
       name: 'siteProcessAnalysis',
-      component: () => import('../views/misc/PlaceholderView.vue'),
+      component: () => import('../views/schedule/AnalysisView.vue'),
       meta: meta('공정 분석'),
     },
     {

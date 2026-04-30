@@ -89,6 +89,34 @@ const planRisks = computed(() => dashboard.value?.planRisks ?? [])
 const forecastDays = computed(() => dashboard.value?.forecastDays ?? [])
 const locationLabel = computed(() => dashboard.value?.locationLabel || '현장')
 
+// 데이터 소스 라벨 (실제값 vs 추정값 구분 — 운영 화면 신뢰감 확보)
+const sourceLabel = computed(() => {
+  const type = analysis.value?.sourceType
+  if (type === 'KMA_FORECAST') return { label: '기상청 단기예보', tone: 'text-sky-700 bg-sky-50 border-sky-200' }
+  if (type === 'KMA_MID') return { label: '기상청 중기예보', tone: 'text-sky-700 bg-sky-50 border-sky-200' }
+  if (type === 'ASOS_DAILY') return { label: '기상청 ASOS 실측', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' }
+  if (type === 'DERIVED') return { label: '추정값', tone: 'text-amber-700 bg-amber-50 border-amber-200' }
+  return { label: '데이터 없음', tone: 'text-slate-600 bg-slate-50 border-slate-200' }
+})
+
+// 강수확률 (analysis 우선, rain.value fallback)
+const rainPercent = computed(() => {
+  const fromAnalysis = analysis.value?.precipitationProbability
+  if (fromAnalysis != null) return Number(fromAnalysis)
+  const fromCard = Number(String(rain.value?.value || '').replace(/[^0-9]/g, ''))
+  return Number.isFinite(fromCard) ? fromCard : 0
+})
+
+// 미세먼지 (analysis.fineDustValue 우선, airQuality.value fallback)
+const fineDustValue = computed(() => {
+  return analysis.value?.fineDustValue ?? airQuality.value?.value ?? null
+})
+
+const fineDustLabel = computed(() => {
+  if (fineDustValue.value == null) return airQuality.value?.label || 'API 미연동'
+  return airQuality.value?.label || airQuality.value?.grade || '측정값'
+})
+
 // 종합 위험도 (analysis 플래그 카운트)
 const riskLevel = computed(() => {
   const a = analysis.value
@@ -248,8 +276,7 @@ const weeklyForecast = computed(() => {
     .slice(0, 7)
 })
 
-// 월간 — 현재 주차(이번 주)부터 4주만 표시 (지난 주차 제외)
-// 주차 기준: 일요일 시작 ~ 토요일 끝 (KMA 일자 그룹핑)
+// 월간 — 현재 주차(오늘 ~ 이번 주 토요일)부터 4주 표시. 지난 일자는 제외.
 function getWeekStart(date) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
   d.setDate(d.getDate() - d.getDay()) // 그 주 일요일로 정렬
@@ -271,36 +298,36 @@ function dateKey(date) {
 const monthlyForecast = computed(() => {
   if (forecastDays.value.length === 0) return []
 
-  // 일자별 인덱스
   const dayMap = new Map()
   forecastDays.value.forEach((d) => {
     if (d.date) dayMap.set(d.date, d)
   })
 
-  // 이번 주 시작 (일요일) 부터 4주 윈도우
   const now = new Date()
-  const startOfWeek = getWeekStart(now)
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const thisWeekStart = getWeekStart(today)
   const weeks = []
 
   for (let w = 0; w < 4; w++) {
-    const weekStart = new Date(startOfWeek)
+    const weekStart = new Date(thisWeekStart)
     weekStart.setDate(weekStart.getDate() + w * 7)
     const weekEnd = new Date(weekStart)
     weekEnd.setDate(weekEnd.getDate() + 6)
 
-    // 이 주차의 7일 데이터 수집
+    // 첫 주차는 오늘부터 시작 (지난 일자 제외)
+    const effectiveStart = w === 0 && weekStart < today ? today : weekStart
+
     const days = []
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart)
-      d.setDate(d.getDate() + i)
-      const key = dateKey(d)
+    const cursor = new Date(effectiveStart)
+    while (cursor <= weekEnd) {
+      const key = dateKey(cursor)
       const source = dayMap.get(key)
 
       days.push({
         id: key,
         date: key,
-        shortDate: formatMD(d),
-        weekday: KOREAN_WEEKDAYS[d.getDay()],
+        shortDate: formatMD(cursor),
+        weekday: KOREAN_WEEKDAYS[cursor.getDay()],
         weatherLabel: source?.weatherLabel || '예보 범위 외',
         maxTemp: source?.maxTemp ?? null,
         minTemp: source?.minTemp ?? null,
@@ -308,9 +335,9 @@ const monthlyForecast = computed(() => {
         windSpeed: source?.windSpeed ?? 0,
         hasData: Boolean(source),
       })
+      cursor.setDate(cursor.getDate() + 1)
     }
 
-    // 데이터가 있는 일자만으로 통계 산출
     const dataDays = days.filter((d) => d.hasData)
     const validMax = dataDays.map((d) => d.maxTemp).filter((v) => v != null)
     const validMin = dataDays.map((d) => d.minTemp).filter((v) => v != null)
@@ -322,13 +349,13 @@ const monthlyForecast = computed(() => {
     const maxWind = dataDays.length ? Math.max(...dataDays.map((d) => d.windSpeed)) : 0
 
     let weatherSummary = '대체로 안정'
-    const hasRain = dataDays.some((d) => /비|소나기/.test(d.weatherLabel))
-    const hasSnow = dataDays.some((d) => /눈/.test(d.weatherLabel))
+    const hasRainLabel = dataDays.some((d) => /비|소나기/.test(d.weatherLabel))
+    const hasSnowLabel = dataDays.some((d) => /눈/.test(d.weatherLabel))
     if (!dataDays.length) weatherSummary = '예보 데이터 없음'
-    else if (hasSnow) weatherSummary = '적설 가능'
+    else if (hasSnowLabel) weatherSummary = '적설 가능'
     else if (avgRain >= 60) weatherSummary = '비 예보 포함'
     else if (avgRain >= 40) weatherSummary = '흐린 날 있음'
-    else if (hasRain) weatherSummary = '강수 일부'
+    else if (hasRainLabel) weatherSummary = '강수 일부'
 
     const risk =
       !dataDays.length
@@ -350,7 +377,7 @@ const monthlyForecast = computed(() => {
     weeks.push({
       id: `week-${dateKey(weekStart)}`,
       label: w === 0 ? '이번 주' : w === 1 ? '다음 주' : `${w + 1}주차`,
-      dateRange: `${formatMD(weekStart)} — ${formatMD(weekEnd)}`,
+      dateRange: `${formatMD(effectiveStart)} — ${formatMD(weekEnd)}`,
       weatherSummary,
       maxTemp,
       minTemp,
@@ -409,11 +436,6 @@ function formatWindSpeed(value) {
   return `${num.toFixed(num % 1 === 0 ? 0 : 1)}m/s`
 }
 
-function fineDustDisplay(card) {
-  if (!card || card.value == null) return '-'
-  return `${card.value}㎍/㎥`
-}
-
 function rainNote(value) {
   const v = Number(value || 0)
   if (v >= 70) return '외부 공정 순연 검토 필요'
@@ -444,15 +466,28 @@ function rainNote(value) {
           </div>
         </div>
 
-        <div class="rounded-2xl border border-forena-100/80 bg-white/90 p-3 shadow-sm">
-          <label class="flex flex-col gap-1">
-            <span class="text-[10px] font-bold uppercase tracking-wide text-forena-500">기준 날짜</span>
-            <input
-              v-model="reportDate"
-              type="date"
-              class="rounded-xl border border-forena-200 px-3 py-2 text-sm text-forena-800 focus:border-flare-400 focus:outline-none focus:ring-2 focus:ring-flare-200/50"
-            />
-          </label>
+        <div class="flex flex-wrap items-center gap-3">
+          <span
+            class="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold shadow-sm"
+            :class="sourceLabel.tone"
+          >
+            <span class="relative flex h-1.5 w-1.5">
+              <span class="absolute inset-0 animate-ping rounded-full bg-current opacity-75" />
+              <span class="relative h-1.5 w-1.5 rounded-full bg-current" />
+            </span>
+            {{ sourceLabel.label }}
+          </span>
+
+          <div class="rounded-2xl border border-forena-100/80 bg-white/90 p-3 shadow-sm">
+            <label class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold uppercase tracking-wide text-forena-500">기준 날짜</span>
+              <input
+                v-model="reportDate"
+                type="date"
+                class="rounded-xl border border-forena-200 px-3 py-2 text-sm text-forena-800 focus:border-flare-400 focus:outline-none focus:ring-2 focus:ring-flare-200/50"
+              />
+            </label>
+          </div>
         </div>
       </div>
     </div>
@@ -497,18 +532,18 @@ function rainNote(value) {
               <Droplets class="h-4 w-4 text-sky-500" />
               <p class="text-[11px] font-bold tracking-wide text-sky-800">{{ T.demoRain }}</p>
             </div>
-            <p class="mt-3 text-3xl font-extrabold tracking-tight text-sky-900">
-              {{ rain?.value || '0%' }}
+            <p class="mt-3 text-3xl font-extrabold tracking-tight text-sky-900 tabular-nums">
+              {{ rainPercent }}%
             </p>
             <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
               <div
                 class="h-full rounded-full transition-all duration-500"
-                :class="rainBarClass(Number(analysis?.precipitationProbability || 0))"
-                :style="{ width: `${Math.min(100, Number(analysis?.precipitationProbability || 0))}%` }"
+                :class="rainBarClass(rainPercent)"
+                :style="{ width: `${Math.min(100, rainPercent)}%` }"
               />
             </div>
             <p class="mt-2 text-xs leading-relaxed text-sky-800/80">
-              {{ rainNote(analysis?.precipitationProbability) }}
+              {{ rainNote(rainPercent) }}
             </p>
           </article>
 
@@ -517,11 +552,12 @@ function rainNote(value) {
               <Eye class="h-4 w-4 text-violet-500" />
               <p class="text-[11px] font-bold tracking-wide text-violet-800">{{ T.fineDustTitle }}</p>
             </div>
-            <p class="mt-3 text-3xl font-extrabold tracking-tight text-violet-900">
-              {{ fineDustDisplay(airQuality) }}
+            <p class="mt-3 text-3xl font-extrabold tracking-tight text-violet-900 tabular-nums">
+              <template v-if="fineDustValue != null">{{ fineDustValue }}<span class="text-base font-bold">㎍/㎥</span></template>
+              <template v-else>—</template>
             </p>
             <p class="mt-2 text-sm leading-relaxed text-violet-800/80">
-              {{ airQuality?.label || '정보 없음' }}
+              {{ fineDustLabel }}
             </p>
           </article>
         </div>

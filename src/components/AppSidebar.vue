@@ -64,7 +64,7 @@ const scheduleNavAll = [
   },
   {
     path: '/site/work-plan',
-    label: '작업 계획',
+    label: '공정 계획',
     icon: ClipboardList,
   },
   {
@@ -72,7 +72,7 @@ const scheduleNavAll = [
     label: '작업 지시',
     icon: FileText,
   },
-  { path: '/site/daily-log', label: '작업 실적', icon: CalendarDays },
+  { path: '/site/daily-log', label: '공사 일보', icon: CalendarDays },
   {
     path: '/site/process-analysis',
     label: '공정 분석',
@@ -211,8 +211,13 @@ function linkClassCollapsed(item) {
       :class="sidebarExpanded ? 'space-y-1' : 'mt-4 flex flex-col items-center gap-0.5'"
       :aria-label="sidebarExpanded ? 'Navigation' : 'Navigation compact'">
       <template v-if="sidebarExpanded">
-        <div v-for="group in navGroups" :key="group.key" :class="group.key === 'schedule' ? '' : 'mt-4'">
-          <button type="button"
+        <div
+          v-for="group in navGroups"
+          :key="group.key"
+          :class="group.key === 'schedule' ? '' : 'mt-4'"
+        >
+          <button
+            type="button"
             class="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left text-[10px] font-bold tracking-wider text-forena-400 uppercase transition hover:bg-white/60"
             @click="group.open.value = !group.open.value">
             <span class="flex items-center gap-2 text-forena-800">
