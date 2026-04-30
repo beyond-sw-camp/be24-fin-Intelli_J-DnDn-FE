@@ -28,6 +28,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const roleLabel = computed(() => '총 책임자')
 
+  // 최초 공정표 업로드 여부 추가
+  const isUpload = ref(false)
   /**
    * @param {string} userId
    * @param {string} password
@@ -40,6 +42,7 @@ export const useAuthStore = defineStore('auth', () => {
       accessScope.value = ACCESS_FULL
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
+      isUpload.value = false
       return true
     }
     if (id === 'viewer' && pw === 'viewer') {
@@ -47,6 +50,7 @@ export const useAuthStore = defineStore('auth', () => {
       accessScope.value = ACCESS_SITE_DASHBOARD_ONLY
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
+      isUpload.value = true
       return true
     }
     return false
