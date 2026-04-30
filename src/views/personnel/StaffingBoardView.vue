@@ -25,17 +25,16 @@ import {
 } from '@/data/staffingMockData'
 
 const T = {
-  kicker: '인력 배치',
-  boardTitle: '인력 배치 관리 보드',
-  hint: '작업자 투입 현황에서 인력을 선택해 구역에 배치할 수 있습니다.',
+  boardTitle: '인력 배치',
+  hint: '작업자 현황에서 인력을 선택해 구역에 배치할 수 있습니다.',
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
-  zoneByZoneTitle: '구역별 인력 투입 현황',
+  zoneByZoneTitle: '구역별 인력 현황',
   zoneReset: '초기화',
   zoneResetConfirmTitle: '배치 초기화',
   zoneResetWarn:
     '현재 작업중인 구역이 있을 수 있습니다.\n그래도 초기화 하시겠습니까?',
-  workerPoolTitle: '작업자 투입 현황',
+  workerPoolTitle: '작업자 현황',
   needPerson: '필요 인원',
   currentAssign: '현재 배치',
   detailToggle: '상세 구역 · 투입 인원',
@@ -403,7 +402,7 @@ function closeAssignOverflow() {
   assignOverflowMeta.value = null
 }
 
-/** 작업자 투입 현황 — 필터 */
+/** 작업자 현황 — 필터 */
 const showOnlyUnassignedInPool = ref(false)
 const poolAffiliationFilter = ref('')
 const poolPartnerCompanyFilter = ref('')
@@ -687,7 +686,6 @@ function zoneGroupAssignedSum(group) {
             <MapPin class="h-5 w-5" />
           </span>
           <div>
-            <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">{{ T.kicker }}</p>
             <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ T.boardTitle }}</h1>
             <p class="mt-1 text-sm text-forena-600/90">{{ T.hint }}</p>
           </div>
@@ -882,7 +880,7 @@ function zoneGroupAssignedSum(group) {
       </div>
     </section>
 
-    <!-- 작업자 투입 현황 -->
+    <!-- 작업자 현황 -->
     <section class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card sm:p-5">
       <h2 class="mb-4 text-base font-bold text-forena-900">{{ T.workerPoolTitle }}</h2>
 
