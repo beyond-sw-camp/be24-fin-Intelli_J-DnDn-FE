@@ -19,6 +19,10 @@ import {
   getPartnerCompanyName,
 } from '@/utils/workerAffiliation'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
+import {
+  STAFFING_INITIAL_ZONE_GROUPS,
+  STAFFING_INITIAL_WAITING,
+} from '@/data/staffingMockData'
 
 const T = {
   kicker: '인력 배치',
@@ -27,18 +31,22 @@ const T = {
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
   zoneByZoneTitle: '구역별 인력 투입 현황',
+  zoneReset: '초기화',
+  zoneResetConfirmTitle: '배치 초기화',
+  zoneResetWarn:
+    '현재 작업중인 구역이 있을 수 있습니다.\n그래도 초기화 하시겠습니까?',
   workerPoolTitle: '작업자 투입 현황',
   needPerson: '필요 인원',
   currentAssign: '현재 배치',
-  tradeToTitle: '구역 필요 직종(T.O)',
   detailToggle: '상세 구역 · 투입 인원',
   workerTableName: '작업자 이름',
   colAffil: '소속',
   colFatigue: '피로도 점수',
+  colFatiguePool: '피로도',
   colPlacement: '투입 현황',
   colProfile: '상세 프로필',
   poolHeaderSelectAll: '표시된 미투입 인원 전체 선택',
-  showUnassignedOnly: '미투입 인원만 보기',
+  showUnassignedOnly: '미투입',
   filterAffil: '소속 구분',
   filterPartnerCompany: '협력사 세부',
   allPartnerCompanies: '협력사 전체',
@@ -48,10 +56,15 @@ const T = {
   assignBtn: '선택 인력 투입',
   assignNeedSelection: '투입할 작업자와 구역을 선택해 주세요.',
   assignDone: '선택한 인력을 배치했습니다.',
+  assignOverflowTitle: '투입 인원 초과',
+  assignOverflowWarn:
+    '선택 인력 수가 해당 구역에 투입 가능한 인원보다 많습니다.\n구역을 바꾸거나 선택 인원을 줄인 뒤 다시 시도해 주세요.',
+  assignOverflowOk: '확인',
   count: '명',
   alertAuto: '부족 구역 위주로 투입 가능 인력을 자동 배치했습니다. (데모)',
   alertSave: '현재 배치가 확정되어 저장되었습니다. (데모)',
   totalWorkers: '보드 총인원',
+  poolListAggregate: '목록 집계',
   countUnit: '명',
   badgeDirect: '직영',
   badgePartner: '협력',
@@ -121,192 +134,9 @@ function affiliationDisplayCell(w) {
 const router = useRouter()
 
 /** @type {import('vue').Ref<Array<{ id: string, title: string, expanded: boolean, subZones: Array<{ id: string, title: string, expanded: boolean, required: number, tradeNeeds: { trade: string, need: number }[], workers: object[] }> }>>} */
-const zoneGroups = ref([
-  {
-    id: 'g-a',
-    title: 'A구역',
-    expanded: true,
-    subZones: [
-      {
-        id: 'z-a-102',
-        title: '102동',
-        expanded: true,
-        required: 4,
-        tradeNeeds: [
-          { trade: 'carpenter', need: 2 },
-          { trade: 'rebar', need: 1 },
-          { trade: 'welder', need: 1 },
-        ],
-        workers: [
-          {
-            id: 'z1',
-            profileId: 11,
-            name: '한현장',
-            affiliation: '협력사 (태양건설)',
-            affiliationLine: '태양건설 / 목수',
-            workerTag: '작업자',
-            attendanceTag: '출근',
-            nationality: '내국인',
-            skills: ['carpenter'],
-            fatigue: { nightShiftYesterday: false, consecutiveDays: 3 },
-          },
-          {
-            id: 'z2',
-            profileId: 12,
-            name: '서대리',
-            affiliation: '본사 소속',
-            affiliationLine: '한화건설 / 직영',
-            workerTag: '작업자',
-            attendanceTag: '출근',
-            nationality: '내국인',
-            skills: ['labor'],
-            fatigue: { nightShiftYesterday: true, consecutiveDays: 4 },
-          },
-        ],
-      },
-      {
-        id: 'z-a-103',
-        title: '103동',
-        expanded: false,
-        required: 3,
-        tradeNeeds: [
-          { trade: 'carpenter', need: 1 },
-          { trade: 'labor', need: 2 },
-        ],
-        workers: [],
-      },
-      {
-        id: 'z-a-pk',
-        title: '지하주차장',
-        expanded: false,
-        required: 2,
-        tradeNeeds: [
-          { trade: 'welder', need: 1 },
-          { trade: 'labor', need: 1 },
-        ],
-        workers: [],
-      },
-    ],
-  },
-  {
-    id: 'g-b',
-    title: 'B구역',
-    expanded: true,
-    subZones: [
-      {
-        id: 'z-b-1',
-        title: '1동 골조',
-        expanded: true,
-        required: 6,
-        tradeNeeds: [
-          { trade: 'rebar', need: 3 },
-          { trade: 'carpenter', need: 2 },
-          { trade: 'labor', need: 1 },
-        ],
-        workers: [
-          {
-            id: 'z3',
-            profileId: 13,
-            name: '오형사',
-            affiliation: '협력사 (우주산업)',
-            affiliationLine: '우주산업 / 철근',
-            workerTag: '작업자',
-            attendanceTag: '출근',
-            nationality: '외국인',
-            skills: ['rebar'],
-            fatigue: { nightShiftYesterday: false, consecutiveDays: 7 },
-          },
-        ],
-      },
-      {
-        id: 'z-b-2',
-        title: '2동 마감',
-        expanded: false,
-        required: 3,
-        tradeNeeds: [
-          { trade: 'welder', need: 1 },
-          { trade: 'labor', need: 2 },
-        ],
-        workers: [],
-      },
-    ],
-  },
-])
+const zoneGroups = ref(JSON.parse(JSON.stringify(STAFFING_INITIAL_ZONE_GROUPS)))
 
-const waiting = ref([
-  {
-    id: 'w1',
-    profileId: 1,
-    name: '김철수',
-    affiliation: '협력사 (태양건설)',
-    affiliationLine: '태양건설 / 인력',
-    workerTag: '작업자',
-    attendanceTag: '출근',
-    nationality: '내국인',
-    skills: ['carpenter', 'labor'],
-    fatigue: { nightShiftYesterday: true, consecutiveDays: 2 },
-  },
-  {
-    id: 'w2',
-    profileId: 2,
-    name: '이영희',
-    affiliation: '협력사 (우주산업)',
-    affiliationLine: '우주산업 / 철근',
-    workerTag: '작업자',
-    attendanceTag: '출근',
-    nationality: '내국인',
-    skills: ['rebar'],
-    fatigue: { nightShiftYesterday: false, consecutiveDays: 6 },
-  },
-  {
-    id: 'w3',
-    profileId: 3,
-    name: '박민수',
-    affiliation: '인력사무소 (개인)',
-    affiliationLine: '개인 / 파견',
-    workerTag: '작업자',
-    attendanceTag: '출근',
-    nationality: '외국인',
-    skills: ['labor'],
-    fatigue: { nightShiftYesterday: false, consecutiveDays: 1 },
-  },
-  {
-    id: 'w4',
-    profileId: 4,
-    name: '정대리',
-    affiliation: '본사 소속',
-    affiliationLine: '한화건설 / 직영',
-    workerTag: '작업자',
-    attendanceTag: '출근',
-    nationality: '내국인',
-    skills: ['welder', 'labor'],
-    fatigue: { nightShiftYesterday: false, consecutiveDays: 0 },
-  },
-  {
-    id: 'w5',
-    profileId: 5,
-    name: '최작업',
-    affiliation: '협력사 (태양건설)',
-    affiliationLine: '태양건설 / 목수',
-    workerTag: '작업자',
-    attendanceTag: '출근',
-    nationality: '내국인',
-    skills: ['carpenter'],
-    fatigue: { nightShiftYesterday: false, consecutiveDays: 5 },
-  },
-  {
-    id: 'w6',
-    profileId: 6,
-    name: '준비중',
-    affiliation: '협력사 (대한건설)',
-    affiliationLine: '대한건설 / 인력',
-    workerTag: '관리자',
-    attendanceTag: '출근',
-    nationality: '내국인',
-    skills: ['labor'],
-    fatigue: { nightShiftYesterday: false, consecutiveDays: 0 },
-  },
-])
+const waiting = ref(JSON.parse(JSON.stringify(STAFFING_INITIAL_WAITING)))
 
 const toasts = ref([])
 let toastSeq = 0
@@ -491,6 +321,25 @@ function subZoneCardBorderClass(subZone) {
   return 'border border-slate-200/70'
 }
 
+function zoneGroupRequiredSum(group) {
+  return group.subZones.reduce((s, z) => s + Math.max(0, Number(z.required) || 0), 0)
+}
+
+function zoneGroupFillRatio(group) {
+  const need = zoneGroupRequiredSum(group)
+  const assigned = zoneGroupAssignedSum(group)
+  if (!need) return 1
+  return Math.min(assigned / need, 1)
+}
+
+function zoneGroupCardBorderClass(group) {
+  const r = zoneGroupFillRatio(group)
+  if (r >= 1) return 'border border-emerald-200/90'
+  if (r >= 0.5) return 'border border-amber-200/90'
+  if (r > 0) return 'border border-rose-200/90'
+  return 'border border-white ring-1 ring-slate-200/75'
+}
+
 function openWorkerProfile(w) {
   const id = w.profileId ?? w.id
   router.push({ name: 'siteWorkerProfile', params: { id: String(id) } })
@@ -510,6 +359,48 @@ function removeFromSubZone(subZoneId, workerId) {
     )
   }
   syncPublish()
+}
+
+function resetAllZonesToWaiting() {
+  for (const g of zoneGroups.value) {
+    for (const sz of g.subZones) {
+      for (const w of sz.workers) {
+        waiting.value.push(
+          cloneWorker({
+            ...w,
+            id: 'w-' + String(++idSeq),
+          }),
+        )
+      }
+      sz.workers = []
+    }
+  }
+  selectedWaitingIds.value = []
+  syncPublish()
+}
+
+const resetConfirmOpen = ref(false)
+
+function openResetConfirm() {
+  resetConfirmOpen.value = true
+}
+
+function closeResetConfirm() {
+  resetConfirmOpen.value = false
+}
+
+function confirmResetAllZones() {
+  closeResetConfirm()
+  resetAllZonesToWaiting()
+}
+
+const assignOverflowOpen = ref(false)
+/** @type {import('vue').Ref<{ selected: number, remaining: number } | null>} */
+const assignOverflowMeta = ref(null)
+
+function closeAssignOverflow() {
+  assignOverflowOpen.value = false
+  assignOverflowMeta.value = null
 }
 
 /** 작업자 투입 현황 — 필터 */
@@ -645,6 +536,22 @@ function assignSelectedWorkers() {
   const found = findSubZone(targetId)
   if (!found) return
 
+  const subZone = found.subZone
+  const selectedAssignable = selectedWaitingIds.value.filter((wid) => {
+    const w = waiting.value.find((x) => x.id === wid)
+    return !!(w && workerTagOk(w))
+  }).length
+
+  const remaining = Math.max(0, subZone.required - subZone.workers.length)
+  if (selectedAssignable > remaining) {
+    assignOverflowMeta.value = {
+      selected: selectedAssignable,
+      remaining,
+    }
+    assignOverflowOpen.value = true
+    return
+  }
+
   const ids = [...selectedWaitingIds.value]
   for (const wid of ids) {
     const w = waiting.value.find((x) => x.id === wid)
@@ -758,6 +665,10 @@ function toastClass(v) {
 function onToggleUnassignedFilter() {
   showOnlyUnassignedInPool.value = !showOnlyUnassignedInPool.value
 }
+
+function zoneGroupAssignedSum(group) {
+  return group.subZones.reduce((s, z) => s + z.workers.length, 0)
+}
 </script>
 
 <template>
@@ -801,24 +712,48 @@ function onToggleUnassignedFilter() {
     </div>
 
     <section class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card sm:p-5">
-      <h2 class="mb-3 text-base font-bold text-forena-900">{{ T.zoneByZoneTitle }}</h2>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-base font-bold text-forena-900">{{ T.zoneByZoneTitle }}</h2>
+        <button
+          type="button"
+          class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-800"
+          @click="openResetConfirm"
+        >
+          {{ T.zoneReset }}
+        </button>
+      </div>
 
       <div class="space-y-2">
         <div
           v-for="group in zoneGroups"
           :key="group.id"
-          class="overflow-hidden rounded-lg border border-forena-100 bg-forena-50/30"
+          class="overflow-hidden rounded-lg bg-forena-50/30"
+          :class="zoneGroupCardBorderClass(group)"
         >
           <button
             type="button"
-            class="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition hover:bg-forena-100/50"
+            class="flex w-full flex-col gap-2 px-3 py-2.5 text-left transition hover:bg-forena-100/50 sm:flex-row sm:items-center sm:gap-3"
             @click="group.expanded = !group.expanded"
           >
-            <ChevronRight v-if="!group.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-500" />
-            <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-500" />
-            <span class="font-bold text-forena-900">{{ group.title }}</span>
-            <span class="text-[11px] text-slate-500">({{ group.subZones.length }}개 상세)</span>
-            <span class="ml-auto text-[10px] font-bold text-forena-500">{{ group.subZones.reduce((s, z) => s + z.workers.length, 0) }}{{ T.count }} 투입</span>
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <ChevronRight v-if="!group.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-500" />
+              <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-500" />
+              <span class="font-bold text-forena-900">{{ group.title }}</span>
+              <span class="text-[11px] text-slate-500">({{ group.subZones.length }}개 상세)</span>
+            </div>
+            <div
+              class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold leading-snug"
+            >
+              <template v-for="(sz, idx) in group.subZones" :key="sz.id">
+                <span v-if="idx > 0" class="hidden font-bold text-slate-300 sm:inline" aria-hidden="true">·</span>
+                <span class="whitespace-nowrap tabular-nums text-forena-900">
+                  {{ sz.title }}<span>{{ ' ' }}{{ sz.workers.length }}/{{ sz.required }}{{ T.count }}</span>
+                </span>
+              </template>
+            </div>
+            <span class="shrink-0 text-[10px] font-bold tabular-nums text-forena-600 sm:ml-auto">
+              {{ zoneGroupAssignedSum(group) }}/{{ zoneGroupRequiredSum(group) }}{{ T.count }} 투입
+            </span>
           </button>
 
           <div v-show="group.expanded" class="space-y-1.5 border-t border-forena-100/80 bg-white/90 px-2 py-2 sm:px-3">
@@ -828,65 +763,57 @@ function onToggleUnassignedFilter() {
               class="rounded-lg border bg-white/95"
               :class="subZoneCardBorderClass(sz)"
             >
-              <div class="flex items-center gap-2 px-2 py-1.5 sm:px-3">
+              <div
+                class="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-2 sm:px-3"
+                :class="sz.expanded ? 'border-b border-forena-50/90' : ''"
+              >
                 <button
                   type="button"
-                  class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                  class="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 text-left"
                   @click="sz.expanded = !sz.expanded"
                 >
                   <ChevronRight v-if="!sz.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-400" />
                   <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-400" />
                   <span class="truncate text-xs font-bold text-forena-900">{{ sz.title }}</span>
-                  <span class="shrink-0 text-[10px] tabular-nums text-slate-500">
-                    {{ sz.workers.length }}/{{ sz.required }}{{ T.count }}
-                  </span>
                 </button>
-                <div class="hidden max-w-[8rem] flex-1 sm:block">
-                  <div class="h-1.5 overflow-hidden rounded-full bg-forena-100">
-                    <div
-                      class="h-full rounded-full transition-all duration-300"
-                      :class="zoneBarClass(sz)"
-                      :style="{ width: Math.round(zoneFillRatio(sz) * 100) + '%' }"
-                    />
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  class="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-forena-50 hover:text-flare-700"
-                  :title="T.editZone"
-                  @click.stop="openZoneEdit(group, sz)"
-                >
-                  <Pencil class="h-3.5 w-3.5" />
-                </button>
-              </div>
-              <div v-if="sz.expanded" class="border-t border-forena-50 px-2 pb-1.5 pt-1 sm:px-3">
-                <div class="mb-1.5 flex max-w-[10rem] sm:hidden">
-                  <div class="h-1.5 w-full overflow-hidden rounded-full bg-forena-100">
-                    <div
-                      class="h-full rounded-full transition-all duration-300"
-                      :class="zoneBarClass(sz)"
-                      :style="{ width: Math.round(zoneFillRatio(sz) * 100) + '%' }"
-                    />
-                  </div>
-                </div>
+
                 <div
-                  v-if="(sz.tradeNeeds || []).length"
-                  class="mb-2 rounded border border-forena-100/80 bg-forena-50/40 px-2 py-1"
+                  class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 leading-tight sm:gap-x-3"
                 >
-                  <p class="text-[9px] font-bold text-forena-500">{{ T.tradeToTitle }}</p>
-                  <ul class="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                    <li
-                      v-for="row in zoneTradeProgress(sz)"
-                      :key="row.trade"
-                      class="text-[10px] font-semibold tabular-nums"
-                    >
-                      <span class="text-forena-700">{{ row.label }}</span>
-                      <span :class="row.fill >= row.need ? 'text-emerald-700' : 'text-rose-600'">
-                        {{ row.fill }}/{{ row.need }}
-                      </span>
-                    </li>
-                  </ul>
+                  <span
+                    v-for="row in zoneTradeProgress(sz)"
+                    :key="row.trade"
+                    class="whitespace-nowrap text-xs font-bold tabular-nums"
+                  >
+                    <span class="text-forena-900">{{ row.label }}</span>
+                    <span :class="row.fill >= row.need ? 'text-emerald-700' : 'text-rose-600'">
+                      {{ ' ' }}{{ row.fill }}/{{ row.need }}{{ T.count }}
+                    </span>
+                  </span>
                 </div>
+
+                <div class="flex shrink-0 items-center gap-2">
+                  <div class="h-1.5 w-[4.5rem] overflow-hidden rounded-full bg-forena-100 sm:w-24 md:w-32">
+                    <div
+                      class="h-full min-w-0 rounded-full transition-all duration-300"
+                      :class="zoneBarClass(sz)"
+                      :style="{ width: Math.round(zoneFillRatio(sz) * 100) + '%' }"
+                    />
+                  </div>
+                  <span class="shrink-0 text-[10px] font-bold tabular-nums text-forena-800">
+                    총 {{ sz.workers.length }}/{{ sz.required }}{{ T.count }}
+                  </span>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-forena-50 hover:text-flare-700"
+                    :title="T.editZone"
+                    @click.stop="openZoneEdit(group, sz)"
+                  >
+                    <Pencil class="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+              <div v-if="sz.expanded" class="px-2 pb-1.5 pt-1 sm:px-3">
                 <div class="overflow-x-auto rounded border border-forena-100/90">
                   <table class="w-full min-w-[560px] text-left text-xs">
                     <thead class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-500">
@@ -911,14 +838,7 @@ function onToggleUnassignedFilter() {
                       >
                         <td class="px-2 py-1.5" />
                         <td class="px-2 py-1.5">
-                          <div class="flex items-center gap-2">
-                            <div
-                              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-flare-100 to-forena-50 text-[10px] font-bold text-forena-800"
-                            >
-                              {{ w.name.slice(0, 1) }}
-                            </div>
-                            <span class="font-semibold text-forena-900">{{ w.name }}</span>
-                          </div>
+                          <span class="font-semibold text-forena-900">{{ w.name }}</span>
                         </td>
                         <td class="px-2 py-1.5 text-[11px] font-medium">{{ affiliationDisplayCell(w) }}</td>
                         <td class="px-2 py-1.5">
@@ -1058,12 +978,16 @@ function onToggleUnassignedFilter() {
         </div>
       </div>
 
-      <div class="mb-2 flex items-center justify-between text-[11px] text-slate-500">
+      <div class="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <span
           >{{ T.totalWorkers }} <strong class="text-forena-800">{{ boardKindBreakdown.total }}</strong
           >{{ T.countUnit }}</span
         >
-        <span v-if="staffingTableRows.length">{{ staffingTableRows.length }}명</span>
+        <span v-if="staffingTableRows.length"
+          >{{ T.poolListAggregate }}
+          <strong class="text-forena-800">{{ staffingTableRows.length }}</strong
+          >{{ T.countUnit }}</span
+        >
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-forena-100">
@@ -1086,7 +1010,7 @@ function onToggleUnassignedFilter() {
               </th>
               <th class="px-3 py-3">{{ T.workerTableName }}</th>
               <th class="px-3 py-3">{{ T.colAffil }}</th>
-              <th class="px-3 py-3">{{ T.colFatigue }}</th>
+              <th class="px-3 py-3">{{ T.colFatiguePool }}</th>
               <th class="px-3 py-3">{{ T.colPlacement }}</th>
               <th class="px-3 py-3 text-center">{{ T.colProfile }}</th>
             </tr>
@@ -1112,14 +1036,7 @@ function onToggleUnassignedFilter() {
                 </div>
               </td>
               <td class="px-3 py-3">
-                <div class="flex items-center gap-2">
-                  <div
-                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-forena-100 to-flare-50 text-xs font-bold text-forena-700"
-                  >
-                    {{ row.worker.name.slice(0, 1) }}
-                  </div>
-                  <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
-                </div>
+                <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
               </td>
               <td class="px-3 py-3 text-xs font-medium">{{ affiliationDisplayCell(row.worker) }}</td>
               <td class="px-3 py-3">
@@ -1238,6 +1155,114 @@ function onToggleUnassignedFilter() {
               @click="saveZoneEdit"
             >
               {{ T.save }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="assignOverflowOpen"
+        class="fixed inset-0 z-[96] flex items-center justify-center p-4"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="assign-overflow-title"
+        aria-describedby="assign-overflow-desc"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
+          :aria-label="T.cancel"
+          @click="closeAssignOverflow"
+        />
+        <div
+          class="relative z-10 w-full max-w-sm rounded-2xl border border-forena-100 bg-white p-6 text-center shadow-xl ring-1 ring-black/5"
+          @click.stop
+        >
+          <div
+            class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200/80"
+            aria-hidden="true"
+          >
+            <AlertTriangle class="h-6 w-6 shrink-0" stroke-width="2" />
+          </div>
+          <h3 id="assign-overflow-title" class="text-base font-bold text-forena-900">
+            {{ T.assignOverflowTitle }}
+          </h3>
+          <p
+            id="assign-overflow-desc"
+            class="mt-3 whitespace-pre-line text-sm leading-relaxed text-forena-600"
+          >
+            {{ T.assignOverflowWarn }}
+          </p>
+          <p
+            v-if="assignOverflowMeta"
+            class="mt-3 rounded-lg bg-forena-50 px-3 py-2 text-xs font-semibold tabular-nums text-forena-800"
+          >
+            현재 선택 {{ assignOverflowMeta.selected }}{{ T.count }} · 투입 가능
+            {{ assignOverflowMeta.remaining }}{{ T.count }}
+          </p>
+          <div class="mt-6 flex justify-center">
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-6 py-2 text-sm font-bold text-white hover:from-forena-800 hover:to-forena-950"
+              @click="closeAssignOverflow"
+            >
+              {{ T.assignOverflowOk }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="resetConfirmOpen"
+        class="fixed inset-0 z-[95] flex items-center justify-center p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reset-confirm-title"
+        aria-describedby="reset-confirm-desc"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
+          :aria-label="T.cancel"
+          @click="closeResetConfirm"
+        />
+        <div
+          class="relative z-10 w-full max-w-sm rounded-2xl border border-forena-100 bg-white p-6 text-center shadow-xl ring-1 ring-black/5"
+          @click.stop
+        >
+          <div
+            class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200/80"
+            aria-hidden="true"
+          >
+            <AlertTriangle class="h-6 w-6 shrink-0" stroke-width="2" />
+          </div>
+          <h3 id="reset-confirm-title" class="text-base font-bold text-forena-900">
+            {{ T.zoneResetConfirmTitle }}
+          </h3>
+          <p
+            id="reset-confirm-desc"
+            class="mt-3 whitespace-pre-line text-sm leading-relaxed text-forena-600"
+          >
+            {{ T.zoneResetWarn }}
+          </p>
+          <div class="mt-6 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              class="rounded-xl border border-forena-200 bg-white px-4 py-2 text-sm font-bold text-forena-700 hover:bg-forena-50"
+              @click="closeResetConfirm"
+            >
+              {{ T.cancel }}
+            </button>
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 px-4 py-2 text-sm font-bold text-white hover:from-rose-700 hover:to-rose-800"
+              @click="confirmResetAllZones"
+            >
+              {{ T.zoneReset }}
             </button>
           </div>
         </div>
