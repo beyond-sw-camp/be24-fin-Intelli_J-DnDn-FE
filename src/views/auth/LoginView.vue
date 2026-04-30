@@ -187,7 +187,8 @@ watch(
   () => authStore.isAuthenticated,
   (v) => {
     if (v && !authStore.stayOnLogin) {
-      router.push({ path: '/site/dashboard', query: { site: selectedSiteId.value } })
+      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
+      router.push({ path, query: { site: selectedSiteId.value } })
     }
   },
   { immediate: true },
@@ -214,7 +215,8 @@ const handleLogin = () => {
   if (authStore.login(form.userId.trim(), form.password.trim())) {
     errorMessage.value = ''
     if (!authStore.stayOnLogin) {
-      router.push({ path: '/site/dashboard', query: { site: selectedSiteId.value } })
+      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
+      router.push({ path, query: { site: selectedSiteId.value } })
     } else {
       successMessage.value = 'viewer 계정으로 로그인되었습니다. 현재 화면을 유지합니다.'
     }
