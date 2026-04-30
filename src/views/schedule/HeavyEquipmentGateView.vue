@@ -28,13 +28,13 @@ import {
   deleteGate,
 } from '@/api/gate'
 
-// 1. 게이트 상태 (백엔드 동기화)
+// 게이트 상태
 const gates = ref([])
 const selectedGateId = ref(null)
 const isAddMode = ref(false)
 const isLoading = ref(false)
 
-// 사용자 업로드 도면 (localStorage 보존, 미업로드 시 기본 siteLayout 사용)
+// 사용자 업로드 도면
 const BLUEPRINT_STORAGE_KEY = 'dndn-gate-blueprint'
 const customBlueprint = ref(null)
 const blueprintInputRef = ref(null)
@@ -46,6 +46,7 @@ const BLUEPRINT_ZOOM_STEP = 0.05
 
 const activeBlueprint = computed(() => customBlueprint.value || siteLayout)
 const blueprintZoomPercent = computed(() => `${Math.round(blueprintZoom.value * 100)}%`)
+const isBlueprintZoomed = computed(() => blueprintZoom.value > 1.01)
 const gateMarkerScale = computed(() => Math.max(0.82, Math.min(1.12, 0.88 + blueprintZoom.value * 0.12)))
 
 const selectedGate = computed(() => gates.value.find((g) => g.idx === selectedGateId.value))
@@ -68,7 +69,7 @@ const recommendedGate = computed(() => {
   })
 })
 
-// 드래그 상태 (UI 전용)
+// 드래그 (UI 전용)
 const mapRef = ref(null)
 const draggingGateId = ref(null)
 const suppressClickGateId = ref(null)
@@ -80,7 +81,7 @@ const mapViewportRef = ref(null)
 const isPanningBlueprint = ref(false)
 const blueprintPanStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
 
-// TODO: 작업 지시서 / 작업 일보 도메인 연동 후 실데이터로 교체
+// TODO: 작업 지시서
 const todayEquipments = ref([
   {
     id: 1,
@@ -120,7 +121,6 @@ const todayEquipments = ref([
   },
 ])
 
-// 2. 백엔드 응답 기반 정적 컬러 매핑 (Tailwind JIT 안전)
 const STATUS_COLOR_MAP = {
   CRITICAL: 'text-rose-500 bg-rose-50 border-rose-200',
   BUSY: 'text-amber-500 bg-amber-50 border-amber-200',
@@ -155,7 +155,7 @@ const getEquipStatusClass = (status) => {
   }
 }
 
-// 3. 데이터 로드
+// 데이터 로드
 const loadGates = async () => {
   isLoading.value = true
   try {
@@ -187,7 +187,7 @@ onMounted(() => {
   loadBlueprintFromStorage()
 })
 
-// 사용자 업로드 도면 핸들러 (백엔드 미연동, 로컬 보존)
+// 사용자 업로드 도면 핸들러
 function loadBlueprintFromStorage() {
   try {
     const saved = window.localStorage.getItem(BLUEPRINT_STORAGE_KEY)
@@ -249,10 +249,17 @@ function setBlueprintZoom(nextZoom) {
       }
     : null
   const clamped = Math.max(MIN_BLUEPRINT_ZOOM, Math.min(MAX_BLUEPRINT_ZOOM, nextZoom))
-  blueprintZoom.value = Math.round(clamped * 100) / 100
+  const roundedZoom = Math.round(clamped * 100) / 100
+  blueprintZoom.value = roundedZoom
 
   if (centerRatio) {
     nextTick(() => {
+      if (roundedZoom <= 1.01) {
+        viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2)
+        viewport.scrollTop = 0
+        return
+      }
+
       viewport.scrollLeft = viewport.scrollWidth * centerRatio.x - viewport.clientWidth / 2
       viewport.scrollTop = viewport.scrollHeight * centerRatio.y - viewport.clientHeight / 2
     })
@@ -279,12 +286,12 @@ function centerBlueprintView() {
     const viewport = mapViewportRef.value
     if (!viewport) return
     viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2)
-    viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2)
+    viewport.scrollTop = isBlueprintZoomed.value ? Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2) : 0
   })
 }
 
 function startBlueprintPan(event) {
-  if (event.button !== 0 || isAddMode.value || draggingGateId.value !== null) return
+  if (!isBlueprintZoomed.value || event.button !== 0 || isAddMode.value || draggingGateId.value !== null) return
   if (event.target.closest?.('button, input, [data-gate-marker]')) return
 
   const viewport = mapViewportRef.value
@@ -309,7 +316,7 @@ function moveBlueprintPan(event) {
   const deltaX = event.clientX - blueprintPanStart.value.x
   const deltaY = event.clientY - blueprintPanStart.value.y
   viewport.scrollLeft = blueprintPanStart.value.scrollLeft - deltaX
-  viewport.scrollTop = blueprintPanStart.value.scrollTop - deltaY
+  viewport.scrollTop = isBlueprintZoomed.value ? blueprintPanStart.value.scrollTop - deltaY : 0
 }
 
 function stopBlueprintPan(event) {
@@ -330,7 +337,7 @@ function resetBlueprint() {
   }
 }
 
-// 4. 인원 / 차량 / 기계 / 좌표 제어
+// 인원 / 차량 / 기계 / 좌표 제어
 const updateManpower = async (delta) => {
   if (!selectedGate.value) return
   const next = selectedGate.value.manpower + delta
@@ -416,7 +423,7 @@ const removeGate = async (gateId) => {
   }
 }
 
-// 5. 드래그 핸들러
+// 드래그 핸들러
 const clampPercent = (value) => Math.max(0, Math.min(100, value))
 
 const onMarkerDragStart = (gate, event) => {
@@ -556,47 +563,55 @@ const onGateClick = (gateId, event) => {
 
         <div
           ref="mapViewportRef"
-          class="relative h-[58vw] min-h-[520px] max-h-[650px] overflow-auto rounded-2xl bg-slate-100 p-2 select-none"
-          :class="isPanningBlueprint ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : 'cursor-grab'"
+          class="relative h-[58vw] min-h-[520px] max-h-[650px] rounded-2xl bg-slate-100 p-2 select-none"
+          :class="[
+            isBlueprintZoomed ? 'overflow-auto' : 'overflow-x-auto overflow-y-hidden',
+            isPanningBlueprint ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : isBlueprintZoomed ? 'cursor-grab' : 'cursor-default',
+          ]"
           @wheel="onBlueprintWheel"
           @pointerdown="startBlueprintPan"
           @pointermove="moveBlueprintPan"
           @pointerup="stopBlueprintPan"
           @pointerleave="stopBlueprintPan"
         >
-          <div ref="mapRef" class="relative mx-auto min-w-[560px] overflow-hidden rounded-xl bg-white shadow-inner"
-            :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''" :style="{
-              aspectRatio: blueprintAspectRatio,
-              width: `${blueprintZoom * 100}%`,
-            }" @click="isAddMode && addCustomGate($event)" @dragover="onMapDragOver">
-            <img
-              :src="activeBlueprint"
-              alt="공사현장 도면"
-              class="absolute inset-0 h-full w-full select-none object-fill"
-              draggable="false"
-              @load="updateBlueprintAspect"
-            />
+          <div
+            class="relative flex min-h-full min-w-full"
+            :class="isBlueprintZoomed ? 'items-start justify-start' : 'items-center justify-center'"
+          >
+            <div ref="mapRef" class="relative min-w-[560px] overflow-hidden rounded-xl bg-white shadow-inner"
+              :class="draggingGateId !== null ? 'cursor-grabbing' : isAddMode ? 'cursor-crosshair' : ''" :style="{
+                aspectRatio: blueprintAspectRatio,
+                width: `${blueprintZoom * 100}%`,
+              }" @click="isAddMode && addCustomGate($event)" @dragover="onMapDragOver">
+              <img
+                :src="activeBlueprint"
+                alt="공사현장 도면"
+                class="absolute inset-0 h-full w-full select-none object-fill"
+                draggable="false"
+                @load="updateBlueprintAspect"
+              />
 
-            <button v-for="gate in gates" :key="gate.idx" data-gate-marker class="absolute flex flex-col items-center gap-1 transition-all"
-              :class="draggingGateId === gate.idx ? 'cursor-grabbing opacity-50' : 'cursor-grab'" :style="{
-                left: gate.x + '%',
-                top: gate.y + '%',
-                transform: `translate(-50%, -50%) scale(${draggingGateId === gate.idx ? gateMarkerScale * 1.08 : gateMarkerScale})`,
-                zIndex: draggingGateId === gate.idx ? 50 : 10,
-              }" :draggable="!isAddMode" @dragstart="onMarkerDragStart(gate, $event)" @drag="onMarkerDrag($event)"
-              @dragend="onMarkerDragEnd(gate, $event)" @click="onGateClick(gate.idx, $event)">
-              <div
-                class="relative flex h-8 w-8 items-center justify-center rounded-full border-[3px] border-white text-white shadow-xl transition-colors sm:h-9 sm:w-9 xl:h-10 xl:w-10 xl:border-4"
-                :class="[getMarkerColor(gate), draggingGateId === gate.idx ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']">
-                <Truck class="h-4 w-4 sm:h-5 sm:w-5" />
-                <AlertCircle v-if="gate.inefficient"
-                  class="absolute -right-2 -top-2 h-4 w-4 rounded-full fill-amber-500 text-white sm:h-5 sm:w-5" />
-              </div>
-              <div
-                class="flex flex-col items-center gap-0.5 rounded-lg border border-forena-100 bg-white/90 px-1.5 py-0.5 text-[9px] font-bold shadow-sm sm:px-2 sm:py-1 sm:text-[10px]">
-                <span class="whitespace-nowrap">G{{ gate.idx }} (총 {{ gate.vehicles }}대)</span>
-              </div>
-            </button>
+              <button v-for="gate in gates" :key="gate.idx" data-gate-marker class="absolute flex flex-col items-center gap-1 transition-all"
+                :class="draggingGateId === gate.idx ? 'cursor-grabbing opacity-50' : 'cursor-grab'" :style="{
+                  left: gate.x + '%',
+                  top: gate.y + '%',
+                  transform: `translate(-50%, -50%) scale(${draggingGateId === gate.idx ? gateMarkerScale * 1.08 : gateMarkerScale})`,
+                  zIndex: draggingGateId === gate.idx ? 50 : 10,
+                }" :draggable="!isAddMode" @dragstart="onMarkerDragStart(gate, $event)" @drag="onMarkerDrag($event)"
+                @dragend="onMarkerDragEnd(gate, $event)" @click="onGateClick(gate.idx, $event)">
+                <div
+                  class="relative flex h-8 w-8 items-center justify-center rounded-full border-[3px] border-white text-white shadow-xl transition-colors sm:h-9 sm:w-9 xl:h-10 xl:w-10 xl:border-4"
+                  :class="[getMarkerColor(gate), draggingGateId === gate.idx ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']">
+                  <Truck class="h-4 w-4 sm:h-5 sm:w-5" />
+                  <AlertCircle v-if="gate.inefficient"
+                    class="absolute -right-2 -top-2 h-4 w-4 rounded-full fill-amber-500 text-white sm:h-5 sm:w-5" />
+                </div>
+                <div
+                  class="flex flex-col items-center gap-0.5 rounded-lg border border-forena-100 bg-white/90 px-1.5 py-0.5 text-[9px] font-bold shadow-sm sm:px-2 sm:py-1 sm:text-[10px]">
+                  <span class="whitespace-nowrap">G{{ gate.idx }} (총 {{ gate.vehicles }}대)</span>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
       </div>
