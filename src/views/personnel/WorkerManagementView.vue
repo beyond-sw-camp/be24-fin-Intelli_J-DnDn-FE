@@ -4,28 +4,46 @@ import { useRouter } from 'vue-router'
 import {
   Users,
   Search,
-  Trash2,
   X,
   AlertTriangle,
   Clock,
   UserCheck,
+  LogOut,
+  UserX,
   Eye,
   RefreshCw,
 } from 'lucide-vue-next'
 import { getAffiliationKind, formatAffiliationDisplay } from '@/utils/workerAffiliation'
 
 const router = useRouter()
+const isDataLoading = ref(false)
+const lastDataRefreshAt = ref(null)
 
 /** 상단 히어로 (작업자 관리) */
 const WM = {
   pageTitle: '작업자 관리',
-  kicker: '인사',
   heroDesc:
     '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
-  sectionAttendance: '출입 / 근태 현황',
+  sectionAttendance: '작업자 근태 현황',
   dataLoad: '데이터 불러오기',
-  dataLoadDemo: '최신 근태 데이터를 불러왔습니다. (데모)',
+  dataLoadLoading: '불러오는 중...',
+  dataLoadCaption: '30분 주기로 갱신',
+  lastRefreshLabel: '최종 갱신',
 }
+
+const lastRefreshDisplay = computed(() => {
+  const d = lastDataRefreshAt.value
+  if (!d) return `${WM.lastRefreshLabel}: —`
+  return `${WM.lastRefreshLabel}: ${new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(d)}`
+})
 
 /** 출입·근태 테이블 구역 */
 const T = {
@@ -33,11 +51,6 @@ const T = {
   title: '출입 / 근태 관리',
   desc: '작업자 출퇴근과 공수 산정 현황을 일일별로 조회하고 보정할 수 있습니다.',
   breadcrumb: '현장 관리 / 출입·근태',
-  statTotal: '출근 작업자 수',
-  statWorking: '작업 중',
-  statDone: '퇴근 완료',
-  statTodayScope: '당일 기준',
-  statWorkingBadge: '진행',
   filterDate: '조회 날짜',
   filterAffil: '소속 구분',
   filterSearch: '작업자 이름',
@@ -47,9 +60,7 @@ const T = {
   colAffil: '소속',
   colTime: '출·퇴근',
   colRank: '직급',
-  colTag: '태그',
   colStatus: '상태',
-  colDel: '삭제',
   empty: '조회된 근태 내역이 없습니다.',
   drawerTitle: '근태 기록 보정',
   drawerWorker: '대상 작업자',
@@ -62,20 +73,17 @@ const T = {
   cancel: '취소',
   save: '보정 및 승인',
   closedWarn: '이미 마감된 현장의 근태는 수정할 수 없습니다.',
-  deleteConfirm: '해당 작업자의 근태 기록을 삭제하시겠습니까?',
-  deleted: '삭제가 완료되었습니다.',
   reasonRequired: '보정 사유를 반드시 입력해야 합니다.',
   manDaysAutoHint:
     '점심(12:00) 이전 퇴근 0.5 · 기본 퇴근(18:00) 이전 1 · 연장 시 1.5로 자동 산정됩니다.',
   manDaysInvalid: '출근·퇴근 시간을 입력해 주세요. (퇴근은 출근 이후 시각이어야 합니다)',
   saved: '근태 정보가 성공적으로 보정되었습니다.',
-  closedTag: '마감됨',
   manSuffix: '공수',
-  statHint: '기준',
   colDetail: '상세보기',
   affilDetailPartner: '협력사 지정',
   affilPartnerAll: '전체 협력사',
   listFilteredStats: '목록 집계',
+  todayWorkerTotal: '금일 작업자',
   countPeople: '명',
 }
 
@@ -268,21 +276,36 @@ const preKindAttendance = computed(() => {
   return result
 })
 
-const filteredAttendance = computed(() => preKindAttendance.value)
+const ATTENDANCE_STATE_LABELS = ['출근', '지각', '조퇴', '결근']
 
-function countAttendanceStats(rows) {
-  return {
-    total: rows.length,
-    working: rows.filter((r) => r.status.includes('작업 중')).length,
-    done: rows.filter((r) => r.status.includes('퇴근 완료')).length,
+const listStatusFilter = ref('')
+
+const filteredAttendance = computed(() => {
+  let result = preKindAttendance.value
+  if (listStatusFilter.value) {
+    result = result.filter((r) => deriveAttendanceTag(r) === listStatusFilter.value)
   }
+  return result
+})
+
+/** 소속·검색 반영 후, 상태 칩 필터 전 기준 명수 */
+const listBaseForStats = computed(() => preKindAttendance.value)
+
+const todayWorkerCount = computed(() => listBaseForStats.value.length)
+
+const attendanceStateCounts = computed(() => {
+  const rows = listBaseForStats.value
+  const acc = { 출근: 0, 지각: 0, 조퇴: 0, 결근: 0 }
+  for (const r of rows) {
+    const s = deriveAttendanceTag(r)
+    if (s in acc) acc[s]++
+  }
+  return acc
+})
+
+function toggleListStatusFilter(state) {
+  listStatusFilter.value = listStatusFilter.value === state ? '' : state
 }
-
-/** 소속·검색 필터와 무관 — 출입/근태 KPI 카드용 */
-const statCounts = computed(() => countAttendanceStats(attendanceList.value))
-
-/** 테이블에 표시되는 행 기준 (필터·검색 반영) */
-const filteredStatCounts = computed(() => countAttendanceStats(filteredAttendance.value))
 
 /** 근무 시작 기준시각(이후 출근 = 지각) */
 const ATTENDANCE_ON_TIME_END = '07:00'
@@ -307,14 +330,6 @@ function attendanceTagBadgeClass(tag) {
   if (tag === '지각') return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
   if (tag === '조퇴') return 'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80'
   return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
-}
-
-const deleteAttendance = (id, event) => {
-  event.stopPropagation()
-  if (confirm(T.deleteConfirm)) {
-    attendanceList.value = attendanceList.value.filter((a) => a.id !== id)
-    alert(T.deleted)
-  }
 }
 
 /** 산정 공수: 점심 전 퇴근 0.5 / 기본 퇴근 시각 이전 1 / 연장 1.5 */
@@ -419,17 +434,13 @@ function goWorkerProfile(record, event) {
   router.push({ name: 'siteWorkerProfile', params: { id: String(record.id) } })
 }
 
-const getStatusBadge = (status) => {
-  if (status.includes('퇴근')) return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80'
-  if (status.includes('작업 중')) return 'bg-amber-50 text-amber-800 ring-1 ring-amber-200/80'
-  if (status.includes('조퇴') || status.includes('겸근'))
-    return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
-  if (status.includes('결근')) return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
-  return 'bg-slate-50 text-slate-600 ring-1 ring-slate-200/80'
-}
-
 function onDataLoad() {
-  window.alert(WM.dataLoadDemo)
+  if (isDataLoading.value) return
+  isDataLoading.value = true
+  window.setTimeout(() => {
+    isDataLoading.value = false
+    lastDataRefreshAt.value = new Date()
+  }, 1200)
 }
 </script>
 
@@ -449,19 +460,23 @@ function onDataLoad() {
             <Users class="h-5 w-5" />
           </span>
           <div>
-            <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">{{ WM.kicker }}</p>
             <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ WM.pageTitle }}</h1>
             <p class="mt-2 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ WM.heroDesc }}</p>
           </div>
         </div>
-        <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+        <div class="flex flex-wrap items-end justify-end gap-3 sm:gap-4">
+          <div class="min-w-0 text-left sm:text-right">
+            <p class="text-[10px] font-medium text-slate-600">{{ WM.dataLoadCaption }}</p>
+            <p class="mt-0.5 text-[10px] tabular-nums text-slate-500">{{ lastRefreshDisplay }}</p>
+          </div>
           <button
             type="button"
-            class="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
+            :disabled="isDataLoading"
+            class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:cursor-not-allowed disabled:opacity-60"
             @click="onDataLoad"
           >
-            <RefreshCw class="h-4 w-4" />
-            {{ WM.dataLoad }}
+            <RefreshCw class="h-4 w-4 shrink-0" :class="{ 'animate-spin': isDataLoading }" />
+            {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
           </button>
         </div>
       </div>
@@ -473,64 +488,54 @@ function onDataLoad() {
       </div>
 
       <div class="space-y-6">
-        <!-- KPI 카드: 공정 지표보고 탭과 동일 톤 -->
-        <div class="grid gap-3 sm:grid-cols-3">
+        <!-- KPI: 출근 / 지각 / 조퇴 / 결근 (목록 필터와 동일 기준) -->
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div
-            class="rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card ring-1 ring-forena-50"
+            class="rounded-2xl border border-emerald-100/90 bg-gradient-to-br from-emerald-50/35 to-white p-4 shadow-card ring-1 ring-emerald-100/60"
           >
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-[11px] font-bold uppercase tracking-wider text-forena-500">
-                {{ T.statTotal }}
-              </p>
-              <span
-                class="rounded-lg bg-forena-50 px-2 py-0.5 text-[10px] font-bold text-forena-600"
-              >
-                {{ T.statTodayScope }}
-              </span>
-            </div>
+            <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-800/90">출근</p>
             <div class="mt-2 flex items-end gap-2">
-              <span class="text-3xl font-bold tabular-nums text-forena-900">{{ statCounts.total }}</span>
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                attendanceStateCounts['출근']
+              }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
-              <Users class="mb-1 h-5 w-5 text-flare-600" />
+              <UserCheck class="mb-1 h-5 w-5 text-emerald-600" />
             </div>
-            <p class="mt-2 text-[10px] font-medium text-slate-400">{{ T.filterDate }} {{ T.statHint }}</p>
           </div>
           <div
             class="rounded-2xl border border-amber-100/90 bg-gradient-to-br from-amber-50/35 to-white p-4 shadow-card ring-1 ring-amber-100/60"
           >
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-[11px] font-bold uppercase tracking-wider text-amber-800/90">
-                {{ T.statWorking }}
-              </p>
-              <span
-                class="rounded-lg bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900"
-              >
-                {{ T.statWorkingBadge }}
-              </span>
-            </div>
+            <p class="text-[11px] font-bold uppercase tracking-wider text-amber-800/90">지각</p>
             <div class="mt-2 flex items-end gap-2">
-              <span class="text-3xl font-bold tabular-nums text-forena-900">{{ statCounts.working }}</span>
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                attendanceStateCounts['지각']
+              }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
               <Clock class="mb-1 h-5 w-5 text-amber-600" />
             </div>
           </div>
           <div
-            class="rounded-2xl border border-emerald-100/90 bg-gradient-to-br from-emerald-50/35 to-white p-4 shadow-card ring-1 ring-emerald-100/60"
+            class="rounded-2xl border border-rose-100/90 bg-gradient-to-br from-rose-50/35 to-white p-4 shadow-card ring-1 ring-rose-100/60"
           >
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-800/90">
-                {{ T.statDone }}
-              </p>
-              <span
-                class="rounded-lg bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800"
-              >
-                {{ T.statTodayScope }}
-              </span>
-            </div>
+            <p class="text-[11px] font-bold uppercase tracking-wider text-rose-800/90">조퇴</p>
             <div class="mt-2 flex items-end gap-2">
-              <span class="text-3xl font-bold tabular-nums text-forena-900">{{ statCounts.done }}</span>
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                attendanceStateCounts['조퇴']
+              }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
-              <UserCheck class="mb-1 h-5 w-5 text-emerald-600" />
+              <LogOut class="mb-1 h-5 w-5 text-rose-600" />
+            </div>
+          </div>
+          <div
+            class="rounded-2xl border border-slate-200/90 bg-gradient-to-br from-slate-50/80 to-white p-4 shadow-card ring-1 ring-slate-200/70"
+          >
+            <p class="text-[11px] font-bold uppercase tracking-wider text-slate-600">결근</p>
+            <div class="mt-2 flex items-end gap-2">
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                attendanceStateCounts['결근']
+              }}</span>
+              <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
+              <UserX class="mb-1 h-5 w-5 text-slate-500" />
             </div>
           </div>
         </div>
@@ -590,24 +595,34 @@ function onDataLoad() {
           class="flex flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
         >
           <div
-            class="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-forena-100 bg-forena-50/55 px-4 py-3 text-xs text-forena-700 sm:px-6 sm:text-sm"
+            class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 text-xs text-forena-700 sm:px-6 sm:text-sm"
           >
-            <span class="font-bold text-forena-900">{{ T.listFilteredStats }}</span>
-            <span class="select-none text-forena-300" aria-hidden="true">·</span>
-            <span class="tabular-nums">
-              {{ T.statTotal }}
-              <strong class="font-bold text-forena-900">{{ filteredStatCounts.total }}</strong>{{ T.countPeople }}
-            </span>
-            <span class="select-none text-forena-300" aria-hidden="true">·</span>
-            <span class="tabular-nums">
-              {{ T.statWorking }}
-              <strong class="font-bold text-amber-800">{{ filteredStatCounts.working }}</strong>{{ T.countPeople }}
-            </span>
-            <span class="select-none text-forena-300" aria-hidden="true">·</span>
-            <span class="tabular-nums">
-              {{ T.statDone }}
-              <strong class="font-bold text-emerald-800">{{ filteredStatCounts.done }}</strong>{{ T.countPeople }}
-            </span>
+            <div class="flex flex-wrap items-baseline gap-2">
+              <span class="font-bold text-forena-900">{{ T.listFilteredStats }}</span>
+              <span class="tabular-nums text-forena-600">
+                {{ T.todayWorkerTotal }}
+                <strong class="font-bold text-forena-900">{{ todayWorkerCount }}</strong>{{ T.countPeople }}
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button
+                v-for="st in ATTENDANCE_STATE_LABELS"
+                :key="st"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/50"
+                :class="
+                  listStatusFilter === st
+                    ? 'border-forena-600 bg-white text-forena-900 shadow-sm ring-1 ring-forena-200/80'
+                    : 'border-forena-200/90 bg-white/90 text-forena-700 hover:border-forena-300 hover:bg-white'
+                "
+                @click="toggleListStatusFilter(st)"
+              >
+                {{ st }}
+                <span class="tabular-nums font-semibold text-forena-600/90">{{
+                  attendanceStateCounts[st]
+                }}</span>
+              </button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full min-w-[960px] text-left text-sm whitespace-nowrap">
@@ -617,18 +632,16 @@ function onDataLoad() {
                 <tr>
                   <th class="px-6 py-4 font-semibold">{{ T.colContact }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colEmergency }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colTag }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colAffil }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colRank }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colStatus }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colDetail }}</th>
-                  <th class="px-6 py-4 text-center font-semibold">{{ T.colDel }}</th>
                 </tr>
               </thead>
               <tbody class="text-forena-800">
                 <tr v-if="filteredAttendance.length === 0">
-                  <td colspan="9" class="px-6 py-14 text-center text-sm text-slate-400">
+                  <td colspan="7" class="px-6 py-14 text-center text-sm text-slate-400">
                     {{ T.empty }}
                   </td>
                 </tr>
@@ -645,14 +658,6 @@ function onDataLoad() {
                   </td>
                   <td class="px-6 py-4 text-xs font-medium text-rose-600/90">
                     <span class="tabular-nums">{{ formatEmergencyDisplayCell(record.emergency) }}</span>
-                  </td>
-                  <td class="px-6 py-4">
-                    <span
-                      class="inline-flex rounded-lg px-2 py-0.5 text-[10px] font-bold"
-                      :class="attendanceTagBadgeClass(deriveAttendanceTag(record))"
-                    >
-                      {{ deriveAttendanceTag(record) }}
-                    </span>
                   </td>
                   <td class="px-6 py-4">
                     <div class="text-xs font-semibold text-forena-800">
@@ -675,12 +680,9 @@ function onDataLoad() {
                   <td class="px-6 py-4 text-center">
                     <span
                       class="inline-flex rounded-lg px-2.5 py-1 text-[10px] font-bold"
-                      :class="getStatusBadge(record.status)"
-                      >{{ record.status }}</span
+                      :class="attendanceTagBadgeClass(deriveAttendanceTag(record))"
+                      >{{ deriveAttendanceTag(record) }}</span
                     >
-                    <span v-if="record.isClosed" class="mt-1 block text-[9px] font-bold text-slate-400">{{
-                      T.closedTag
-                    }}</span>
                   </td>
                   <td class="px-6 py-4 text-center">
                     <button
@@ -691,16 +693,6 @@ function onDataLoad() {
                     >
                       <Eye class="h-3.5 w-3.5" />
                       {{ T.colDetail }}
-                    </button>
-                  </td>
-                  <td class="px-6 py-4 text-center">
-                    <button
-                      type="button"
-                      class="inline-flex rounded-lg p-2 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
-                      :title="T.colDel"
-                      @click="(e) => deleteAttendance(record.id, e)"
-                    >
-                      <Trash2 class="h-4 w-4" />
                     </button>
                   </td>
                 </tr>
