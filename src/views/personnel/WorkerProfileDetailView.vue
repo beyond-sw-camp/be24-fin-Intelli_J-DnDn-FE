@@ -13,7 +13,7 @@ import {
 import { getWorkerProfile, DEMO_WORKER_DOCUMENT_PDF_URL } from '@/data/workerProfileMock'
 
 const T = {
-  title: '작업자 상세 프로필',
+  title: '근무자 상세 프로필',
   contact: '연락처',
   emergency: '비상 연락망',
   blood: '혈액형',
@@ -199,17 +199,21 @@ const avatarLetter = computed(() => {
 
 <template>
   <div v-if="profile" class="space-y-6 pb-10">
-    <div class="flex flex-wrap items-center gap-4">
-      <div class="flex min-w-0 items-center gap-3">
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">투입 관리</p>
+        <h1 class="truncate text-xl font-bold text-forena-900 md:text-2xl">{{ T.title }}</h1>
+      </div>
+      <div class="flex items-center gap-2">
         <button
           type="button"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-forena-200 bg-white text-forena-700 shadow-sm transition hover:bg-forena-50"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 transition hover:bg-flare-100"
           :aria-label="T.backList"
           @click="goBack"
         >
-          <ChevronLeft class="h-5 w-5" />
+          <ChevronLeft class="h-3.5 w-3.5" />
+          {{ T.backList }}
         </button>
-        <h1 class="truncate text-xl font-bold tracking-tight text-forena-900 md:text-2xl">{{ T.title }}</h1>
       </div>
     </div>
 

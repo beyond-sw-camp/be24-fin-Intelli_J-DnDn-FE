@@ -19,10 +19,7 @@ import {
   getPartnerCompanyName,
 } from '@/utils/workerAffiliation'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
-import {
-  STAFFING_INITIAL_ZONE_GROUPS,
-  STAFFING_INITIAL_WAITING,
-} from '@/data/staffingMockData'
+import { STAFFING_INITIAL_ZONE_GROUPS, STAFFING_INITIAL_WAITING } from '@/data/staffingMockData'
 
 const T = {
   boardTitle: '인력 배치',
@@ -32,8 +29,7 @@ const T = {
   zoneByZoneTitle: '구역별 인력 현황',
   zoneReset: '초기화',
   zoneResetConfirmTitle: '배치 초기화',
-  zoneResetWarn:
-    '현재 작업중인 구역이 있을 수 있습니다.\n그래도 초기화 하시겠습니까?',
+  zoneResetWarn: '현재 작업중인 구역이 있을 수 있습니다.\n그래도 초기화 하시겠습니까?',
   workerPoolTitle: '작업자 현황',
   needPerson: '필요 인원',
   currentAssign: '현재 배치',
@@ -70,8 +66,7 @@ const T = {
   badgeAgency: '인력',
   tradeWarn:
     '이 구역에 필요한 직종과 맞지 않을 수 있습니다. 배치는 가능하며, 안전/산업 관점에서 확인해 주세요.',
-  fatigueTitle:
-    '안전 주의: 전날 야간 근무 또는 연속 근무 일수가 높음 (피로도 누적 의십)',
+  fatigueTitle: '안전 주의: 전날 야간 근무 또는 연속 근무 일수가 높음 (피로도 누적 의십)',
   skillCarpenter: '목수',
   skillRebar: '철근',
   skillWelder: '용접',
@@ -109,9 +104,7 @@ function cloneWorker(w) {
   return {
     ...w,
     skills: Array.isArray(w.skills) ? [...w.skills] : ['labor'],
-    fatigue: w.fatigue
-      ? { ...w.fatigue }
-      : { nightShiftYesterday: false, consecutiveDays: 0 },
+    fatigue: w.fatigue ? { ...w.fatigue } : { nightShiftYesterday: false, consecutiveDays: 0 },
   }
 }
 
@@ -467,8 +460,7 @@ const staffingTableRows = computed(() => {
   const partnerCo = poolPartnerCompanyFilter.value
   if (cat === 'partner' && partnerCo) {
     out = out.filter(
-      (r) =>
-        getPartnerCompanyName(r.worker.affiliation, r.worker.affiliationLine) === partnerCo,
+      (r) => getPartnerCompanyName(r.worker.affiliation, r.worker.affiliationLine) === partnerCo,
     )
   }
   const q = workerPoolSearch.value.trim().toLowerCase()
@@ -487,9 +479,12 @@ watch(poolAffiliationFilter, (v) => {
   if (v !== 'partner') poolPartnerCompanyFilter.value = ''
 })
 
-watch([poolAffiliationFilter, poolPartnerCompanyFilter, workerPoolSearch, showOnlyUnassignedInPool], () => {
-  selectedWaitingIds.value = []
-})
+watch(
+  [poolAffiliationFilter, poolPartnerCompanyFilter, workerPoolSearch, showOnlyUnassignedInPool],
+  () => {
+    selectedWaitingIds.value = []
+  },
+)
 
 const poolSelectableWaitingIds = computed(() =>
   staffingTableRows.value.filter((r) => r.selectable && r.waitingId).map((r) => r.waitingId),
@@ -743,9 +738,15 @@ function zoneGroupAssignedSum(group) {
               class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold leading-snug"
             >
               <template v-for="(sz, idx) in group.subZones" :key="sz.id">
-                <span v-if="idx > 0" class="hidden font-bold text-slate-300 sm:inline" aria-hidden="true">·</span>
+                <span
+                  v-if="idx > 0"
+                  class="hidden font-bold text-slate-300 sm:inline"
+                  aria-hidden="true"
+                  >·</span
+                >
                 <span class="whitespace-nowrap tabular-nums text-forena-900">
-                  {{ sz.title }}<span>{{ ' ' }}{{ sz.workers.length }}/{{ sz.required }}{{ T.count }}</span>
+                  {{ sz.title
+                  }}<span>{{ ' ' }}{{ sz.workers.length }}/{{ sz.required }}{{ T.count }}</span>
                 </span>
               </template>
             </div>
@@ -754,7 +755,10 @@ function zoneGroupAssignedSum(group) {
             </span>
           </button>
 
-          <div v-show="group.expanded" class="space-y-1.5 border-t border-forena-100/80 bg-white/90 px-2 py-2 sm:px-3">
+          <div
+            v-show="group.expanded"
+            class="space-y-1.5 border-t border-forena-100/80 bg-white/90 px-2 py-2 sm:px-3"
+          >
             <div
               v-for="sz in group.subZones"
               :key="sz.id"
@@ -791,7 +795,9 @@ function zoneGroupAssignedSum(group) {
                 </div>
 
                 <div class="flex shrink-0 items-center gap-2">
-                  <div class="h-1.5 w-[4.5rem] overflow-hidden rounded-full bg-forena-100 sm:w-24 md:w-32">
+                  <div
+                    class="h-1.5 w-[4.5rem] overflow-hidden rounded-full bg-forena-100 sm:w-24 md:w-32"
+                  >
                     <div
                       class="h-full min-w-0 rounded-full transition-all duration-300"
                       :class="zoneBarClass(sz)"
@@ -814,7 +820,9 @@ function zoneGroupAssignedSum(group) {
               <div v-if="sz.expanded" class="px-2 pb-1.5 pt-1 sm:px-3">
                 <div class="overflow-x-auto rounded border border-forena-100/90">
                   <table class="w-full min-w-[560px] text-left text-xs">
-                    <thead class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-500">
+                    <thead
+                      class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-500"
+                    >
                       <tr>
                         <th class="w-8 px-2 py-2" />
                         <th class="px-2 py-2">{{ T.workerTableName }}</th>
@@ -827,7 +835,9 @@ function zoneGroupAssignedSum(group) {
                     </thead>
                     <tbody class="text-forena-800">
                       <tr v-if="sz.workers.length === 0">
-                        <td colspan="7" class="px-3 py-6 text-center text-slate-400">{{ T.poolEmpty }}</td>
+                        <td colspan="7" class="px-3 py-6 text-center text-slate-400">
+                          {{ T.poolEmpty }}
+                        </td>
                       </tr>
                       <tr
                         v-for="w in sz.workers"
@@ -838,7 +848,9 @@ function zoneGroupAssignedSum(group) {
                         <td class="px-2 py-1.5">
                           <span class="font-semibold text-forena-900">{{ w.name }}</span>
                         </td>
-                        <td class="px-2 py-1.5 text-[11px] font-medium">{{ affiliationDisplayCell(w) }}</td>
+                        <td class="px-2 py-1.5 text-[11px] font-medium">
+                          {{ affiliationDisplayCell(w) }}
+                        </td>
                         <td class="px-2 py-1.5">
                           <span
                             class="tabular-nums font-bold"
@@ -885,14 +897,22 @@ function zoneGroupAssignedSum(group) {
       <h2 class="mb-4 text-base font-bold text-forena-900">{{ T.workerPoolTitle }}</h2>
 
       <div class="mb-4 flex flex-col gap-3 rounded-xl border border-forena-100 bg-forena-50/40 p-3">
-        <div class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end lg:gap-x-3 lg:gap-y-2">
+        <div
+          class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end lg:gap-x-3 lg:gap-y-2"
+        >
           <div class="flex w-full min-w-0 flex-col gap-1 sm:w-auto">
-            <label class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{ T.filterAffil }}</label>
+            <label class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
+              T.filterAffil
+            }}</label>
             <select
               v-model="poolAffiliationFilter"
               class="w-full min-w-[9rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/25 sm:w-44"
             >
-              <option v-for="opt in poolAffiliationOptions" :key="opt.value || 'all'" :value="opt.value">
+              <option
+                v-for="opt in poolAffiliationOptions"
+                :key="opt.value || 'all'"
+                :value="opt.value"
+              >
                 {{ opt.label }}
               </option>
             </select>
@@ -917,9 +937,10 @@ function zoneGroupAssignedSum(group) {
           </div>
 
           <div class="w-full min-w-0 flex-1 lg:min-w-[220px]">
-            <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
-              T.searchWorker
-            }}</label>
+            <label
+              class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
+              >{{ T.searchWorker }}</label
+            >
             <div class="relative">
               <Search
                 class="pointer-events-none absolute top-1/2 left-3 h-3.5 w-3.5 -translate-y-1/2 text-flare-500/80"
@@ -978,7 +999,8 @@ function zoneGroupAssignedSum(group) {
 
       <div class="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <span
-          >{{ T.totalWorkers }} <strong class="text-forena-800">{{ boardKindBreakdown.total }}</strong
+          >{{ T.totalWorkers }}
+          <strong class="text-forena-800">{{ boardKindBreakdown.total }}</strong
           >{{ T.countUnit }}</span
         >
         <span v-if="staffingTableRows.length"
@@ -990,7 +1012,9 @@ function zoneGroupAssignedSum(group) {
 
       <div class="overflow-x-auto rounded-xl border border-forena-100">
         <table class="w-full min-w-[800px] text-left text-sm">
-          <thead class="border-b border-forena-100 bg-forena-50/70 text-[11px] font-bold uppercase tracking-wide text-forena-500">
+          <thead
+            class="border-b border-forena-100 bg-forena-50/70 text-[11px] font-bold uppercase tracking-wide text-forena-500"
+          >
             <tr>
               <th class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
                 <div class="flex items-center justify-center">
@@ -1036,7 +1060,9 @@ function zoneGroupAssignedSum(group) {
               <td class="px-3 py-3">
                 <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
               </td>
-              <td class="px-3 py-3 text-xs font-medium">{{ affiliationDisplayCell(row.worker) }}</td>
+              <td class="px-3 py-3 text-xs font-medium">
+                {{ affiliationDisplayCell(row.worker) }}
+              </td>
               <td class="px-3 py-3">
                 <span
                   class="font-bold tabular-nums"
@@ -1278,7 +1304,11 @@ function zoneGroupAssignedSum(group) {
           class="pointer-events-auto flex items-start gap-2 rounded-xl border px-3 py-2.5 text-xs font-semibold shadow-lg ring-1 ring-black/5"
           :class="toastClass(t.variant)"
         >
-          <AlertTriangle v-if="t.variant === 'warning'" class="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <AlertTriangle
+            v-if="t.variant === 'warning'"
+            class="mt-0.5 h-5 w-5 shrink-0"
+            aria-hidden="true"
+          />
           <span>{{ t.message }}</span>
         </div>
       </div>

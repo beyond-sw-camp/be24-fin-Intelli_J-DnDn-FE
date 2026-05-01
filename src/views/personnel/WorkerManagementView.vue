@@ -2,10 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Users,
   Search,
-  X,
-  AlertTriangle,
   Clock,
   UserCheck,
   LogOut,
@@ -19,9 +16,9 @@ const router = useRouter()
 const isDataLoading = ref(false)
 const lastDataRefreshAt = ref(null)
 
-/** 상단 히어로 (작업자 관리) */
+/** 상단 헤더 (근무자 관리) */
 const WM = {
-  pageTitle: '작업자 관리',
+  pageTitle: '근무자 관리',
   heroDesc:
     '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
   sectionAttendance: '작업자 근태 현황',
@@ -62,22 +59,6 @@ const T = {
   colRank: '직급',
   colStatus: '상태',
   empty: '조회된 근태 내역이 없습니다.',
-  drawerTitle: '근태 기록 보정',
-  drawerWorker: '대상 작업자',
-  affilChange: '소속 변경',
-  clockIn: '출근 시간',
-  clockOut: '퇴근 시간',
-  manDays: '산정 공수',
-  reasonTitle: '보정 사유 (필수)',
-  reasonPh: '시간 오류, 시스템 누락 등 사유를 입력하세요.',
-  cancel: '취소',
-  save: '보정 및 승인',
-  closedWarn: '이미 마감된 현장의 근태는 수정할 수 없습니다.',
-  reasonRequired: '보정 사유를 반드시 입력해야 합니다.',
-  manDaysAutoHint:
-    '점심(12:00) 이전 퇴근 0.5 · 기본 퇴근(18:00) 이전 1 · 연장 시 1.5로 자동 산정됩니다.',
-  manDaysInvalid: '출근·퇴근 시간을 입력해 주세요. (퇴근은 출근 이후 시각이어야 합니다)',
-  saved: '근태 정보가 성공적으로 보정되었습니다.',
   manSuffix: '공수',
   colDetail: '상세보기',
   affilDetailPartner: '협력사 지정',
@@ -108,12 +89,6 @@ const affiliationCategoryOptions = [
 /** 협력사 소속 선택 시 특정 협력사 (value는 데이터와 일치, label은 표시명만) */
 const partnerDetailOptions = [
   { value: '', label: '전체 협력사' },
-  { value: '협력사 (태양건설)', label: '태양건설' },
-  { value: '협력사 (대한건설)', label: '대한건설' },
-]
-
-const editAffiliationOptions = [
-  { value: '본사 소속', label: '본사 소속 직원' },
   { value: '협력사 (태양건설)', label: '태양건설' },
   { value: '협력사 (대한건설)', label: '대한건설' },
 ]
@@ -332,10 +307,6 @@ function attendanceTagBadgeClass(tag) {
   return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
 }
 
-/** 산정 공수: 점심 전 퇴근 0.5 / 기본 퇴근 시각 이전 1 / 연장 1.5 */
-const MAN_DAYS_LUNCH = '12:00'
-const MAN_DAYS_STANDARD_LEAVE = '18:00'
-
 function timeStrToMinutes(s) {
   if (!s || s === '-' || typeof s !== 'string') return null
   const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())
@@ -357,78 +328,6 @@ function deriveAttendanceTag(record) {
   return '출근'
 }
 
-function manDaysFromAttendanceTimes(clockIn, clockOut) {
-  const inM = timeStrToMinutes(clockIn)
-  const outM = timeStrToMinutes(clockOut)
-  if (inM == null || outM == null) return null
-  if (outM < inM) return null
-  const lunchM = timeStrToMinutes(MAN_DAYS_LUNCH)
-  const endM = timeStrToMinutes(MAN_DAYS_STANDARD_LEAVE)
-  if (lunchM == null || endM == null) return null
-  if (outM < lunchM) return 0.5
-  if (outM <= endM) return 1
-  return 1.5
-}
-
-const showEditDrawer = ref(false)
-const editForm = ref({
-  id: null,
-  affiliationType: '',
-  clockIn: '',
-  clockOut: '',
-  reason: '',
-})
-const selectedWorkerName = ref('')
-
-const drawerManDays = computed(() =>
-  manDaysFromAttendanceTimes(editForm.value.clockIn, editForm.value.clockOut),
-)
-
-const openEditDrawer = (record) => {
-  if (record.isClosed) {
-    alert(T.closedWarn)
-    return
-  }
-  selectedWorkerName.value = record.name
-
-  editForm.value = {
-    id: record.id,
-    affiliationType: record.affiliationType,
-    clockIn: record.clockIn === '-' ? '' : record.clockIn,
-    clockOut: record.clockOut === '-' ? '' : record.clockOut,
-    reason: '',
-  }
-  showEditDrawer.value = true
-}
-
-const saveEdit = () => {
-  if (!editForm.value.reason.trim()) {
-    alert(T.reasonRequired)
-    return
-  }
-  const md = drawerManDays.value
-  if (md == null) {
-    alert(T.manDaysInvalid)
-    return
-  }
-  const index = attendanceList.value.findIndex((a) => a.id === editForm.value.id)
-  if (index !== -1) {
-    const prev = attendanceList.value[index]
-    attendanceList.value[index] = {
-      ...prev,
-      affiliationType: editForm.value.affiliationType,
-      clockIn: editForm.value.clockIn,
-      clockOut: editForm.value.clockOut || '-',
-      manDays: md,
-      jobRank: prev.jobRank,
-      monthTotalMan: prev.monthTotalMan,
-      clockHistory: prev.clockHistory,
-    }
-    alert(T.saved)
-    showEditDrawer.value = false
-  }
-}
-
 function goWorkerProfile(record, event) {
   event.stopPropagation()
   router.push({ name: 'siteWorkerProfile', params: { id: String(record.id) } })
@@ -446,39 +345,27 @@ function onDataLoad() {
 
 <template>
   <div class="space-y-6 pb-10">
-    <div
-      class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-forena-50/50 to-flare-50/30 p-6 shadow-card"
-    >
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-flare-400 via-forena-500 to-flare-500"
-      />
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex flex-wrap items-start gap-4">
-          <span
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md"
-          >
-            <Users class="h-5 w-5" />
-          </span>
-          <div>
-            <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ WM.pageTitle }}</h1>
-            <p class="mt-2 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ WM.heroDesc }}</p>
-          </div>
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div class="flex items-start gap-3">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">투입 관리</p>
+          <h1 class="text-xl font-bold text-forena-900">{{ WM.pageTitle }}</h1>
         </div>
-        <div class="flex flex-wrap items-end justify-end gap-3 sm:gap-4">
-          <div class="min-w-0 text-left sm:text-right">
-            <p class="text-[10px] font-medium text-slate-600">{{ WM.dataLoadCaption }}</p>
-            <p class="mt-0.5 text-[10px] tabular-nums text-slate-500">{{ lastRefreshDisplay }}</p>
-          </div>
-          <button
-            type="button"
-            :disabled="isDataLoading"
-            class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:cursor-not-allowed disabled:opacity-60"
-            @click="onDataLoad"
-          >
-            <RefreshCw class="h-4 w-4 shrink-0" :class="{ 'animate-spin': isDataLoading }" />
-            {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
-          </button>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="rounded-lg border border-forena-100 bg-forena-50/60 px-3 py-1.5 text-right">
+          <p class="text-[10px] font-bold text-forena-600">{{ WM.dataLoadCaption }}</p>
+          <p class="mt-0.5 text-[10px] tabular-nums text-forena-500">{{ lastRefreshDisplay }}</p>
         </div>
+        <button
+          type="button"
+          :disabled="isDataLoading"
+          class="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 transition hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-60"
+          @click="onDataLoad"
+        >
+          <RefreshCw class="h-3.5 w-3.5 shrink-0" :class="{ 'animate-spin': isDataLoading }" />
+          {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
+        </button>
       </div>
     </div>
 
@@ -649,8 +536,7 @@ function onDataLoad() {
                   v-else
                   v-for="record in filteredAttendance"
                   :key="record.id"
-                  class="cursor-pointer border-b border-forena-50 transition hover:bg-flare-50/40"
-                  @click="openEditDrawer(record)"
+                  class="border-b border-forena-50 transition hover:bg-flare-50/40"
                 >
                   <td class="px-6 py-4">
                     <div class="font-semibold text-forena-900">{{ record.name }}</div>
@@ -702,127 +588,5 @@ function onDataLoad() {
         </div>
       </div>
     </div>
-
-    <Teleport to="body">
-      <div
-        v-if="showEditDrawer"
-        class="fixed inset-0 z-50 flex justify-end bg-forena-900/20 backdrop-blur-[2px]"
-        @click.self="showEditDrawer = false"
-      >
-        <aside
-          class="flex h-full w-full max-w-md flex-col border-l border-forena-100 bg-white shadow-2xl animate-[slideIn_0.25s_ease-out]"
-          @click.stop
-        >
-          <div
-            class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-4"
-          >
-            <h2 class="text-lg font-bold text-forena-900">{{ T.drawerTitle }}</h2>
-            <button
-              type="button"
-              class="rounded-lg border border-forena-200 bg-white p-2 text-forena-400 transition hover:text-forena-700"
-              @click="showEditDrawer = false"
-            >
-              <X class="h-4 w-4" />
-            </button>
-          </div>
-
-          <div class="flex-1 space-y-6 overflow-y-auto p-6 text-sm">
-            <div class="rounded-xl border border-forena-100 bg-white p-4 shadow-sm">
-              <p class="mb-1 text-[11px] font-bold uppercase tracking-wide text-forena-400">
-                {{ T.drawerWorker }}
-              </p>
-              <p class="text-lg font-bold text-forena-900">{{ selectedWorkerName }}</p>
-            </div>
-
-            <div class="space-y-4">
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.affilChange }}</label>
-                <select
-                  v-model="editForm.affiliationType"
-                  class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                >
-                  <option v-for="opt in editAffiliationOptions" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockIn }}</label>
-                  <input
-                    v-model="editForm.clockIn"
-                    type="time"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                  />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockOut }}</label>
-                  <input
-                    v-model="editForm.clockOut"
-                    type="time"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.manDays }}</label>
-                <input
-                  :value="drawerManDays != null ? String(drawerManDays) : ''"
-                  type="text"
-                  readonly
-                  disabled
-                  :placeholder="drawerManDays == null ? '—' : ''"
-                  class="w-full cursor-not-allowed rounded-xl border border-forena-200 bg-forena-50/90 px-3 py-2.5 text-forena-900 outline-none"
-                />
-                <p class="mt-1.5 text-[10px] leading-relaxed text-slate-500">{{ T.manDaysAutoHint }}</p>
-              </div>
-
-              <div class="rounded-xl border border-rose-100 bg-rose-50/40 p-4">
-                <h3 class="mb-2 flex items-center gap-2 text-[11px] font-bold text-rose-700">
-                  <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
-                  {{ T.reasonTitle }}
-                </h3>
-                <textarea
-                  v-model="editForm.reason"
-                  rows="3"
-                  :placeholder="T.reasonPh"
-                  class="w-full resize-none rounded-lg border border-rose-200/80 bg-white p-3 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-400/15"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="flex shrink-0 justify-end gap-3 border-t border-forena-100 bg-forena-50/30 px-6 py-4">
-            <button
-              type="button"
-              class="rounded-xl border border-forena-200 bg-white px-5 py-2.5 text-sm font-bold text-forena-600 transition hover:bg-forena-50"
-              @click="showEditDrawer = false"
-            >
-              {{ T.cancel }}
-            </button>
-            <button
-              type="button"
-              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-5 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
-              @click="saveEdit"
-            >
-              {{ T.save }}
-            </button>
-          </div>
-        </aside>
-      </div>
-    </Teleport>
   </div>
 </template>
-
-<style scoped>
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-</style>
