@@ -1,33 +1,41 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Users,
   Search,
-  X,
-  AlertTriangle,
   Clock,
   UserCheck,
   LogOut,
   UserX,
   Eye,
   RefreshCw,
+  Timer,
+  ChevronLeft,
+  ChevronRight,
+  CircleCheck,
 } from 'lucide-vue-next'
-import { getAffiliationKind, formatAffiliationDisplay } from '@/utils/workerAffiliation'
+import {
+  getAffiliationKind,
+  displayWorkerAffiliation,
+  employmentKindDisplay,
+  displayWorkerTradeLine,
+  deriveAttendanceTag,
+  attendanceTagBadgeClass,
+} from '@/utils/workerUi'
+import { syncWorkforce, fetchWorkerList } from '@/api/worker.js'
 
 const router = useRouter()
 const isDataLoading = ref(false)
 const lastDataRefreshAt = ref(null)
 
-/** 상단 히어로 (작업자 관리) */
+/** 상단 헤더 (근무자 관리) */
 const WM = {
-  pageTitle: '작업자 관리',
+  pageTitle: '근무자 관리',
   heroDesc:
     '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
   sectionAttendance: '작업자 근태 현황',
   dataLoad: '데이터 불러오기',
   dataLoadLoading: '불러오는 중...',
-  dataLoadCaption: '30분 주기로 갱신',
   lastRefreshLabel: '최종 갱신',
 }
 
@@ -52,39 +60,31 @@ const T = {
   desc: '작업자 출퇴근과 공수 산정 현황을 일일별로 조회하고 보정할 수 있습니다.',
   breadcrumb: '현장 관리 / 출입·근태',
   filterDate: '조회 날짜',
+  datePrevAria: '어제 명단 보기',
+  dateNextAria: '내일 명단 보기',
   filterAffil: '소속 구분',
   filterSearch: '작업자 이름',
   filterSearchPh: '이름을 입력하세요',
   colContact: '이름 / 연락처',
-  colEmergency: '비상 연락망 / 관계',
   colAffil: '소속',
-  colTime: '출·퇴근',
+  colEmployment: '상용 / 일용',
   colRank: '직급',
+  colTrade: '공종',
+  colTime: '출·퇴근',
   colStatus: '상태',
   empty: '조회된 근태 내역이 없습니다.',
-  drawerTitle: '근태 기록 보정',
-  drawerWorker: '대상 작업자',
-  affilChange: '소속 변경',
-  clockIn: '출근 시간',
-  clockOut: '퇴근 시간',
-  manDays: '산정 공수',
-  reasonTitle: '보정 사유 (필수)',
-  reasonPh: '시간 오류, 시스템 누락 등 사유를 입력하세요.',
-  cancel: '취소',
-  save: '보정 및 승인',
-  closedWarn: '이미 마감된 현장의 근태는 수정할 수 없습니다.',
-  reasonRequired: '보정 사유를 반드시 입력해야 합니다.',
-  manDaysAutoHint:
-    '점심(12:00) 이전 퇴근 0.5 · 기본 퇴근(18:00) 이전 1 · 연장 시 1.5로 자동 산정됩니다.',
-  manDaysInvalid: '출근·퇴근 시간을 입력해 주세요. (퇴근은 출근 이후 시각이어야 합니다)',
-  saved: '근태 정보가 성공적으로 보정되었습니다.',
   manSuffix: '공수',
   colDetail: '상세보기',
   affilDetailPartner: '협력사 지정',
   affilPartnerAll: '전체 협력사',
   listFilteredStats: '목록 집계',
+  employmentFilterHint: '고용',
+  attendanceFilterHint: '근태',
   todayWorkerTotal: '금일 작업자',
   countPeople: '명',
+  calDialogLabel: '조회 날짜 선택',
+  calPrevMonth: '이전 달',
+  calNextMonth: '다음 달',
 }
 
 /** 직급 표시 (현장 총 책임자 · 현장 관리자 · 작업자) */
@@ -108,40 +108,47 @@ const affiliationCategoryOptions = [
 /** 협력사 소속 선택 시 특정 협력사 (value는 데이터와 일치, label은 표시명만) */
 const partnerDetailOptions = [
   { value: '', label: '전체 협력사' },
-  { value: '협력사 (태양건설)', label: '태양건설' },
-  { value: '협력사 (대한건설)', label: '대한건설' },
+  { value: '협력사 (태양목공)', label: '태양목공' },
+  { value: '협력사 (대한철근)', label: '대한철근' },
+  { value: '협력사 (성신용접)', label: '성신용접' },
+  { value: '협력사 (강남인력사무소)', label: '강남인력사무소' },
+  { value: '협력사 (미래타일)', label: '미래타일' },
 ]
 
-const editAffiliationOptions = [
-  { value: '본사 소속', label: '본사 소속 직원' },
-  { value: '협력사 (태양건설)', label: '태양건설' },
-  { value: '협력사 (대한건설)', label: '대한건설' },
-]
-
-/** 표시용: `번호 / 관계`, `번호 (관계)`(기존), 또는 번호만 */
-function parseEmergencyForTable(raw) {
-  if (!raw || raw === '—') return { phone: '—', relation: '—' }
-  const s = String(raw).trim()
-  const slash = s.match(/^(.+?)\s*\/\s*(.+)$/)
-  if (slash) {
-    return { phone: slash[1].trim(), relation: slash[2].trim() }
-  }
-  const m = s.match(/^(.+?)\s*\(([^)]+)\)\s*$/)
-  if (m) {
-    return { phone: m[1].trim(), relation: m[2].trim() }
-  }
-  return { phone: s, relation: '—' }
+/** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
+function localTodayISODate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
-function formatEmergencyDisplayCell(raw) {
-  const em = parseEmergencyForTable(raw)
-  if (em.phone === '—' && em.relation === '—') return '—'
-  if (em.relation === '—' || !em.relation) return em.phone
-  return `${em.phone} / ${em.relation}`
+function parseISODateLocal(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
+  if (!m) return null
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  const dt = new Date(y, mo - 1, d)
+  if (Number.isNaN(dt.getTime())) return null
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null
+  return dt
 }
+
+function formatISODateLocal(d) {
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${mo}-${day}`
+}
+
+/** MANAGEMENT_001 동기화 시 서버에 넘기는 현장 코드 (UI 에서는 입력하지 않음) */
+const SYNC_SITE_CODE =
+  (import.meta.env.VITE_SITE_CODE && String(import.meta.env.VITE_SITE_CODE).trim()) || 'GN-A'
 
 const filters = ref({
-  date: new Date().toISOString().split('T')[0],
+  date: localTodayISODate(),
   /** '' | 'direct' | 'partner' */
   affiliationCategory: '',
   /** 협력사 세부 (해당 소속일 때만 사용) */
@@ -149,115 +156,114 @@ const filters = ref({
   searchName: '',
 })
 
+/** 필터용 인라인 달력 — 요일 헤더 */
+const filterCalWeekDays = ['일', '월', '화', '수', '목', '금', '토']
+
 function onAffiliationCategoryChange() {
   filters.value.affiliationDetail = ''
 }
 
-const attendanceList = ref([
-  {
-    id: 1,
-    name: '김동석',
-    phone: '010-1234-5678',
-    emergency: '010-9999-1111 (배우자)',
-    jobRank: JOB_RANK_WORKER,
-    affiliationType: '협력사 (태양건설)',
-    primaryContractor: '태양건설',
-    affiliationSubLabel: '인력',
-    site: '강남구 재건축 A공구',
-    clockIn: '06:50',
-    clockOut: '17:10',
-    manDays: 1.0,
-    status: '퇴근 완료',
-    isClosed: false,
-    monthTotalMan: 18.5,
-    clockHistory: [
-      { date: '2025-10-14', clockIn: '06:50', clockOut: '17:10', manDays: 1.0 },
-      { date: '2025-10-13', clockIn: '06:48', clockOut: '17:05', manDays: 1.0 },
-      { date: '2025-10-12', clockIn: '06:52', clockOut: '17:00', manDays: 1.0 },
-      { date: '2025-10-11', clockIn: '06:55', clockOut: '12:30', manDays: 0.5 },
-    ],
-  },
-  {
-    id: 2,
-    name: '이목수',
-    phone: '010-8888-7777',
-    emergency: '010-7777-6666 (자녀)',
-    jobRank: JOB_RANK_WORKER,
-    affiliationType: '협력사 (태양건설)',
-    primaryContractor: '태양건설',
-    affiliationSubLabel: '목수',
-    site: '강남구 재건축 A공구',
-    clockIn: '07:05',
-    clockOut: '-',
-    manDays: 0,
-    status: '작업 중',
-    isClosed: false,
-    monthTotalMan: 14.0,
-    clockHistory: [
-      { date: '2025-10-14', clockIn: '07:05', clockOut: '-', manDays: 0 },
-      { date: '2025-10-13', clockIn: '07:00', clockOut: '17:15', manDays: 1.0 },
-      { date: '2025-10-12', clockIn: '07:02', clockOut: '17:00', manDays: 1.0 },
-    ],
-  },
-  {
-    id: 3,
-    name: '박반장',
-    phone: '010-5555-4444',
-    emergency: '010-4444-3333 (형제)',
-    jobRank: JOB_RANK_MANAGER,
-    affiliationType: '본사 소속',
-    primaryContractor: '한화건설',
-    affiliationSubLabel: '직영',
-    site: '판교 데이터센터',
-    clockIn: '06:45',
-    clockOut: '16:00',
-    manDays: 0.5,
-    status: '조퇴',
-    isClosed: true,
-    monthTotalMan: 10.5,
-    clockHistory: [
-      { date: '2025-10-14', clockIn: '06:45', clockOut: '16:00', manDays: 0.5 },
-      { date: '2025-10-13', clockIn: '-', clockOut: '-', manDays: 0 },
-      { date: '2025-10-12', clockIn: '06:40', clockOut: '17:10', manDays: 1.0 },
-    ],
-  },
-  {
-    id: 4,
-    name: '최철수',
-    phone: '010-2222-3333',
-    emergency: '010-3333-2222 (부)',
-    jobRank: JOB_RANK_CHIEF,
-    affiliationType: '협력사 (대한건설)',
-    primaryContractor: '대한건설',
-    affiliationSubLabel: '목수',
-    site: '강남구 재건축 A공구',
-    clockIn: '07:00',
-    clockOut: '17:00',
-    manDays: 1.0,
-    status: '퇴근 완료',
-    isClosed: false,
-    monthTotalMan: 12.0,
-    clockHistory: [],
-  },
-  {
-    id: 5,
-    name: '정미도',
-    phone: '010-1010-2020',
-    emergency: '010-2020-3030 / 배우자',
-    jobRank: JOB_RANK_WORKER,
-    affiliationType: '협력사 (대한건설)',
-    primaryContractor: '대한건설',
-    affiliationSubLabel: '인력',
-    site: '강남구 재건축 A공구',
-    clockIn: '-',
-    clockOut: '-',
-    manDays: 0,
-    status: '결근',
-    isClosed: false,
-    monthTotalMan: 9.0,
-    clockHistory: [],
-  },
-])
+const filterCalendarOpen = ref(false)
+const datePickerRootRef = ref(null)
+const calYear = ref(new Date().getFullYear())
+const calMonth = ref(new Date().getMonth() + 1)
+
+function toggleFilterCalendar() {
+  if (!filterCalendarOpen.value) {
+    const dt = parseISODateLocal(filters.value.date)
+    if (dt) {
+      calYear.value = dt.getFullYear()
+      calMonth.value = dt.getMonth() + 1
+    } else {
+      const now = new Date()
+      calYear.value = now.getFullYear()
+      calMonth.value = now.getMonth() + 1
+    }
+  }
+  filterCalendarOpen.value = !filterCalendarOpen.value
+}
+
+function shiftCalendarMonth(delta) {
+  let y = calYear.value
+  let m = calMonth.value + delta
+  while (m > 12) {
+    m -= 12
+    y += 1
+  }
+  while (m < 1) {
+    m += 12
+    y -= 1
+  }
+  calYear.value = y
+  calMonth.value = m
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+
+function pickFilterCalendarDay(day) {
+  if (day == null) return
+  filters.value.date = `${calYear.value}-${pad2(calMonth.value)}-${pad2(day)}`
+  filterCalendarOpen.value = false
+}
+
+const filterCalendarWeeks = computed(() => {
+  const y = calYear.value
+  const m = calMonth.value
+  const mi = m - 1
+  const first = new Date(y, mi, 1)
+  const lastDay = new Date(y, mi + 1, 0).getDate()
+  const pad = first.getDay()
+  const weeks = []
+  let week = []
+  for (let i = 0; i < pad; i++) week.push(null)
+  for (let d = 1; d <= lastDay; d++) {
+    week.push(d)
+    if (week.length === 7) {
+      weeks.push(week)
+      week = []
+    }
+  }
+  while (week.length > 0 && week.length < 7) week.push(null)
+  if (week.length) weeks.push(week)
+  return weeks
+})
+
+function filterCalendarDayKey(day) {
+  if (day == null) return ''
+  return `${calYear.value}-${pad2(calMonth.value)}-${pad2(day)}`
+}
+
+function closeFilterCalendarIfOutside(e) {
+  if (!filterCalendarOpen.value) return
+  const root = datePickerRootRef.value
+  if (root && e.target instanceof Node && !root.contains(e.target)) {
+    filterCalendarOpen.value = false
+  }
+}
+
+function shiftFilterDate(deltaDays) {
+  filterCalendarOpen.value = false
+  const cur = parseISODateLocal(filters.value.date)
+  const base = cur ? new Date(cur) : new Date()
+  base.setDate(base.getDate() + deltaDays)
+  filters.value.date = formatISODateLocal(base)
+}
+
+const filterDateDisplay = computed(() => {
+  const dt = parseISODateLocal(filters.value.date)
+  if (!dt) return filters.value.date || '—'
+  return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  }).format(dt)
+})
+
+/** MANAGEMENT_003 — 서버 목록 (비어 있으면 빈 표) */
+const attendanceList = ref([])
 
 const preKindAttendance = computed(() => {
   let result = attendanceList.value
@@ -269,33 +275,70 @@ const preKindAttendance = computed(() => {
   if (cat === 'direct') {
     result = result.filter((a) => getAffiliationKind(a.affiliationType) === 'direct')
   } else if (cat === 'partner') {
-    result = result.filter((a) => getAffiliationKind(a.affiliationType) === 'partner')
+    result = result.filter((a) => {
+      const k = getAffiliationKind(a.affiliationType)
+      return k === 'partner' || k === 'agency'
+    })
     if (detail) result = result.filter((a) => a.affiliationType === detail)
   }
 
   return result
 })
 
-const ATTENDANCE_STATE_LABELS = ['출근', '지각', '조퇴', '결근']
+const ATTENDANCE_STATE_LABELS = ['출근 전', '출근', '지각', '조퇴', '퇴근', '결근']
+const EMPLOYMENT_FILTER_LABELS = ['상용', '일용']
 
 const listStatusFilter = ref('')
+/** 근태 칩과 별개 — '' | '상용' | '일용' */
+const listEmploymentFilter = ref('')
+
+/** 소속·이름 검색만 반영 (목록 우측 고용·근태 칩 집계 기준 풀) */
+const listBaseForStats = computed(() => preKindAttendance.value)
+
+/** 상단 KPI 5칸 — 조회일 전체 명단 (필터와 무관, 당일 총 작업자 근태 분포) */
+const kpAttendanceCounts = computed(() => {
+  const rows = attendanceList.value
+  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
+  for (const r of rows) {
+    const s = deriveAttendanceTag(r)
+    if (s in acc) acc[s]++
+  }
+  return acc
+})
+
+/** 상용/일용 적용 후 (근태 칩 집계·필터는 이 결과 위에서 동작) */
+const employmentFilteredRows = computed(() => {
+  let rows = listBaseForStats.value
+  const emp = listEmploymentFilter.value
+  if (emp === '상용') rows = rows.filter((r) => r.employmentClass === '상용')
+  else if (emp === '일용') rows = rows.filter((r) => r.employmentClass === '일용')
+  return rows
+})
 
 const filteredAttendance = computed(() => {
-  let result = preKindAttendance.value
+  let result = employmentFilteredRows.value
   if (listStatusFilter.value) {
     result = result.filter((r) => deriveAttendanceTag(r) === listStatusFilter.value)
   }
   return result
 })
 
-/** 소속·검색 반영 후, 상태 칩 필터 전 기준 명수 */
-const listBaseForStats = computed(() => preKindAttendance.value)
+const todayWorkerCount = computed(() => employmentFilteredRows.value.length)
 
-const todayWorkerCount = computed(() => listBaseForStats.value.length)
+const employmentCounts = computed(() => {
+  const rows = listBaseForStats.value
+  let sang = 0
+  let il = 0
+  for (const r of rows) {
+    if (r.employmentClass === '일용') il++
+    else sang++
+  }
+  return { 상용: sang, 일용: il }
+})
 
 const attendanceStateCounts = computed(() => {
-  const rows = listBaseForStats.value
-  const acc = { 출근: 0, 지각: 0, 조퇴: 0, 결근: 0 }
+  const rows = employmentFilteredRows.value
+  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
   for (const r of rows) {
     const s = deriveAttendanceTag(r)
     if (s in acc) acc[s]++
@@ -307,126 +350,21 @@ function toggleListStatusFilter(state) {
   listStatusFilter.value = listStatusFilter.value === state ? '' : state
 }
 
-/** 근무 시작 기준시각(이후 출근 = 지각) */
-const ATTENDANCE_ON_TIME_END = '07:00'
-
-function formatAffiliationRow(record) {
-  const kind = getAffiliationKind(record.affiliationType)
-  const sub = record.affiliationSubLabel || '인력'
-  if (kind === 'direct') {
-    const corp = record.primaryContractor || '한화건설'
-    return `${corp} / ${sub}`
-  }
-  if (kind === 'agency') {
-    const name = formatAffiliationDisplay(record.affiliationType)
-    return `${name} / 파견`
-  }
-  const company = formatAffiliationDisplay(record.affiliationType)
-  return `${company} / ${sub}`
+function toggleListEmploymentFilter(kind) {
+  listEmploymentFilter.value = listEmploymentFilter.value === kind ? '' : kind
 }
 
-function attendanceTagBadgeClass(tag) {
-  if (tag === '출근') return 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80'
-  if (tag === '지각') return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
-  if (tag === '조퇴') return 'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80'
-  return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
+/** 목록 「소속」열 — 본사 · 협력체명 · 인력사무소 일용만 `인력` */
+function formatAffiliationSogo(record) {
+  return displayWorkerAffiliation({
+    affiliationKind: record.affiliationKindApi,
+    partnerCompany: record.partnerCompanyApi,
+  })
 }
 
-/** 산정 공수: 점심 전 퇴근 0.5 / 기본 퇴근 시각 이전 1 / 연장 1.5 */
-const MAN_DAYS_LUNCH = '12:00'
-const MAN_DAYS_STANDARD_LEAVE = '18:00'
-
-function timeStrToMinutes(s) {
-  if (!s || s === '-' || typeof s !== 'string') return null
-  const m = /^(\d{1,2}):(\d{2})$/.exec(s.trim())
-  if (!m) return null
-  const h = Number(m[1])
-  const mi = Number(m[2])
-  if (Number.isNaN(h) || Number.isNaN(mi)) return null
-  return h * 60 + mi
-}
-
-function deriveAttendanceTag(record) {
-  const st = String(record.status ?? '')
-  const cin = record.clockIn
-  if (!cin || cin === '-') return '결근'
-  if (st.includes('조퇴')) return '조퇴'
-  const inM = timeStrToMinutes(cin)
-  const limitM = timeStrToMinutes(ATTENDANCE_ON_TIME_END)
-  if (inM != null && limitM != null && inM > limitM) return '지각'
-  return '출근'
-}
-
-function manDaysFromAttendanceTimes(clockIn, clockOut) {
-  const inM = timeStrToMinutes(clockIn)
-  const outM = timeStrToMinutes(clockOut)
-  if (inM == null || outM == null) return null
-  if (outM < inM) return null
-  const lunchM = timeStrToMinutes(MAN_DAYS_LUNCH)
-  const endM = timeStrToMinutes(MAN_DAYS_STANDARD_LEAVE)
-  if (lunchM == null || endM == null) return null
-  if (outM < lunchM) return 0.5
-  if (outM <= endM) return 1
-  return 1.5
-}
-
-const showEditDrawer = ref(false)
-const editForm = ref({
-  id: null,
-  affiliationType: '',
-  clockIn: '',
-  clockOut: '',
-  reason: '',
-})
-const selectedWorkerName = ref('')
-
-const drawerManDays = computed(() =>
-  manDaysFromAttendanceTimes(editForm.value.clockIn, editForm.value.clockOut),
-)
-
-const openEditDrawer = (record) => {
-  if (record.isClosed) {
-    alert(T.closedWarn)
-    return
-  }
-  selectedWorkerName.value = record.name
-
-  editForm.value = {
-    id: record.id,
-    affiliationType: record.affiliationType,
-    clockIn: record.clockIn === '-' ? '' : record.clockIn,
-    clockOut: record.clockOut === '-' ? '' : record.clockOut,
-    reason: '',
-  }
-  showEditDrawer.value = true
-}
-
-const saveEdit = () => {
-  if (!editForm.value.reason.trim()) {
-    alert(T.reasonRequired)
-    return
-  }
-  const md = drawerManDays.value
-  if (md == null) {
-    alert(T.manDaysInvalid)
-    return
-  }
-  const index = attendanceList.value.findIndex((a) => a.id === editForm.value.id)
-  if (index !== -1) {
-    const prev = attendanceList.value[index]
-    attendanceList.value[index] = {
-      ...prev,
-      affiliationType: editForm.value.affiliationType,
-      clockIn: editForm.value.clockIn,
-      clockOut: editForm.value.clockOut || '-',
-      manDays: md,
-      jobRank: prev.jobRank,
-      monthTotalMan: prev.monthTotalMan,
-      clockHistory: prev.clockHistory,
-    }
-    alert(T.saved)
-    showEditDrawer.value = false
-  }
+function employmentBadgeClass(c) {
+  if (c === '상용') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
 }
 
 function goWorkerProfile(record, event) {
@@ -434,51 +372,163 @@ function goWorkerProfile(record, event) {
   router.push({ name: 'siteWorkerProfile', params: { id: String(record.id) } })
 }
 
-function onDataLoad() {
+/** API LocalTime → 표시용 HH:mm */
+function formatApiTime(t) {
+  if (t == null || t === '') return '-'
+  const s = String(t)
+  if (s === '-') return '-'
+  const m = /^(\d{1,2}):(\d{2})/.exec(s)
+  if (!m) return '-'
+  return `${m[1].padStart(2, '0')}:${m[2]}`
+}
+
+function mapJobRankFromApi(rank) {
+  const r = String(rank ?? '').toUpperCase()
+  if (r === 'CHIEF') return JOB_RANK_CHIEF
+  if (r === 'MANAGER') return JOB_RANK_MANAGER
+  return JOB_RANK_WORKER
+}
+
+function buildAffiliationFromApi(row) {
+  const kind = String(row.affiliationKind ?? '').toUpperCase()
+  if (kind === 'DIRECT') {
+    return { affiliationType: '본사 소속', primaryContractor: '본사' }
+  }
+  const company = (row.partnerCompany && String(row.partnerCompany).trim()) || '협력사'
+  return {
+    affiliationType: `협력사 (${company})`,
+    primaryContractor: company,
+  }
+}
+
+function deriveStatusLabel(attendanceStatus, clockInStr, clockOutStr) {
+  const st = String(attendanceStatus ?? '').toUpperCase()
+  if (st === 'PENDING') return '출근 전'
+  if (st === 'ABSENT' || clockInStr === '-') return '결근'
+  if (st === 'EARLY_LEAVE') return '조퇴'
+  if (clockOutStr && clockOutStr !== '-') return '퇴근'
+  return '작업 중'
+}
+
+function estimateManDays(clockInStr, clockOutStr, statusUpper) {
+  if (statusUpper === 'PENDING') return 0
+  if (clockInStr === '-' || statusUpper === 'ABSENT') return 0
+  if (statusUpper === 'EARLY_LEAVE') return 0.5
+  if (clockOutStr && clockOutStr !== '-') return 1.0
+  return 0
+}
+
+/** Backend.md `WorkerDto.WorkerRes` JSON → 테이블 행 모양 */
+function mapWorkerResToAttendance(row) {
+  const clockInStr = formatApiTime(row.clockIn)
+  const clockOutStr = formatApiTime(row.clockOut)
+  const statusUpper = String(row.attendanceStatus ?? '').toUpperCase()
+  const { affiliationType, primaryContractor } = buildAffiliationFromApi(row)
+  const tradeLabel = displayWorkerTradeLine(row)
+
+  const manDays =
+    row.manDays != null && row.manDays !== ''
+      ? Number(row.manDays)
+      : estimateManDays(clockInStr, clockOutStr, statusUpper)
+
+  return {
+    id: row.idx,
+    name: row.name ?? '',
+    phone: row.phone ?? '—',
+    jobRank: mapJobRankFromApi(row.jobRank),
+    employmentClass: employmentKindDisplay(row.employmentKind),
+    affiliationType,
+    primaryContractor,
+    affiliationKindApi: row.affiliationKind,
+    partnerCompanyApi: row.partnerCompany,
+    affiliationSubLabel: tradeLabel,
+    site: row.site || '—',
+    clockIn: clockInStr,
+    clockOut: clockOutStr,
+    manDays,
+    attendanceStatus: statusUpper,
+    status: deriveStatusLabel(row.attendanceStatus, clockInStr, clockOutStr),
+    isClosed: false,
+    monthTotalMan: 0,
+    clockHistory: [],
+  }
+}
+
+/** MANAGEMENT_003 — 현재 조회일 기준 목록만 갱신 (근태는 이 날짜의 attendance_record 와 매칭) */
+async function refreshWorkerListFromApi() {
+  const listRes = await fetchWorkerList(filters.value.date)
+  const rows = listRes?.rows
+  if (Array.isArray(rows)) {
+    attendanceList.value = rows.map(mapWorkerResToAttendance)
+  }
+}
+
+watch(
+  () => filters.value.date,
+  () => {
+    refreshWorkerListFromApi().catch((e) =>
+      console.warn('[WorkerManagement] 조회일 변경 후 목록 갱신 실패', e),
+    )
+  },
+)
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeFilterCalendarIfOutside, true)
+  refreshWorkerListFromApi().catch((e) => console.warn('[WorkerManagement] 초기 목록 로드 실패', e))
+})
+
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', closeFilterCalendarIfOutside, true)
+})
+
+async function onDataLoad() {
   if (isDataLoading.value) return
   isDataLoading.value = true
-  window.setTimeout(() => {
-    isDataLoading.value = false
+  try {
+    const syncResult = await syncWorkforce(SYNC_SITE_CODE, filters.value.date)
+    await refreshWorkerListFromApi()
     lastDataRefreshAt.value = new Date()
-  }, 1200)
+    window.alert(
+      `인력 데이터를 불러왔습니다.\n신규 ${syncResult.created}명 · 갱신 ${syncResult.updated}명 · 처리 ${syncResult.total}건` +
+        (syncResult.documentsSynced != null
+          ? `\n서류 ${syncResult.documentsSynced} · 제재 ${syncResult.sanctionsSynced ?? 0} · 사고 ${syncResult.accidentsSynced ?? 0} · 근태 ${syncResult.attendanceRecordsSynced ?? 0}`
+          : ''),
+    )
+  } catch (err) {
+    window.alert(err?.message || '데이터 불러오기에 실패했습니다.')
+  } finally {
+    isDataLoading.value = false
+  }
 }
 </script>
 
 <template>
   <div class="space-y-6 pb-10">
-    <div
-      class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-forena-50/50 to-flare-50/30 p-6 shadow-card"
-    >
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-flare-400 via-forena-500 to-flare-500"
-      />
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex flex-wrap items-start gap-4">
-          <span
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md"
-          >
-            <Users class="h-5 w-5" />
-          </span>
-          <div>
-            <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ WM.pageTitle }}</h1>
-            <p class="mt-2 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ WM.heroDesc }}</p>
-          </div>
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div class="flex items-start gap-3">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">투입 관리</p>
+          <h1 class="text-xl font-bold text-forena-900">{{ WM.pageTitle }}</h1>
         </div>
-        <div class="flex flex-wrap items-end justify-end gap-3 sm:gap-4">
-          <div class="min-w-0 text-left sm:text-right">
-            <p class="text-[10px] font-medium text-slate-600">{{ WM.dataLoadCaption }}</p>
-            <p class="mt-0.5 text-[10px] tabular-nums text-slate-500">{{ lastRefreshDisplay }}</p>
-          </div>
-          <button
-            type="button"
-            :disabled="isDataLoading"
-            class="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:cursor-not-allowed disabled:opacity-60"
-            @click="onDataLoad"
-          >
-            <RefreshCw class="h-4 w-4 shrink-0" :class="{ 'animate-spin': isDataLoading }" />
-            {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
-          </button>
-        </div>
+      </div>
+      <div class="flex flex-col items-end gap-1">
+        <button
+          type="button"
+          :disabled="isDataLoading"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-60"
+          @click="onDataLoad"
+        >
+          <RefreshCw
+            class="h-3.5 w-3.5 shrink-0 text-flare-600"
+            :class="{ 'animate-spin': isDataLoading }"
+          />
+          {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
+        </button>
+        <p
+          class="text-right text-[10px] leading-tight font-medium whitespace-nowrap tabular-nums text-forena-500"
+        >
+          {{ lastRefreshDisplay }}
+        </p>
       </div>
     </div>
 
@@ -488,15 +538,27 @@ function onDataLoad() {
       </div>
 
       <div class="space-y-6">
-        <!-- KPI: 출근 / 지각 / 조퇴 / 결근 (목록 필터와 동일 기준) -->
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <!-- KPI: 출근 전 / 출근 / 지각 / 조퇴 / 퇴근 / 결근 -->
+        <div class="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+          <div
+            class="rounded-2xl border border-violet-100/90 bg-gradient-to-br from-violet-50/35 to-white p-4 shadow-card ring-1 ring-violet-100/60"
+          >
+            <p class="text-[11px] font-bold uppercase tracking-wider text-violet-800/90">출근 전</p>
+            <div class="mt-2 flex items-end gap-2">
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                kpAttendanceCounts['출근 전']
+              }}</span>
+              <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
+              <Timer class="mb-1 h-5 w-5 text-violet-600" />
+            </div>
+          </div>
           <div
             class="rounded-2xl border border-emerald-100/90 bg-gradient-to-br from-emerald-50/35 to-white p-4 shadow-card ring-1 ring-emerald-100/60"
           >
             <p class="text-[11px] font-bold uppercase tracking-wider text-emerald-800/90">출근</p>
             <div class="mt-2 flex items-end gap-2">
               <span class="text-3xl font-bold tabular-nums text-forena-900">{{
-                attendanceStateCounts['출근']
+                kpAttendanceCounts['출근']
               }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
               <UserCheck class="mb-1 h-5 w-5 text-emerald-600" />
@@ -508,7 +570,7 @@ function onDataLoad() {
             <p class="text-[11px] font-bold uppercase tracking-wider text-amber-800/90">지각</p>
             <div class="mt-2 flex items-end gap-2">
               <span class="text-3xl font-bold tabular-nums text-forena-900">{{
-                attendanceStateCounts['지각']
+                kpAttendanceCounts['지각']
               }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
               <Clock class="mb-1 h-5 w-5 text-amber-600" />
@@ -520,10 +582,22 @@ function onDataLoad() {
             <p class="text-[11px] font-bold uppercase tracking-wider text-rose-800/90">조퇴</p>
             <div class="mt-2 flex items-end gap-2">
               <span class="text-3xl font-bold tabular-nums text-forena-900">{{
-                attendanceStateCounts['조퇴']
+                kpAttendanceCounts['조퇴']
               }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
               <LogOut class="mb-1 h-5 w-5 text-rose-600" />
+            </div>
+          </div>
+          <div
+            class="rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50/35 to-white p-4 shadow-card ring-1 ring-sky-100/60"
+          >
+            <p class="text-[11px] font-bold uppercase tracking-wider text-sky-800/90">퇴근</p>
+            <div class="mt-2 flex items-end gap-2">
+              <span class="text-3xl font-bold tabular-nums text-forena-900">{{
+                kpAttendanceCounts['퇴근']
+              }}</span>
+              <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
+              <CircleCheck class="mb-1 h-5 w-5 text-sky-600" />
             </div>
           </div>
           <div
@@ -532,7 +606,7 @@ function onDataLoad() {
             <p class="text-[11px] font-bold uppercase tracking-wider text-slate-600">결근</p>
             <div class="mt-2 flex items-end gap-2">
               <span class="text-3xl font-bold tabular-nums text-forena-900">{{
-                attendanceStateCounts['결근']
+                kpAttendanceCounts['결근']
               }}</span>
               <span class="mb-1 text-sm font-medium text-slate-500">{{ T.countPeople }}</span>
               <UserX class="mb-1 h-5 w-5 text-slate-500" />
@@ -543,40 +617,140 @@ function onDataLoad() {
         <div
           class="rounded-2xl border border-forena-100/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
         >
-          <div class="flex flex-wrap items-end gap-4">
-            <div>
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterDate }}</label>
-              <input
-                v-model="filters.date"
-                type="date"
-                class="w-40 rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              />
+          <div ref="datePickerRootRef" class="relative border-b border-forena-100 pb-5">
+            <p class="mb-2 text-[11px] font-bold text-forena-500">{{ T.filterDate }}</p>
+            <div class="flex w-full items-center gap-1 sm:gap-2">
+              <button
+                type="button"
+                class="inline-flex shrink-0 items-center justify-center rounded-lg p-2 text-forena-600 transition-colors hover:bg-slate-200/70 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
+                :aria-label="T.datePrevAria"
+                @click="shiftFilterDate(-1)"
+              >
+                <ChevronLeft class="h-5 w-5" aria-hidden="true" />
+              </button>
+              <button
+                id="wm-attendance-date-trigger"
+                type="button"
+                class="min-w-0 flex-1 rounded-lg px-3 py-2 text-center text-sm font-bold tabular-nums text-forena-900 transition-colors hover:bg-slate-200/70 sm:px-4 sm:text-base"
+                :aria-expanded="filterCalendarOpen"
+                :aria-label="T.filterDate"
+                @click.stop="toggleFilterCalendar"
+              >
+                {{ filterDateDisplay }}
+              </button>
+              <button
+                type="button"
+                class="inline-flex shrink-0 items-center justify-center rounded-lg p-2 text-forena-600 transition-colors hover:bg-slate-200/70 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
+                :aria-label="T.dateNextAria"
+                @click="shiftFilterDate(1)"
+              >
+                <ChevronRight class="h-5 w-5" aria-hidden="true" />
+              </button>
             </div>
+            <div
+              v-show="filterCalendarOpen"
+              class="absolute left-1/2 top-full z-40 mt-2 w-[272px] max-w-[calc(100%-0.5rem)] -translate-x-1/2 rounded-xl border border-forena-200 bg-white p-2.5 shadow-xl shadow-forena-900/10 ring-1 ring-black/5"
+              role="dialog"
+              :aria-label="T.calDialogLabel"
+              @click.stop
+            >
+              <div
+                class="mb-3 flex items-center justify-between gap-2 border-b border-forena-100 pb-2"
+              >
+                <button
+                  type="button"
+                  class="inline-flex rounded-lg p-1.5 text-forena-600 transition-colors hover:bg-slate-100 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
+                  :aria-label="T.calPrevMonth"
+                  @click.stop="shiftCalendarMonth(-1)"
+                >
+                  <ChevronLeft class="h-4 w-4" aria-hidden="true" />
+                </button>
+                <span class="text-sm font-bold tabular-nums text-forena-900"
+                  >{{ calYear }}년 {{ calMonth }}월</span
+                >
+                <button
+                  type="button"
+                  class="inline-flex rounded-lg p-1.5 text-forena-600 transition-colors hover:bg-slate-100 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
+                  :aria-label="T.calNextMonth"
+                  @click.stop="shiftCalendarMonth(1)"
+                >
+                  <ChevronRight class="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+              <div class="grid grid-cols-7 gap-0.5 text-center">
+                <span
+                  v-for="(wd, wi) in filterCalWeekDays"
+                  :key="wi"
+                  class="py-1 text-[10px] font-bold text-forena-400"
+                  >{{ wd }}</span
+                >
+              </div>
+              <div
+                v-for="(week, wwi) in filterCalendarWeeks"
+                :key="wwi"
+                class="mt-0.5 grid grid-cols-7 gap-0.5"
+              >
+                <template v-for="(day, ddi) in week" :key="ddi">
+                  <button
+                    v-if="day !== null"
+                    type="button"
+                    class="min-h-9 rounded-lg text-xs font-semibold tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/50"
+                    :class="
+                      filterCalendarDayKey(day) === filters.date
+                        ? 'bg-flare-600 text-white hover:bg-flare-700'
+                        : filterCalendarDayKey(day) === localTodayISODate()
+                          ? 'text-forena-900 ring-1 ring-flare-400/55 hover:bg-slate-100'
+                          : 'text-forena-800 hover:bg-slate-100'
+                    "
+                    @click.stop="pickFilterCalendarDay(day)"
+                  >
+                    {{ day }}
+                  </button>
+                  <div v-else class="min-h-9" aria-hidden="true" />
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="mt-5 flex flex-wrap items-end gap-4">
             <div>
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterAffil }}</label>
+              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                T.filterAffil
+              }}</label>
               <select
                 v-model="filters.affiliationCategory"
                 class="min-w-[11rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
                 @change="onAffiliationCategoryChange"
               >
-                <option v-for="opt in affiliationCategoryOptions" :key="opt.value || 'all'" :value="opt.value">
+                <option
+                  v-for="opt in affiliationCategoryOptions"
+                  :key="opt.value || 'all'"
+                  :value="opt.value"
+                >
                   {{ opt.label }}
                 </option>
               </select>
             </div>
             <div v-if="filters.affiliationCategory === 'partner'">
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.affilDetailPartner }}</label>
+              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                T.affilDetailPartner
+              }}</label>
               <select
                 v-model="filters.affiliationDetail"
                 class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
               >
-                <option v-for="opt in partnerDetailOptions" :key="opt.value || 'p-all'" :value="opt.value">
+                <option
+                  v-for="opt in partnerDetailOptions"
+                  :key="opt.value || 'p-all'"
+                  :value="opt.value"
+                >
                   {{ opt.label }}
                 </option>
               </select>
             </div>
             <div class="relative min-w-[200px] flex-1">
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterSearch }}</label>
+              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                T.filterSearch
+              }}</label>
               <Search
                 class="pointer-events-none absolute bottom-2.5 left-3 h-4 w-4 text-flare-500/80"
                 aria-hidden="true"
@@ -601,10 +775,40 @@ function onDataLoad() {
               <span class="font-bold text-forena-900">{{ T.listFilteredStats }}</span>
               <span class="tabular-nums text-forena-600">
                 {{ T.todayWorkerTotal }}
-                <strong class="font-bold text-forena-900">{{ todayWorkerCount }}</strong>{{ T.countPeople }}
+                <strong class="font-bold text-forena-900">{{ todayWorkerCount }}</strong
+                >{{ T.countPeople }}
               </span>
             </div>
-            <div class="flex flex-wrap items-center gap-1.5">
+            <div
+              class="flex w-full flex-wrap items-center justify-end gap-x-2 gap-y-1.5 sm:w-auto lg:max-w-[75%]"
+            >
+              <span class="text-[10px] font-bold uppercase tracking-wide text-forena-400">{{
+                T.employmentFilterHint
+              }}</span>
+              <button
+                v-for="ek in EMPLOYMENT_FILTER_LABELS"
+                :key="ek"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-bold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+                :class="
+                  listEmploymentFilter === ek
+                    ? 'border-sky-600 bg-sky-50 text-sky-950 shadow-sm ring-1 ring-sky-200/90'
+                    : 'border-forena-200/90 bg-white/90 text-forena-700 hover:border-sky-300 hover:bg-white'
+                "
+                @click="toggleListEmploymentFilter(ek)"
+              >
+                {{ ek }}
+                <span class="tabular-nums font-semibold text-forena-600/90">{{
+                  employmentCounts[ek]
+                }}</span>
+              </button>
+              <span
+                class="mx-0.5 hidden h-4 w-px shrink-0 bg-forena-200 sm:inline-block"
+                aria-hidden="true"
+              />
+              <span class="text-[10px] font-bold uppercase tracking-wide text-forena-400">{{
+                T.attendanceFilterHint
+              }}</span>
               <button
                 v-for="st in ATTENDANCE_STATE_LABELS"
                 :key="st"
@@ -625,15 +829,16 @@ function onDataLoad() {
             </div>
           </div>
           <div class="overflow-x-auto">
-            <table class="w-full min-w-[960px] text-left text-sm whitespace-nowrap">
+            <table class="w-full min-w-[980px] text-left text-sm whitespace-nowrap">
               <thead
                 class="border-b border-forena-100 bg-forena-50/60 text-[11px] font-bold uppercase tracking-wider text-forena-500"
               >
                 <tr>
                   <th class="px-6 py-4 font-semibold">{{ T.colContact }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colEmergency }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colAffil }}</th>
+                  <th class="px-6 py-4 font-semibold">{{ T.colEmployment }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colRank }}</th>
+                  <th class="px-6 py-4 font-semibold">{{ T.colTrade }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colStatus }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colDetail }}</th>
@@ -641,7 +846,7 @@ function onDataLoad() {
               </thead>
               <tbody class="text-forena-800">
                 <tr v-if="filteredAttendance.length === 0">
-                  <td colspan="7" class="px-6 py-14 text-center text-sm text-slate-400">
+                  <td colspan="8" class="px-6 py-14 text-center text-sm text-slate-400">
                     {{ T.empty }}
                   </td>
                 </tr>
@@ -649,20 +854,24 @@ function onDataLoad() {
                   v-else
                   v-for="record in filteredAttendance"
                   :key="record.id"
-                  class="cursor-pointer border-b border-forena-50 transition hover:bg-flare-50/40"
-                  @click="openEditDrawer(record)"
+                  class="border-b border-forena-50 transition hover:bg-flare-50/40"
                 >
                   <td class="px-6 py-4">
                     <div class="font-semibold text-forena-900">{{ record.name }}</div>
                     <div class="text-[11px] text-slate-500">{{ record.phone }}</div>
                   </td>
-                  <td class="px-6 py-4 text-xs font-medium text-rose-600/90">
-                    <span class="tabular-nums">{{ formatEmergencyDisplayCell(record.emergency) }}</span>
-                  </td>
                   <td class="px-6 py-4">
                     <div class="text-xs font-semibold text-forena-800">
-                      {{ formatAffiliationRow(record) }}
+                      {{ formatAffiliationSogo(record) }}
                     </div>
+                  </td>
+                  <td class="px-6 py-4">
+                    <span
+                      class="inline-flex rounded-lg px-2 py-0.5 text-[10px] font-bold"
+                      :class="employmentBadgeClass(record.employmentClass)"
+                    >
+                      {{ record.employmentClass }}
+                    </span>
                   </td>
                   <td class="px-6 py-4">
                     <span
@@ -671,6 +880,9 @@ function onDataLoad() {
                     >
                       {{ record.jobRank }}
                     </span>
+                  </td>
+                  <td class="px-6 py-4 text-xs font-semibold text-forena-800">
+                    {{ record.affiliationSubLabel }}
                   </td>
                   <td class="px-6 py-4 font-mono text-xs">
                     <span class="font-semibold text-flare-700">{{ record.clockIn }}</span>
@@ -702,127 +914,5 @@ function onDataLoad() {
         </div>
       </div>
     </div>
-
-    <Teleport to="body">
-      <div
-        v-if="showEditDrawer"
-        class="fixed inset-0 z-50 flex justify-end bg-forena-900/20 backdrop-blur-[2px]"
-        @click.self="showEditDrawer = false"
-      >
-        <aside
-          class="flex h-full w-full max-w-md flex-col border-l border-forena-100 bg-white shadow-2xl animate-[slideIn_0.25s_ease-out]"
-          @click.stop
-        >
-          <div
-            class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-4"
-          >
-            <h2 class="text-lg font-bold text-forena-900">{{ T.drawerTitle }}</h2>
-            <button
-              type="button"
-              class="rounded-lg border border-forena-200 bg-white p-2 text-forena-400 transition hover:text-forena-700"
-              @click="showEditDrawer = false"
-            >
-              <X class="h-4 w-4" />
-            </button>
-          </div>
-
-          <div class="flex-1 space-y-6 overflow-y-auto p-6 text-sm">
-            <div class="rounded-xl border border-forena-100 bg-white p-4 shadow-sm">
-              <p class="mb-1 text-[11px] font-bold uppercase tracking-wide text-forena-400">
-                {{ T.drawerWorker }}
-              </p>
-              <p class="text-lg font-bold text-forena-900">{{ selectedWorkerName }}</p>
-            </div>
-
-            <div class="space-y-4">
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.affilChange }}</label>
-                <select
-                  v-model="editForm.affiliationType"
-                  class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                >
-                  <option v-for="opt in editAffiliationOptions" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockIn }}</label>
-                  <input
-                    v-model="editForm.clockIn"
-                    type="time"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                  />
-                </div>
-                <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockOut }}</label>
-                  <input
-                    v-model="editForm.clockOut"
-                    type="time"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.manDays }}</label>
-                <input
-                  :value="drawerManDays != null ? String(drawerManDays) : ''"
-                  type="text"
-                  readonly
-                  disabled
-                  :placeholder="drawerManDays == null ? '—' : ''"
-                  class="w-full cursor-not-allowed rounded-xl border border-forena-200 bg-forena-50/90 px-3 py-2.5 text-forena-900 outline-none"
-                />
-                <p class="mt-1.5 text-[10px] leading-relaxed text-slate-500">{{ T.manDaysAutoHint }}</p>
-              </div>
-
-              <div class="rounded-xl border border-rose-100 bg-rose-50/40 p-4">
-                <h3 class="mb-2 flex items-center gap-2 text-[11px] font-bold text-rose-700">
-                  <AlertTriangle class="h-3.5 w-3.5 shrink-0" />
-                  {{ T.reasonTitle }}
-                </h3>
-                <textarea
-                  v-model="editForm.reason"
-                  rows="3"
-                  :placeholder="T.reasonPh"
-                  class="w-full resize-none rounded-lg border border-rose-200/80 bg-white p-3 text-sm outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-400/15"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="flex shrink-0 justify-end gap-3 border-t border-forena-100 bg-forena-50/30 px-6 py-4">
-            <button
-              type="button"
-              class="rounded-xl border border-forena-200 bg-white px-5 py-2.5 text-sm font-bold text-forena-600 transition hover:bg-forena-50"
-              @click="showEditDrawer = false"
-            >
-              {{ T.cancel }}
-            </button>
-            <button
-              type="button"
-              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-5 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
-              @click="saveEdit"
-            >
-              {{ T.save }}
-            </button>
-          </div>
-        </aside>
-      </div>
-    </Teleport>
   </div>
 </template>
-
-<style scoped>
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-</style>

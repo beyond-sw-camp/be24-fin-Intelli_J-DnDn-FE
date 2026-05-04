@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ChevronLeft,
@@ -8,22 +8,45 @@ import {
   ClipboardList,
   MapPin,
   AlertTriangle,
+  ShieldAlert,
   Download,
+  Loader2,
 } from 'lucide-vue-next'
-import { getWorkerProfile, DEMO_WORKER_DOCUMENT_PDF_URL } from '@/data/workerProfileMock'
+import {
+  fetchWorkerProfile,
+  fetchWorkerDocs,
+  fetchWorkerAttendance,
+  fetchWorkerDeployments,
+  fetchWorkerPenalties,
+  fetchWorkerAccidents,
+} from '@/api/worker.js'
+import {
+  displayWorkerAffiliation,
+  displayWorkerTradeLine,
+  employmentKindDisplay,
+  pickWorkerTradeSubLabel,
+  deriveAttendanceTag,
+  attendanceTagBadgeClass,
+  formatWorkerZoneDisplay,
+} from '@/utils/workerUi'
 
 const T = {
-  title: '작업자 상세 프로필',
+  title: '근무자 상세 프로필',
+  loading: '불러오는 중…',
   contact: '연락처',
-  emergency: '비상 연락망',
+  emergencyPhone: '비상 연락망',
+  emergencyRelation: '관계',
+  todayAttendance: '금일 근태',
   blood: '혈액형',
   registered: '최초 등록일',
   tabDocs: '안전 및 서류 현황',
   tabAttendance: '최근 출결 이력',
   tabZone: '구역 배치 이력',
-  tabSanction: '제재/주의 이력',
+  tabSanction: '제재·주의 이력',
+  tabAccident: '안전 사고 이력',
   docsSection: '안전교육 및 필수 서류',
   docBtnDownload: '다운로드',
+  docNoFileUrl: '파일 주소 없음',
   colDate: '일자',
   colClock: '출·퇴근',
   colMan: '공수',
@@ -32,10 +55,12 @@ const T = {
   colNote: '비고',
   colType: '구분',
   colDesc: '내용',
+  colResolution: '조치',
   emptySanction: '등록된 이력이 없습니다.',
+  emptyAccident: '등록된 사고 이력이 없습니다.',
   notFound: '작업자를 찾을 수 없습니다.',
   backList: '목록으로',
-  monthAcc: '당월 누적',
+  monthAcc: '조회 월 누적',
   manUnit: '공수',
   calPrevMonth: '이전 달',
   calNextMonth: '다음 달',
@@ -47,11 +72,227 @@ const route = useRoute()
 const router = useRouter()
 
 const profile = ref(null)
+const loading = ref(false)
+/** MANAGEMENT_004~009 로드 후 유지 — 출결 월 변경 시에만 attendance 재조회 */
+const activeWorkerIdx = ref(null)
+let suppressAttendanceMonthWatch = false
+
+function formatApiTime(t) {
+  if (t == null || t === '') return '-'
+  const s = String(t)
+  if (s === '-') return '-'
+  const m = /^(\d{1,2}):(\d{2})/.exec(s)
+  if (!m) return '-'
+  return `${m[1].padStart(2, '0')}:${m[2]}`
+}
+
+function normalizeApiDate(d) {
+  if (d == null) return ''
+  if (typeof d === 'string') return d.length >= 10 ? d.slice(0, 10) : d
+  if (Array.isArray(d) && d.length >= 3) {
+    const [y, mo, day] = d
+    return `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  }
+  return String(d)
+}
+
+function formatRegisteredAt(raw) {
+  const s = normalizeApiDate(raw)
+  if (!s) return '—'
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
+  if (m) return `${m[1]}.${m[2]}.${m[3]}`
+  return s
+}
+
+function mapJobRankKo(rank) {
+  const r = String(rank ?? '').toUpperCase()
+  if (r === 'CHIEF') return '현장 총 책임자'
+  if (r === 'MANAGER') return '현장 관리자'
+  return '작업자'
+}
+
+/** 브라우저 로컬 기준 YYYY-MM-DD */
+function localTodayISODate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function mapAttendanceRow(a) {
+  const date = normalizeApiDate(a.date ?? a.workDate)
+  const zoneLine =
+    a.zoneDisplay != null && String(a.zoneDisplay).trim() !== ''
+      ? String(a.zoneDisplay).trim()
+      : formatWorkerZoneDisplay(a.zoneMain, a.zoneSub, a.zone)
+  return {
+    date,
+    clockIn: formatApiTime(a.clockIn),
+    clockOut: formatApiTime(a.clockOut),
+    manDays: a.manDays != null ? Number(a.manDays) : 0,
+    zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—',
+    site: '—',
+    attendanceStatus: a.attendanceStatus,
+  }
+}
+
+function mapDeploymentRow(d) {
+  const date = normalizeApiDate(d.assignedAt)
+  const trade =
+    d.assignedTrade != null && String(d.assignedTrade).trim() !== ''
+      ? String(d.assignedTrade).trim()
+      : ''
+  const note = trade || '—'
+  const zoneLine =
+    d.zoneDisplay != null && String(d.zoneDisplay).trim() !== ''
+      ? String(d.zoneDisplay).trim()
+      : formatWorkerZoneDisplay(d.zoneMain, d.zoneSub, d.zone)
+  return { date, zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—', note }
+}
+
+function mapSanctionRow(s) {
+  const date = normalizeApiDate(s.occurredAt)
+  const description = [s.reason, s.action].filter(Boolean).join(' — ') || '—'
+  return { type: s.type ?? '', date, description, active: s.active }
+}
+
+function mapAccidentRow(a) {
+  const date = normalizeApiDate(a.occurredAt)
+  const zoneLine =
+    a.zoneDisplay != null && String(a.zoneDisplay).trim() !== ''
+      ? String(a.zoneDisplay).trim()
+      : formatWorkerZoneDisplay(a.zoneMain, a.zoneSub, a.zone)
+  return {
+    date,
+    accidentType: (a.accidentType && String(a.accidentType).trim()) || '—',
+    zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—',
+    resolution: (a.resolution && String(a.resolution).trim()) || '—',
+  }
+}
+
+/** 제재·주의 한 줄 요약 (유형을 분리 카드로 두지 않음) */
+function formatSanctionSummary(s) {
+  const kind = (s.type && String(s.type).trim()) || ''
+  const body = (s.description && String(s.description).trim()) || '—'
+  if (!kind) return body
+  return `[${kind}] ${body}`
+}
+
+/** 구역 배치 이력에서 공종 힌트 (상세 API 에 공종 필드가 비어 있을 때) */
+function tradeHintFromDeployments(deployments) {
+  if (!Array.isArray(deployments) || deployments.length === 0) return ''
+  const sorted = [...deployments].sort((a, b) => {
+    const da = normalizeApiDate(a.assignedAt)
+    const db = normalizeApiDate(b.assignedAt)
+    return db.localeCompare(da)
+  })
+  const wt = sorted[0]?.assignedTrade
+  if (!wt || !String(wt).trim()) return ''
+  const first = String(wt).trim().split(/\s+/)[0]
+  return first || ''
+}
+
+function buildProfile(p, docs, deployments, penalties, attendanceRows, accidentsRows) {
+  let tradeText = pickWorkerTradeSubLabel(p)
+  if (!tradeText) tradeText = tradeHintFromDeployments(deployments)
+  const mergedForMeta = { ...p, subLabel: tradeText }
+  const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
+  const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
+  const metaAffiliationLine = `${displayWorkerAffiliation({
+    affiliationKind: p.affiliationKind,
+    partnerCompany: p.partnerCompany,
+  })} | ${displayWorkerTradeLine(mergedForMeta)} | ${employmentKindDisplay(p.employmentKind)}`
+
+  return {
+    id: p.idx,
+    name: p.name ?? '—',
+    metaAffiliationLine,
+    jobRank: mapJobRankKo(p.jobRank),
+    phone: p.phone ?? '—',
+    emergencyPhone: ePhone || '—',
+    emergencyRelation: rel || '—',
+    bloodType: p.bloodType ?? '—',
+    registeredAt: formatRegisteredAt(p.registeredAt),
+    site: p.site ?? '—',
+    documents: Array.isArray(docs) ? docs : [],
+    attendanceRows,
+    zoneHistory: Array.isArray(deployments) ? deployments.map(mapDeploymentRow) : [],
+    sanctions: Array.isArray(penalties) ? penalties.map(mapSanctionRow) : [],
+    accidents: Array.isArray(accidentsRows) ? accidentsRows.map(mapAccidentRow) : [],
+  }
+}
+
+async function loadAttendanceMonth(workerIdx, y, m) {
+  const ym = `${y}-${String(m).padStart(2, '0')}`
+  const att = await fetchWorkerAttendance(workerIdx, ym)
+  return Array.isArray(att) ? att.map(mapAttendanceRow) : []
+}
+
+/** 상세 API 가 작업자 필드를 한 단 더 감싸 돌려주는 경우 */
+function unwrapWorkerDetailPayload(raw) {
+  if (!raw || typeof raw !== 'object') return raw
+  const inner =
+    raw.worker ??
+    raw.workerRes ??
+    raw.workerDto ??
+    (typeof raw.detail === 'object' && raw.detail ? raw.detail : null)
+  if (inner && typeof inner === 'object') {
+    return { ...raw, ...inner }
+  }
+  return raw
+}
+
+async function loadWorkerFromApi(workerIdx) {
+  loading.value = true
+  suppressAttendanceMonthWatch = true
+  try {
+    const [rawP, docs, dep, pen] = await Promise.all([
+      fetchWorkerProfile(workerIdx),
+      fetchWorkerDocs(workerIdx),
+      fetchWorkerDeployments(workerIdx),
+      fetchWorkerPenalties(workerIdx),
+    ])
+    const p = unwrapWorkerDetailPayload(rawP)
+    let accidents = []
+    try {
+      const raw = await fetchWorkerAccidents(workerIdx)
+      accidents = Array.isArray(raw) ? raw : []
+    } catch {
+      accidents = []
+    }
+    const att = await loadAttendanceMonth(
+      workerIdx,
+      attendanceCalYear.value,
+      attendanceCalMonth.value,
+    )
+    profile.value = buildProfile(p, docs, dep, pen, att, accidents)
+    activeWorkerIdx.value = workerIdx
+  } catch (e) {
+    console.warn('[WorkerProfile] 상세 로드 실패', e)
+    profile.value = null
+    activeWorkerIdx.value = null
+  } finally {
+    loading.value = false
+    suppressAttendanceMonthWatch = false
+  }
+}
+
 watch(
   () => route.params.id,
   (id) => {
-    const src = getWorkerProfile(id)
-    profile.value = src ? JSON.parse(JSON.stringify(src)) : null
+    if (id == null || id === '') {
+      profile.value = null
+      activeWorkerIdx.value = null
+      return
+    }
+    const n = Number(id)
+    if (Number.isNaN(n)) {
+      profile.value = null
+      activeWorkerIdx.value = null
+      return
+    }
+    loadWorkerFromApi(n)
   },
   { immediate: true },
 )
@@ -61,18 +302,55 @@ const attendanceCalMonth = ref(new Date().getMonth() + 1)
 
 watch(
   () => profile.value,
-  (p) => {
+  async (p) => {
     if (!p?.attendanceRows?.length) return
     const dates = p.attendanceRows.map((r) => r.date).sort()
     const last = dates[dates.length - 1]
-    const m = last.match(/^(\d{4})-(\d{2})/)
+    const m = last && String(last).match(/^(\d{4})-(\d{2})/)
     if (m) {
+      suppressAttendanceMonthWatch = true
       attendanceCalYear.value = Number(m[1])
       attendanceCalMonth.value = Number(m[2])
+      await nextTick()
+      suppressAttendanceMonthWatch = false
     }
   },
   { immediate: true },
 )
+
+watch([attendanceCalYear, attendanceCalMonth], async () => {
+  if (suppressAttendanceMonthWatch) return
+  const wid = activeWorkerIdx.value
+  if (wid == null || profile.value == null) return
+  try {
+    const rows = await loadAttendanceMonth(wid, attendanceCalYear.value, attendanceCalMonth.value)
+    profile.value = { ...profile.value, attendanceRows: rows }
+  } catch (e) {
+    console.warn('[WorkerProfile] 출결 월 갱신 실패', e)
+  }
+})
+
+/** 출결 캘린더 조회 월 — 해당 월 일별 행의 공수 합 */
+const attendanceMonthManSum = computed(() => {
+  const rows = profile.value?.attendanceRows
+  if (!Array.isArray(rows) || rows.length === 0) return 0
+  const y = attendanceCalYear.value
+  const mo = attendanceCalMonth.value
+  const prefix = `${y}-${String(mo).padStart(2, '0')}`
+  return rows.reduce((acc, r) => {
+    const d = r.date != null ? String(r.date) : ''
+    if (d.length < 7 || !d.startsWith(prefix)) return acc
+    const v = Number(r.manDays)
+    return acc + (Number.isFinite(v) ? v : 0)
+  }, 0)
+})
+
+function formatManDaysSum(n) {
+  if (!Number.isFinite(n)) return '0'
+  if (n === 0) return '0'
+  const t = Math.round(n * 100) / 100
+  return Number.isInteger(t) ? String(t) : String(t)
+}
 
 const attendanceByDate = computed(() => {
   const p = profile.value
@@ -133,25 +411,6 @@ function zoneForAttendanceDay(dateKey, row) {
   return z?.zone ?? '—'
 }
 
-const deployBadgeClass = (v) => {
-  if (v === 'ok') return 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80'
-  if (v === 'warn') return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
-  if (v === 'block') return 'bg-rose-50 text-rose-800 ring-1 ring-rose-200/80'
-  return 'bg-slate-50 text-slate-700 ring-1 ring-slate-200/80'
-}
-
-function jobRankBadgeClass(rank) {
-  if (rank === '현장 총 책임자') return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
-  if (rank === '현장 관리자') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
-  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
-}
-
-const docStatusClass = (v) => {
-  if (v === 'done') return 'text-emerald-700 font-semibold'
-  if (v === 'pending') return 'text-amber-700 font-semibold'
-  return 'text-slate-600'
-}
-
 function goBack() {
   router.push({ name: 'siteWorkerManagement' })
 }
@@ -163,7 +422,8 @@ function sanitizeFilename(s) {
 }
 
 async function downloadDocument(doc) {
-  const url = doc.fileUrl || DEMO_WORKER_DOCUMENT_PDF_URL
+  const url = doc.fileUrl != null ? String(doc.fileUrl).trim() : ''
+  if (!url) return
   const name = doc.storedFileName || `${sanitizeFilename(doc.title)}.pdf`
   if (url.startsWith('blob:')) {
     const a = document.createElement('a')
@@ -195,21 +455,50 @@ const avatarLetter = computed(() => {
   const n = profile.value?.name
   return n ? n.charAt(0) : '?'
 })
+
+/** 프로필 카드 — 조회 중인 출결 월에 금일 행이 있으면 근태 태그 */
+const todayAttendanceChip = computed(() => {
+  const p = profile.value
+  const mutedCls = 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/90'
+  if (!p?.attendanceRows?.length) return { tag: '당월 미조회', cls: mutedCls }
+  const key = localTodayISODate()
+  const row = p.attendanceRows.find((r) => r.date === key)
+  if (!row) return { tag: '금일 기록 없음', cls: mutedCls }
+  const tag = deriveAttendanceTag({
+    attendanceStatus: row.attendanceStatus,
+    clockIn: row.clockIn,
+    clockOut: row.clockOut,
+    status: '',
+  })
+  return { tag, cls: attendanceTagBadgeClass(tag) }
+})
 </script>
 
 <template>
-  <div v-if="profile" class="space-y-6 pb-10">
-    <div class="flex flex-wrap items-center gap-4">
-      <div class="flex min-w-0 items-center gap-3">
+  <div
+    v-if="loading"
+    class="rounded-2xl border border-forena-100/90 bg-white/95 p-16 text-center shadow-card"
+  >
+    <Loader2 class="mx-auto h-8 w-8 animate-spin text-flare-600" aria-hidden="true" />
+    <p class="mt-4 text-sm font-semibold text-forena-700">{{ T.loading }}</p>
+  </div>
+
+  <div v-else-if="profile" class="space-y-6 pb-10">
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3">
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">투입 관리</p>
+        <h1 class="truncate text-xl font-bold text-forena-900 md:text-2xl">{{ T.title }}</h1>
+      </div>
+      <div class="flex items-center gap-2">
         <button
           type="button"
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-forena-200 bg-white text-forena-700 shadow-sm transition hover:bg-forena-50"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 transition hover:bg-flare-100"
           :aria-label="T.backList"
           @click="goBack"
         >
-          <ChevronLeft class="h-5 w-5" />
+          <ChevronLeft class="h-3.5 w-3.5" />
+          {{ T.backList }}
         </button>
-        <h1 class="truncate text-xl font-bold tracking-tight text-forena-900 md:text-2xl">{{ T.title }}</h1>
       </div>
     </div>
 
@@ -225,21 +514,16 @@ const avatarLetter = computed(() => {
               {{ avatarLetter }}
             </div>
             <h2 class="mt-4 text-lg font-bold text-forena-900">{{ profile.name }}</h2>
-            <p class="mt-1 text-sm text-slate-600">
-              {{ profile.company }} <span class="text-slate-400">|</span> {{ profile.role }}
+            <p class="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">
+              {{ profile.metaAffiliationLine }}
             </p>
             <div class="mt-3 flex flex-wrap items-center justify-center gap-2">
+              <span class="text-[11px] font-semibold text-slate-500">{{ T.todayAttendance }}</span>
               <span
                 class="inline-flex rounded-full px-3 py-1 text-[11px] font-bold"
-                :class="deployBadgeClass(profile.deployStatusVariant)"
+                :class="todayAttendanceChip.cls"
               >
-                {{ profile.deployStatus }}
-              </span>
-              <span
-                class="inline-flex rounded-full px-3 py-1 text-[11px] font-bold"
-                :class="jobRankBadgeClass(profile.jobRank || '작업자')"
-              >
-                {{ profile.jobRank || '작업자' }}
+                {{ todayAttendanceChip.tag }}
               </span>
             </div>
           </div>
@@ -249,8 +533,16 @@ const avatarLetter = computed(() => {
               <dd class="font-medium tabular-nums text-forena-900">{{ profile.phone }}</dd>
             </div>
             <div class="flex justify-between gap-2">
-              <dt class="shrink-0 text-slate-500">{{ T.emergency }}</dt>
-              <dd class="font-medium tabular-nums text-forena-900">{{ profile.emergency }}</dd>
+              <dt class="shrink-0 text-slate-500">{{ T.emergencyPhone }}</dt>
+              <dd class="min-w-0 text-right font-medium tabular-nums text-forena-900">
+                {{ profile.emergencyPhone }}
+              </dd>
+            </div>
+            <div class="flex justify-between gap-2">
+              <dt class="shrink-0 text-slate-500">{{ T.emergencyRelation }}</dt>
+              <dd class="min-w-0 text-right font-medium text-forena-900">
+                {{ profile.emergencyRelation }}
+              </dd>
             </div>
             <div class="flex justify-between gap-2">
               <dt class="shrink-0 text-slate-500">{{ T.blood }}</dt>
@@ -263,7 +555,54 @@ const avatarLetter = computed(() => {
           </dl>
         </div>
 
-        <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+        <div
+          class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
+        >
+          <div
+            class="flex items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
+          >
+            <ShieldAlert class="h-5 w-5 shrink-0 text-orange-600" />
+            <h2 class="text-sm font-bold text-forena-900 sm:text-base">{{ T.tabAccident }}</h2>
+          </div>
+          <div class="p-4 sm:p-5">
+            <div
+              v-if="!profile.accidents || profile.accidents.length === 0"
+              class="rounded-xl border border-dashed border-forena-200 bg-forena-50/40 py-12 text-center text-sm text-slate-500"
+            >
+              {{ T.emptyAccident }}
+            </div>
+            <div v-else class="overflow-x-auto rounded-xl border border-forena-100">
+              <table class="w-full min-w-[300px] text-left text-sm">
+                <thead
+                  class="border-b border-forena-100 bg-forena-50/70 text-[10px] font-bold uppercase text-forena-500"
+                >
+                  <tr>
+                    <th class="px-3 py-3">{{ T.colDate }}</th>
+                    <th class="px-3 py-3">{{ T.colType }}</th>
+                    <th class="px-3 py-3">{{ T.colZone }}</th>
+                    <th class="px-3 py-3">{{ T.colResolution }}</th>
+                  </tr>
+                </thead>
+                <tbody class="text-forena-800">
+                  <tr
+                    v-for="(ac, ai) in profile.accidents"
+                    :key="ai"
+                    class="border-b border-forena-50 text-xs last:border-0"
+                  >
+                    <td class="px-3 py-3 tabular-nums text-slate-600">{{ ac.date }}</td>
+                    <td class="px-3 py-3 font-semibold">{{ ac.accidentType }}</td>
+                    <td class="px-3 py-3">{{ ac.zone }}</td>
+                    <td class="max-w-[140px] px-3 py-3 text-slate-700">{{ ac.resolution }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
+        >
           <div
             class="flex flex-wrap items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
           >
@@ -282,7 +621,6 @@ const avatarLetter = computed(() => {
                   <FileText class="mt-0.5 h-5 w-5 shrink-0 text-flare-600" />
                   <div class="min-w-0">
                     <p class="font-semibold text-forena-900">{{ doc.title }}</p>
-                    <p class="mt-0.5 text-sm" :class="docStatusClass(doc.statusVariant)">{{ doc.status }}</p>
                     <p v-if="doc.storedFileName" class="mt-1 truncate text-[11px] text-slate-500">
                       {{ doc.storedFileName }}
                     </p>
@@ -291,7 +629,16 @@ const avatarLetter = computed(() => {
                 <div class="flex flex-wrap gap-2 pl-8">
                   <button
                     type="button"
-                    class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-2 text-xs font-bold text-forena-700 shadow-sm transition hover:border-flare-300 hover:bg-flare-50/50"
+                    class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold shadow-sm transition"
+                    :class="
+                      doc.fileUrl && String(doc.fileUrl).trim()
+                        ? 'border-forena-200 bg-white text-forena-700 hover:border-flare-300 hover:bg-flare-50/50'
+                        : 'cursor-not-allowed border-forena-100 bg-forena-50/80 text-slate-400'
+                    "
+                    :disabled="!doc.fileUrl || !String(doc.fileUrl).trim()"
+                    :title="
+                      doc.fileUrl && String(doc.fileUrl).trim() ? '' : T.docNoFileUrl
+                    "
                     @click="downloadDocument(doc)"
                   >
                     <Download class="h-3.5 w-3.5" />
@@ -306,7 +653,9 @@ const avatarLetter = computed(() => {
 
       <section class="lg:col-span-8">
         <div class="space-y-6">
-          <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+          <div
+            class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
+          >
             <div
               class="flex items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
             >
@@ -315,8 +664,8 @@ const avatarLetter = computed(() => {
             </div>
             <div class="p-4 sm:p-5">
               <p class="text-sm font-bold text-emerald-800">
-                {{ T.monthAcc }}:
-                <span class="tabular-nums">{{ profile.monthTotalMan }}</span>
+                {{ T.monthAcc }} ({{ attendanceCalYear }}년 {{ attendanceCalMonth }}월):
+                <span class="tabular-nums">{{ formatManDaysSum(attendanceMonthManSum) }}</span>
                 {{ T.manUnit }}
               </p>
               <div class="mt-4 overflow-x-auto rounded-xl border border-forena-100 bg-white">
@@ -385,11 +734,15 @@ const avatarLetter = computed(() => {
                             <div
                               class="mt-0.5 line-clamp-2 font-mono text-[9px] leading-tight text-forena-700 sm:text-[10px]"
                             >
-                              <span class="font-semibold text-flare-700">{{ cell.row.clockIn }}</span>
+                              <span class="font-semibold text-flare-700">{{
+                                cell.row.clockIn
+                              }}</span>
                               <span class="text-slate-400">—</span>
                               <span>{{ cell.row.clockOut }}</span>
                             </div>
-                            <p class="mt-0.5 text-[9px] font-bold tabular-nums text-emerald-800 sm:text-[10px]">
+                            <p
+                              class="mt-0.5 text-[9px] font-bold tabular-nums text-emerald-800 sm:text-[10px]"
+                            >
                               {{ cell.row.manDays }} {{ T.manUnit }}
                             </p>
                           </template>
@@ -403,7 +756,9 @@ const avatarLetter = computed(() => {
           </div>
 
           <div class="grid gap-6 lg:grid-cols-2">
-            <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+            <div
+              class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
+            >
               <div
                 class="flex items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
               >
@@ -438,7 +793,9 @@ const avatarLetter = computed(() => {
               </div>
             </div>
 
-            <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+            <div
+              class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
+            >
               <div
                 class="flex items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
               >
@@ -458,11 +815,14 @@ const avatarLetter = computed(() => {
                     :key="si"
                     class="rounded-xl border border-forena-100 bg-white px-4 py-3 shadow-sm"
                   >
-                    <div class="flex flex-wrap items-center justify-between gap-2">
-                      <span class="text-xs font-bold text-rose-700">{{ s.type }}</span>
-                      <span class="text-[11px] tabular-nums text-slate-500">{{ s.date }}</span>
+                    <div class="flex flex-wrap items-start justify-between gap-2">
+                      <p class="min-w-0 flex-1 text-sm leading-snug text-forena-800">
+                        {{ formatSanctionSummary(s) }}
+                      </p>
+                      <span class="shrink-0 text-[11px] tabular-nums text-slate-500">{{
+                        s.date
+                      }}</span>
                     </div>
-                    <p class="mt-1 text-sm text-forena-800">{{ s.description }}</p>
                   </li>
                 </ul>
               </div>
