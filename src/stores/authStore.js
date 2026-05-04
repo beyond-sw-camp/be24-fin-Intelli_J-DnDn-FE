@@ -42,6 +42,8 @@ export const useAuthStore = defineStore('auth', () => {
       accessScope.value = ACCESS_FULL
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
+      isUpload.value = false
+      persistAuth()
       return true
     }
     if (id === 'viewer' && pw === 'viewer') {
@@ -49,7 +51,8 @@ export const useAuthStore = defineStore('auth', () => {
       accessScope.value = ACCESS_SITE_DASHBOARD_ONLY
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
-      isUpload.value = true
+      isUpload.value = false
+      persistAuth()
       return true
     }
     return false
