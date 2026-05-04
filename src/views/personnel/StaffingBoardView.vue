@@ -17,7 +17,7 @@ import {
   getAffiliationKind,
   formatAffiliationDisplay,
   getPartnerCompanyName,
-} from '@/utils/workerAffiliation'
+} from '@/utils/workerUi'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import { STAFFING_INITIAL_ZONE_GROUPS, STAFFING_INITIAL_WAITING } from '@/data/staffingMockData'
 
