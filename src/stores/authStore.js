@@ -5,6 +5,31 @@ export const ROLE_SITE_MANAGER = 'site_manager'
 export const ACCESS_FULL = 'full'
 export const ACCESS_SITE_DASHBOARD_ONLY = 'site_dashboard_only'
 
+const AUTH_STORAGE_KEY = 'dndnAuth'
+
+function readSavedAuth() {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+    return null
+  }
+}
+
+function saveAuth({ role, isAuthenticated, stayOnLogin, accessScope, isUpload }) {
+  localStorage.setItem(
+    AUTH_STORAGE_KEY,
+    JSON.stringify({
+      role,
+      isAuthenticated,
+      stayOnLogin,
+      accessScope,
+      isUpload,
+    }),
+  )
+}
+
 /** @param {string} role */
 /** @param {string} fullPath */
 export function pathAllowedForRole(role, fullPath, accessScope = ACCESS_FULL) {
@@ -21,15 +46,26 @@ export function pathAllowedForRole(role, fullPath, accessScope = ACCESS_FULL) {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  const role = ref(ROLE_SITE_MANAGER)
-  const isAuthenticated = ref(false)
-  const stayOnLogin = ref(false)
-  const accessScope = ref(ACCESS_FULL)
+  const savedAuth = readSavedAuth()
 
-  const roleLabel = computed(() => '총 책임자')
+  const role = ref(savedAuth?.role || ROLE_SITE_MANAGER)
+  const isAuthenticated = ref(Boolean(savedAuth?.isAuthenticated))
+  const stayOnLogin = ref(Boolean(savedAuth?.stayOnLogin))
+  const accessScope = ref(savedAuth?.accessScope || ACCESS_FULL)
+  const isUpload = ref(savedAuth?.isUpload ?? true)
 
-  // 최초 공정표 업로드 여부 추가
-  const isUpload = ref(true)
+  const roleLabel = computed(() => '총괄책임자')
+
+  function persistAuth() {
+    saveAuth({
+      role: role.value,
+      isAuthenticated: isAuthenticated.value,
+      stayOnLogin: stayOnLogin.value,
+      accessScope: accessScope.value,
+      isUpload: isUpload.value,
+    })
+  }
+
   /**
    * @param {string} userId
    * @param {string} password
@@ -42,6 +78,8 @@ export const useAuthStore = defineStore('auth', () => {
       accessScope.value = ACCESS_FULL
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
+      isUpload.value = true
+      persistAuth()
       return true
     }
     if (id === 'viewer' && pw === 'viewer') {
@@ -50,6 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
       role.value = ROLE_SITE_MANAGER
       isAuthenticated.value = true
       isUpload.value = true
+      persistAuth()
       return true
     }
     return false
@@ -59,7 +98,18 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated.value = false
     stayOnLogin.value = false
     accessScope.value = ACCESS_FULL
+    isUpload.value = true
+    localStorage.removeItem(AUTH_STORAGE_KEY)
   }
 
-  return { role, roleLabel, isAuthenticated, stayOnLogin, accessScope, login, logout }
+  return {
+    role,
+    roleLabel,
+    isAuthenticated,
+    stayOnLogin,
+    accessScope,
+    isUpload,
+    login,
+    logout,
+  }
 })
