@@ -2,7 +2,6 @@
 import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  MapPin,
   X,
   ExternalLink,
   AlertTriangle,
@@ -17,13 +16,14 @@ import {
   getAffiliationKind,
   formatAffiliationDisplay,
   getPartnerCompanyName,
+  employmentKindDisplay,
 } from '@/utils/workerUi'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import { STAFFING_INITIAL_ZONE_GROUPS, STAFFING_INITIAL_WAITING } from '@/data/staffingMockData'
 
 const T = {
+  pageKicker: '투입 관리',
   boardTitle: '인력 배치',
-  hint: '작업자 현황에서 인력을 선택해 구역에 배치할 수 있습니다.',
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
   zoneByZoneTitle: '구역별 인력 현황',
@@ -36,6 +36,8 @@ const T = {
   detailToggle: '상세 구역 · 투입 인원',
   workerTableName: '작업자 이름',
   colAffil: '소속',
+  colTrade: '공종',
+  colEmployment: '상용 / 일용',
   colFatigue: '피로도 점수',
   colFatiguePool: '피로도',
   colPlacement: '투입 현황',
@@ -46,7 +48,7 @@ const T = {
   filterPartnerCompany: '협력사 세부',
   allPartnerCompanies: '협력사 전체',
   searchWorker: '작업자 검색',
-  searchPh: '이름 또는 소속으로 검색',
+  searchPh: '이름·소속·공종으로 검색',
   assignTarget: '투입 구역',
   assignBtn: '선택 인력 투입',
   assignNeedSelection: '투입할 작업자와 구역을 선택해 주세요.',
@@ -67,7 +69,7 @@ const T = {
   tradeWarn:
     '이 구역에 필요한 직종과 맞지 않을 수 있습니다. 배치는 가능하며, 안전/산업 관점에서 확인해 주세요.',
   fatigueTitle: '안전 주의: 전날 야간 근무 또는 연속 근무 일수가 높음 (피로도 누적 의십)',
-  skillCarpenter: '목수',
+  skillCarpenter: '목공',
   skillRebar: '철근',
   skillWelder: '용접',
   skillLabor: '인부',
@@ -82,6 +84,7 @@ const T = {
   removeZone: '구역에서 제거',
   workerDetail: '작업자 상세보기',
   poolEmpty: '표시할 작업자가 없습니다.',
+  poolGroupToggle: '협력체 그룹 접기·펼치기',
 }
 
 const TRADE_OPTIONS = [
@@ -121,6 +124,41 @@ function fatigueScore(w) {
 
 function affiliationDisplayCell(w) {
   return w.affiliationLine ?? formatAffiliationDisplay(w.affiliation)
+}
+
+/** 소속 열: affiliationLine 의 조직 구간, 없으면 소속 문자열 */
+function staffingOrgCell(w) {
+  const line = String(w?.affiliationLine ?? '').trim()
+  const idx = line.indexOf('/')
+  if (idx !== -1) {
+    const left = line.slice(0, idx).trim()
+    if (left) return left
+  }
+  return formatAffiliationDisplay(w?.affiliation)
+}
+
+/** 공종 열: affiliationLine 의 공종 구간, 없으면 skills 라벨 */
+function staffingTradeCell(w) {
+  const line = String(w?.affiliationLine ?? '').trim()
+  const idx = line.indexOf('/')
+  if (idx !== -1) {
+    const right = line.slice(idx + 1).trim()
+    if (right) return right
+  }
+  const skills = Array.isArray(w?.skills) ? w.skills : []
+  if (!skills.length) return '—'
+  return skills.map((k) => tradeLabel(k)).join(', ')
+}
+
+function poolEmploymentDisplay(w) {
+  return employmentKindDisplay(w?.employmentKind)
+}
+
+function poolEmploymentBadgeClass(label) {
+  if (label === '상용') {
+    return 'inline-flex rounded-md bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-900 ring-1 ring-sky-200/80'
+  }
+  return 'inline-flex rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200/80'
 }
 
 const router = useRouter()
@@ -467,13 +505,79 @@ const staffingTableRows = computed(() => {
   if (q) {
     out = out.filter((r) => {
       const name = String(r.worker.name ?? '').toLowerCase()
-      const aff = affiliationDisplayCell(r.worker).toLowerCase()
-      const rawAff = String(r.worker.affiliation ?? '').toLowerCase()
-      return name.includes(q) || aff.includes(q) || rawAff.includes(q)
+      const hay = [
+        affiliationDisplayCell(r.worker),
+        staffingOrgCell(r.worker),
+        staffingTradeCell(r.worker),
+        String(r.worker.affiliation ?? ''),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return name.includes(q) || hay.includes(q)
     })
   }
   return out
 })
+
+/** 작업자 현황 — 협력체별 그룹 */
+function poolRowGroupLabel(row) {
+  const w = row.worker
+  const kind = getAffiliationKind(w.affiliation)
+  if (kind === 'direct') return '본사 직영'
+  if (kind === 'agency') {
+    const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
+    return n ? `인력 · ${n}` : '인력사무소'
+  }
+  const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
+  return n || '협력사'
+}
+
+const staffingTableGrouped = computed(() => {
+  const rows = staffingTableRows.value
+  const map = new Map()
+  for (const row of rows) {
+    const label = poolRowGroupLabel(row)
+    if (!map.has(label)) map.set(label, [])
+    map.get(label).push(row)
+  }
+  const labels = [...map.keys()].sort((a, b) => {
+    if (a === '본사 직영') return -1
+    if (b === '본사 직영') return 1
+    return a.localeCompare(b, 'ko')
+  })
+  return labels.map((label) => ({ label, rows: map.get(label) }))
+})
+
+/** 그룹 접기 상태 — 키 없음 / true 는 펼침, false 만 접힘 */
+const poolGroupExpanded = ref(/** @type Record<string, boolean> */ ({}))
+
+function poolGroupIsOpen(label) {
+  return poolGroupExpanded.value[label] !== false
+}
+
+function togglePoolGroupExpanded(label) {
+  const open = poolGroupExpanded.value[label] !== false
+  poolGroupExpanded.value = { ...poolGroupExpanded.value, [label]: !open }
+}
+
+function poolGroupSelectableIds(groupRows) {
+  return groupRows.filter((r) => r.selectable && r.waitingId).map((r) => r.waitingId)
+}
+
+function poolGroupAllChecked(groupRows) {
+  const ids = poolGroupSelectableIds(groupRows)
+  return ids.length > 0 && ids.every((id) => selectedWaitingIds.value.includes(id))
+}
+
+function togglePoolGroupSelectAll(groupRows) {
+  const ids = poolGroupSelectableIds(groupRows)
+  if (!ids.length) return
+  if (poolGroupAllChecked(groupRows)) {
+    selectedWaitingIds.value = selectedWaitingIds.value.filter((id) => !ids.includes(id))
+  } else {
+    selectedWaitingIds.value = [...new Set([...selectedWaitingIds.value, ...ids])]
+  }
+}
 
 watch(poolAffiliationFilter, (v) => {
   if (v !== 'partner') poolPartnerCompanyFilter.value = ''
@@ -667,43 +771,28 @@ function zoneGroupAssignedSum(group) {
 
 <template>
   <div class="space-y-6 pb-10">
-    <div
-      class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card md:p-6"
-    >
-      <div
-        class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-flare-400 via-forena-500 to-flare-500"
-      />
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div class="flex items-start gap-3">
-          <span
-            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md"
-          >
-            <MapPin class="h-5 w-5" />
-          </span>
-          <div>
-            <h1 class="text-gradient-brand text-xl font-bold tracking-tight">{{ T.boardTitle }}</h1>
-            <p class="mt-1 text-sm text-forena-600/90">{{ T.hint }}</p>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <button
-            type="button"
-            class="rounded-xl border border-flare-200 bg-flare-50 px-4 py-2.5 text-sm font-bold text-forena-800 shadow-sm transition hover:bg-flare-100/80"
-            @click="autoRecommend"
-          >
-            {{ T.autoRec }}
-          </button>
-          <button
-            type="button"
-            class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2.5 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
-            @click="confirmSave"
-          >
-            {{ T.confirm }}
-          </button>
-        </div>
+    <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">{{ T.pageKicker }}</p>
+        <h1 class="text-xl font-bold text-forena-900">{{ T.boardTitle }}</h1>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
+          @click="autoRecommend"
+        >
+          {{ T.autoRec }}
+        </button>
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-forena-700 to-forena-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:from-forena-800 hover:to-forena-950"
+          @click="confirmSave"
+        >
+          {{ T.confirm }}
+        </button>
       </div>
     </div>
-
     <section class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card sm:p-5">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-base font-bold text-forena-900">{{ T.zoneByZoneTitle }}</h2>
@@ -757,17 +846,17 @@ function zoneGroupAssignedSum(group) {
 
           <div
             v-show="group.expanded"
-            class="space-y-1.5 border-t border-forena-100/80 bg-white/90 px-2 py-2 sm:px-3"
+            class="space-y-3 border-t border-forena-100/80 bg-white/90 px-2 py-3 sm:px-3"
           >
             <div
               v-for="sz in group.subZones"
               :key="sz.id"
-              class="rounded-lg border bg-white/95"
+              class="overflow-hidden rounded-lg border bg-white/95"
               :class="subZoneCardBorderClass(sz)"
             >
               <div
-                class="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-2 sm:px-3"
-                :class="sz.expanded ? 'border-b border-forena-50/90' : ''"
+                class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5"
+                :class="sz.expanded ? 'border-b border-forena-100/90' : ''"
               >
                 <button
                   type="button"
@@ -817,41 +906,50 @@ function zoneGroupAssignedSum(group) {
                   </button>
                 </div>
               </div>
-              <div v-if="sz.expanded" class="px-2 pb-1.5 pt-1 sm:px-3">
-                <div class="overflow-x-auto rounded border border-forena-100/90">
-                  <table class="w-full min-w-[560px] text-left text-xs">
+              <div v-if="sz.expanded" class="border-t border-forena-100 bg-white">
+                <div class="overflow-x-auto">
+                  <table class="w-full min-w-[720px] text-left text-xs">
                     <thead
-                      class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-500"
+                      class="border-b border-forena-100 bg-forena-50/85 text-[10px] font-bold uppercase tracking-wide text-forena-500"
                     >
                       <tr>
-                        <th class="w-8 px-2 py-2" />
-                        <th class="px-2 py-2">{{ T.workerTableName }}</th>
-                        <th class="px-2 py-2">{{ T.colAffil }}</th>
-                        <th class="px-2 py-2">{{ T.colFatigue }}</th>
-                        <th class="px-2 py-2">{{ T.colPlacement }}</th>
-                        <th class="px-2 py-2 text-center">{{ T.colProfile }}</th>
-                        <th class="w-8 px-2 py-2 text-center" />
+                        <th class="w-8 px-3 py-2" />
+                        <th class="px-3 py-2">{{ T.workerTableName }}</th>
+                        <th class="px-3 py-2">{{ T.colAffil }}</th>
+                        <th class="px-3 py-2">{{ T.colTrade }}</th>
+                        <th class="px-3 py-2 whitespace-nowrap">{{ T.colEmployment }}</th>
+                        <th class="px-3 py-2">{{ T.colFatigue }}</th>
+                        <th class="px-3 py-2 text-center">{{ T.colProfile }}</th>
+                        <th class="w-8 px-3 py-2 text-center" />
                       </tr>
                     </thead>
-                    <tbody class="text-forena-800">
+                    <tbody class="divide-y divide-forena-100 text-forena-800">
                       <tr v-if="sz.workers.length === 0">
-                        <td colspan="7" class="px-3 py-6 text-center text-slate-400">
+                        <td colspan="8" class="px-3 py-5 text-center text-slate-400">
                           {{ T.poolEmpty }}
                         </td>
                       </tr>
                       <tr
                         v-for="w in sz.workers"
                         :key="w.id"
-                        class="border-b border-forena-50 align-middle"
+                        class="align-middle"
                       >
-                        <td class="px-2 py-1.5" />
-                        <td class="px-2 py-1.5">
+                        <td class="px-3 py-1.5" />
+                        <td class="px-3 py-1.5">
                           <span class="font-semibold text-forena-900">{{ w.name }}</span>
                         </td>
-                        <td class="px-2 py-1.5 text-[11px] font-medium">
-                          {{ affiliationDisplayCell(w) }}
+                        <td class="px-3 py-1.5 text-[11px] font-medium">
+                          {{ staffingOrgCell(w) }}
                         </td>
-                        <td class="px-2 py-1.5">
+                        <td class="px-3 py-1.5 text-[11px] font-medium text-forena-700">
+                          {{ staffingTradeCell(w) }}
+                        </td>
+                        <td class="px-3 py-1.5">
+                          <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(w))">
+                            {{ poolEmploymentDisplay(w) }}
+                          </span>
+                        </td>
+                        <td class="px-3 py-1.5">
                           <span
                             class="tabular-nums font-bold"
                             :class="fatigueScore(w) >= 70 ? 'text-rose-600' : 'text-forena-800'"
@@ -859,19 +957,16 @@ function zoneGroupAssignedSum(group) {
                             {{ fatigueScore(w) }}
                           </span>
                         </td>
-                        <td class="px-2 py-1.5 text-[11px] font-semibold text-emerald-800">
-                          {{ group.title }} · {{ sz.title }}
-                        </td>
-                        <td class="px-2 py-1.5 text-center">
+                        <td class="px-3 py-1.5 text-center">
                           <button
                             type="button"
-                            class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2 py-0.5 text-[10px] font-bold text-forena-700 hover:bg-flare-50"
+                            class="inline-flex items-center gap-1 rounded-md border border-forena-200 bg-white px-2 py-0.5 text-[10px] font-bold text-forena-700 hover:bg-flare-50"
                             @click="openWorkerProfile(w)"
                           >
                             <ExternalLink class="h-3 w-3" />
                           </button>
                         </td>
-                        <td class="px-2 py-1.5 text-center">
+                        <td class="px-3 py-1.5 text-center">
                           <button
                             type="button"
                             class="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
@@ -1011,7 +1106,7 @@ function zoneGroupAssignedSum(group) {
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-forena-100">
-        <table class="w-full min-w-[800px] text-left text-sm">
+        <table class="w-full min-w-[1000px] text-left text-sm">
           <thead
             class="border-b border-forena-100 bg-forena-50/70 text-[11px] font-bold uppercase tracking-wide text-forena-500"
           >
@@ -1032,6 +1127,8 @@ function zoneGroupAssignedSum(group) {
               </th>
               <th class="px-3 py-3">{{ T.workerTableName }}</th>
               <th class="px-3 py-3">{{ T.colAffil }}</th>
+              <th class="px-3 py-3">{{ T.colTrade }}</th>
+              <th class="px-3 py-3 whitespace-nowrap">{{ T.colEmployment }}</th>
               <th class="px-3 py-3">{{ T.colFatiguePool }}</th>
               <th class="px-3 py-3">{{ T.colPlacement }}</th>
               <th class="px-3 py-3 text-center">{{ T.colProfile }}</th>
@@ -1039,57 +1136,97 @@ function zoneGroupAssignedSum(group) {
           </thead>
           <tbody class="text-forena-800">
             <tr v-if="staffingTableRows.length === 0">
-              <td colspan="6" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
+              <td colspan="8" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
             </tr>
-            <tr
-              v-for="row in staffingTableRows"
-              :key="(row.waitingId || row.worker.id) + row.placement"
-              class="border-b border-forena-50 transition hover:bg-flare-50/30"
-            >
-              <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
-                <div class="flex items-center justify-center">
-                  <input
-                    v-if="row.selectable && row.waitingId"
-                    type="checkbox"
-                    class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
-                    :checked="selectedWaitingIds.includes(row.waitingId)"
-                    @change="toggleSelectWaiting(row.waitingId)"
-                  />
-                </div>
-              </td>
-              <td class="px-3 py-3">
-                <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
-              </td>
-              <td class="px-3 py-3 text-xs font-medium">
-                {{ affiliationDisplayCell(row.worker) }}
-              </td>
-              <td class="px-3 py-3">
-                <span
-                  class="font-bold tabular-nums"
-                  :class="fatigueScore(row.worker) >= 70 ? 'text-rose-600' : 'text-forena-900'"
-                >
-                  {{ fatigueScore(row.worker) }}
-                </span>
-              </td>
-              <td class="px-3 py-3">
-                <span
-                  class="text-xs font-bold"
-                  :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
-                >
-                  {{ row.placement }}
-                </span>
-              </td>
-              <td class="px-3 py-3 text-center">
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
-                  :title="T.workerDetail"
-                  @click="openWorkerProfile(row.worker)"
-                >
-                  <ExternalLink class="h-3.5 w-3.5" />
-                </button>
-              </td>
-            </tr>
+            <template v-for="grp in staffingTableGrouped" :key="grp.label">
+              <tr class="border-b border-forena-100 bg-indigo-50/75">
+                <td class="w-11 min-w-[2.75rem] px-3 py-2 align-middle">
+                  <div class="flex items-center justify-center" @click.stop>
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      :checked="poolGroupAllChecked(grp.rows)"
+                      :disabled="!poolGroupSelectableIds(grp.rows).length"
+                      :aria-label="`${grp.label} ${T.poolHeaderSelectAll}`"
+                      @change="togglePoolGroupSelectAll(grp.rows)"
+                    />
+                  </div>
+                </td>
+                <td colspan="7" class="px-3 py-2">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <button
+                      type="button"
+                      class="inline-flex shrink-0 items-center justify-center rounded-md p-0.5 text-forena-700 hover:bg-white/90"
+                      :aria-expanded="poolGroupIsOpen(grp.label)"
+                      :aria-label="`${grp.label} ${T.poolGroupToggle}`"
+                      @click="togglePoolGroupExpanded(grp.label)"
+                    >
+                      <ChevronDown v-if="poolGroupIsOpen(grp.label)" class="h-4 w-4" />
+                      <ChevronRight v-else class="h-4 w-4" />
+                    </button>
+                    <span class="truncate text-xs font-bold text-flare-900">{{ grp.label }}</span>
+                  </div>
+                </td>
+              </tr>
+              <tr
+                v-for="row in grp.rows"
+                v-show="poolGroupIsOpen(grp.label)"
+                :key="(row.waitingId || row.worker.id) + row.placement"
+                class="border-b border-forena-50 transition hover:bg-flare-50/30"
+              >
+                <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                  <div class="flex items-center justify-center">
+                    <input
+                      v-if="row.selectable && row.waitingId"
+                      type="checkbox"
+                      class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
+                      :checked="selectedWaitingIds.includes(row.waitingId)"
+                      @change="toggleSelectWaiting(row.waitingId)"
+                    />
+                  </div>
+                </td>
+                <td class="px-3 py-3">
+                  <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
+                </td>
+                <td class="px-3 py-3 text-xs font-medium">
+                  {{ staffingOrgCell(row.worker) }}
+                </td>
+                <td class="px-3 py-3 text-xs font-medium text-forena-700">
+                  {{ staffingTradeCell(row.worker) }}
+                </td>
+                <td class="px-3 py-3">
+                  <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
+                    {{ poolEmploymentDisplay(row.worker) }}
+                  </span>
+                </td>
+                <td class="px-3 py-3">
+                  <span
+                    class="font-bold tabular-nums"
+                    :class="fatigueScore(row.worker) >= 70 ? 'text-rose-600' : 'text-forena-900'"
+                  >
+                    {{ fatigueScore(row.worker) }}
+                  </span>
+                </td>
+                <td class="px-3 py-3">
+                  <span
+                    class="text-xs font-bold"
+                    :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
+                  >
+                    {{ row.placement }}
+                  </span>
+                </td>
+                <td class="px-3 py-3 text-center">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
+                    :title="T.workerDetail"
+                    @click="openWorkerProfile(row.worker)"
+                  >
+                    <ExternalLink class="h-3.5 w-3.5" />
+                  </button>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
