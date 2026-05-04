@@ -17,7 +17,7 @@ import {
 import {
   getAffiliationKind,
   displayWorkerAffiliation,
-  deriveEmploymentClass,
+  employmentKindDisplay,
   displayWorkerTradeLine,
   deriveAttendanceTag,
   attendanceTagBadgeClass,
@@ -436,7 +436,7 @@ function mapWorkerResToAttendance(row) {
     name: row.name ?? '',
     phone: row.phone ?? '—',
     jobRank: mapJobRankFromApi(row.jobRank),
-    employmentClass: deriveEmploymentClass(row.affiliationKind, row.subLabel),
+    employmentClass: employmentKindDisplay(row.employmentKind),
     affiliationType,
     primaryContractor,
     affiliationKindApi: row.affiliationKind,

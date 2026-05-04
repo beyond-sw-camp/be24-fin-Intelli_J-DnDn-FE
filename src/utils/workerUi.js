@@ -35,12 +35,10 @@ export function getPartnerCompanyName(affiliation, affiliationLine) {
   return ''
 }
 
-// MANAGEMENT 고용구분 없을 때 상용/일용 추정
-export function deriveEmploymentClass(affiliationKindRaw, subLabelRaw) {
-  const kind = String(affiliationKindRaw ?? '').toUpperCase()
-  const sub = String(subLabelRaw ?? '').trim()
-  if (kind === 'DIRECT') return '상용'
-  if (/일용|일당|인력|파출/i.test(sub)) return '일용'
+/** MANAGEMENT — 근태 행 `employmentKind`(REGULAR|DAILY) → 목록·헤더 한글 */
+export function employmentKindDisplay(kindRaw) {
+  const k = String(kindRaw ?? '').toUpperCase()
+  if (k === 'DAILY') return '일용'
   return '상용'
 }
 

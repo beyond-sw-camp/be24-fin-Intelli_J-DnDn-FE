@@ -23,7 +23,7 @@ import {
 import {
   displayWorkerAffiliation,
   displayWorkerTradeLine,
-  deriveEmploymentClass,
+  employmentKindDisplay,
   pickWorkerTradeSubLabel,
   deriveAttendanceTag,
   attendanceTagBadgeClass,
@@ -202,7 +202,7 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
   const metaAffiliationLine = `${displayWorkerAffiliation({
     affiliationKind: p.affiliationKind,
     partnerCompany: p.partnerCompany,
-  })} | ${displayWorkerTradeLine(mergedForMeta)} | ${deriveEmploymentClass(p.affiliationKind, tradeText)}`
+  })} | ${displayWorkerTradeLine(mergedForMeta)} | ${employmentKindDisplay(p.employmentKind)}`
 
   return {
     id: p.idx,
