@@ -60,7 +60,7 @@ const T = {
   emptyAccident: '등록된 사고 이력이 없습니다.',
   notFound: '작업자를 찾을 수 없습니다.',
   backList: '목록으로',
-  monthAcc: '당월 누적',
+  monthAcc: '조회 월 누적',
   manUnit: '공수',
   calPrevMonth: '이전 달',
   calNextMonth: '다음 달',
@@ -215,7 +215,6 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
     bloodType: p.bloodType ?? '—',
     registeredAt: formatRegisteredAt(p.registeredAt),
     site: p.site ?? '—',
-    monthTotalMan: p.monthTotalMan != null ? Number(p.monthTotalMan) : 0,
     documents: Array.isArray(docs) ? docs : [],
     attendanceRows,
     zoneHistory: Array.isArray(deployments) ? deployments.map(mapDeploymentRow) : [],
@@ -330,6 +329,28 @@ watch([attendanceCalYear, attendanceCalMonth], async () => {
     console.warn('[WorkerProfile] 출결 월 갱신 실패', e)
   }
 })
+
+/** 출결 캘린더 조회 월 — 해당 월 일별 행의 공수 합 */
+const attendanceMonthManSum = computed(() => {
+  const rows = profile.value?.attendanceRows
+  if (!Array.isArray(rows) || rows.length === 0) return 0
+  const y = attendanceCalYear.value
+  const mo = attendanceCalMonth.value
+  const prefix = `${y}-${String(mo).padStart(2, '0')}`
+  return rows.reduce((acc, r) => {
+    const d = r.date != null ? String(r.date) : ''
+    if (d.length < 7 || !d.startsWith(prefix)) return acc
+    const v = Number(r.manDays)
+    return acc + (Number.isFinite(v) ? v : 0)
+  }, 0)
+})
+
+function formatManDaysSum(n) {
+  if (!Number.isFinite(n)) return '0'
+  if (n === 0) return '0'
+  const t = Math.round(n * 100) / 100
+  return Number.isInteger(t) ? String(t) : String(t)
+}
 
 const attendanceByDate = computed(() => {
   const p = profile.value
@@ -643,8 +664,8 @@ const todayAttendanceChip = computed(() => {
             </div>
             <div class="p-4 sm:p-5">
               <p class="text-sm font-bold text-emerald-800">
-                {{ T.monthAcc }}:
-                <span class="tabular-nums">{{ profile.monthTotalMan }}</span>
+                {{ T.monthAcc }} ({{ attendanceCalYear }}년 {{ attendanceCalMonth }}월):
+                <span class="tabular-nums">{{ formatManDaysSum(attendanceMonthManSum) }}</span>
                 {{ T.manUnit }}
               </p>
               <div class="mt-4 overflow-x-auto rounded-xl border border-forena-100 bg-white">
