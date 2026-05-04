@@ -889,53 +889,6 @@ onMounted(async () => {
             <option v-for="r in ROLES" :key="r">{{ r }}</option>
           </select>
         </div>
-
-        <!-- 데모용: 최초 등록 화면 토글 -->
-        <button
-          v-if="!noDataYet"
-          @click="enterFirstSetup"
-          class="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-flare-300 bg-flare-50/40 px-2.5 py-1.5 text-[10px] font-bold text-flare-700 hover:bg-flare-50"
-          title="공정표 데이터가 없는 상태(최초 등록 화면)를 미리보기"
-        >
-          <FilePlus2 class="h-3 w-3" /> 최초 등록 화면
-        </button>
-
-        <button
-          class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-          @click="showUploadSection = true"
-        >
-          <Upload class="h-3.5 w-3.5 text-forena-400" /> 공정표 업로드
-        </button>
-
-        <button
-          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
-          @click="aiAnalysisModalOpen = true"
-        >
-          <BrainCircuit class="h-3.5 w-3.5 text-flare-600" />
-          AI 분석 실행
-        </button>
-
-        <button
-          v-if="!isConfirmed"
-          :disabled="!canConfirm"
-          class="inline-flex items-center gap-1.5 rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-forena-900 disabled:opacity-50"
-          @click="openConfirm"
-        >
-          <ShieldCheck class="h-3.5 w-3.5" /> 기준 공정표 확정
-        </button>
-
-        <button
-          v-else
-          class="inline-flex items-center gap-1.5 rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-forena-900"
-          @click="openChangeManagement"
-        >
-          <GitBranch class="h-3.5 w-3.5" /> 변경 요청 관리
-          <span
-            v-if="validationCounts.pendingChanges"
-            class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] tabular-nums"
-            >{{ validationCounts.pendingChanges }}</span
-          >
-        </button>
       </div>
     </div>
 

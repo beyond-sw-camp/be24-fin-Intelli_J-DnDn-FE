@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 
 import router from '@/router/index.js'
-import { parseGanttJSON } from '@/utils/ganttParser.js'
+import { parseFromApi } from '@/utils/ganttParser.js'
 import { useGanttStore } from '@/stores/ganttStore.js'
 const ganttStore = useGanttStore()
 
@@ -75,13 +75,16 @@ const DOC_TYPES = [
   },
 ]
 
+const API_BASE = 'http://localhost:8081'
+
 // =====================================================
 // 상태
 // =====================================================
 const uploads = ref({
   master: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
   milestone: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
-  trade: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
+  // trade는 여러 파일 지원 → files 배열로 관리 (fileName은 호환성 유지용)
+  trade: { files: [], fileName: '', status: 'idle', progress: 0, result: null, error: '' },
 })
 
 const projectMeta = ref({
@@ -102,6 +105,16 @@ const validationErrors = ref([])
 // 간트차트 미리보기 모달
 const ganttPreviewModal = ref(false)
 const ganttZoom = ref(1)
+
+// API 분석 결과 (실제 데이터)
+const previewTasks = ref([])
+const previewMilestones = ref([])
+// DB 저장용 원본 API 응답 보관
+const apiRawData = ref([])
+
+// 로딩/에러 상태
+const isAnalyzing = ref(false)
+const analyzeError = ref('')
 
 // =====================================================
 // 헬퍼
@@ -136,16 +149,30 @@ const colorMap = {
   },
 }
 
-const hasAnyUpload = computed(() => Object.values(uploads.value).some((u) => u.fileName))
-const hasMaster = computed(() => !!uploads.value.master.fileName)
-
-const allDone = computed(() =>
-  Object.values(uploads.value)
-    .filter((u) => u.fileName)
-    .every((u) => u.status === 'done'),
+const hasAnyUpload = computed(() =>
+  uploads.value.master.fileName ||
+  uploads.value.milestone.fileName ||
+  uploads.value.trade.files.length > 0
 )
+const hasMaster = computed(() => !!uploads.value.master.fileName)
+// trade 파일이 1개 이상 있는지
+const hasTradeFiles = computed(() => uploads.value.trade.files.length > 0)
 
-const hasAnyDone = computed(() => Object.values(uploads.value).some((u) => u.status === 'done'))
+const allDone = computed(() => {
+  const masterDone = !uploads.value.master.fileName || uploads.value.master.status === 'done'
+  const milestoneDone = !uploads.value.milestone.fileName || uploads.value.milestone.status === 'done'
+  const tradeDone = uploads.value.trade.files.length === 0 || uploads.value.trade.status === 'done'
+  return (
+    uploads.value.master.status === 'done' &&
+    masterDone && milestoneDone && tradeDone
+  )
+})
+
+const hasAnyDone = computed(() =>
+  uploads.value.master.status === 'done' ||
+  uploads.value.milestone.status === 'done' ||
+  uploads.value.trade.status === 'done'
+)
 
 function getStatusLabel(status) {
   return (
@@ -172,24 +199,47 @@ function getStatusClass(status) {
 
 // 파일 선택
 function onFileSelect(typeKey, event) {
-  const f = event.target.files?.[0]
-  if (!f) return
-  uploads.value[typeKey].file = f
-  uploads.value[typeKey].fileName = f.name
-  uploads.value[typeKey].status = 'idle'
-  uploads.value[typeKey].error = ''
+  if (typeKey === 'trade') {
+    // trade는 여러 파일 추가 (중복 파일명 제외)
+    const newFiles = Array.from(event.target.files ?? [])
+    const existingNames = new Set(uploads.value.trade.files.map((f) => f.name))
+    newFiles.forEach((f) => {
+      if (!existingNames.has(f.name)) uploads.value.trade.files.push(f)
+    })
+    uploads.value.trade.fileName = uploads.value.trade.files.length > 0 ? 'multi' : ''
+    uploads.value.trade.status = 'idle'
+    uploads.value.trade.error = ''
+  } else {
+    const f = event.target.files?.[0]
+    if (!f) return
+    uploads.value[typeKey].file = f
+    uploads.value[typeKey].fileName = f.name
+    uploads.value[typeKey].status = 'idle'
+    uploads.value[typeKey].error = ''
+  }
   event.target.value = ''
 }
 
 // 드래그 앤 드롭
 function onDrop(typeKey, event) {
   event.preventDefault()
-  const f = event.dataTransfer.files?.[0]
-  if (!f) return
-  uploads.value[typeKey].file = f
-  uploads.value[typeKey].fileName = f.name
-  uploads.value[typeKey].status = 'idle'
-  uploads.value[typeKey].error = ''
+  if (typeKey === 'trade') {
+    const newFiles = Array.from(event.dataTransfer.files ?? [])
+    const existingNames = new Set(uploads.value.trade.files.map((f) => f.name))
+    newFiles.forEach((f) => {
+      if (!existingNames.has(f.name)) uploads.value.trade.files.push(f)
+    })
+    uploads.value.trade.fileName = uploads.value.trade.files.length > 0 ? 'multi' : ''
+    uploads.value.trade.status = 'idle'
+    uploads.value.trade.error = ''
+  } else {
+    const f = event.dataTransfer.files?.[0]
+    if (!f) return
+    uploads.value[typeKey].file = f
+    uploads.value[typeKey].fileName = f.name
+    uploads.value[typeKey].status = 'idle'
+    uploads.value[typeKey].error = ''
+  }
 }
 function onDragOver(event) {
   event.preventDefault()
@@ -197,68 +247,162 @@ function onDragOver(event) {
 
 // 파일 삭제
 function removeFile(typeKey) {
-  uploads.value[typeKey] = {
-    file: null,
-    fileName: '',
-    status: 'idle',
-    progress: 0,
-    result: null,
-    error: '',
+  if (typeKey === 'trade') {
+    uploads.value.trade = { files: [], fileName: '', status: 'idle', progress: 0, result: null, error: '' }
+  } else {
+    uploads.value[typeKey] = {
+      file: null,
+      fileName: '',
+      status: 'idle',
+      progress: 0,
+      result: null,
+      error: '',
+    }
   }
 }
 
-// AI 분석 실행 (mock)
-function runAnalysis(typeKey) {
-  const u = uploads.value[typeKey]
-  if (!u.fileName) return
-  u.status = 'uploading'
-  u.progress = 0
-
-  const progressInterval = setInterval(() => {
-    u.progress = Math.min(u.progress + Math.random() * 18, 90)
-  }, 180)
-
-  setTimeout(() => {
-    clearInterval(progressInterval)
-    u.status = 'analyzing'
-    u.progress = 95
-    setTimeout(() => {
-      u.status = 'done'
-      u.progress = 100
-      u.result = getMockResult(typeKey)
-      if (
-        Object.values(uploads.value)
-          .filter((x) => x.fileName)
-          .every((x) => x.status === 'done')
-      ) {
-        currentStep.value = 3
-      }
-    }, 1200)
-  }, 1800)
+// trade 파일 개별 삭제
+function removeTradeFile(index) {
+  uploads.value.trade.files.splice(index, 1)
+  uploads.value.trade.fileName = uploads.value.trade.files.length > 0 ? 'multi' : ''
+  if (uploads.value.trade.files.length === 0) {
+    uploads.value.trade.status = 'idle'
+  }
 }
 
-function runAllAnalysis() {
-  analyzeAll.value = true
-  currentStep.value = 2
+// =====================================================
+// 개별 카드 "AI 분석 실행" 버튼 - 전체 분석을 트리거
+// (백엔드가 3개 파일을 한 번에 받는 구조이므로 단독 분석 불가)
+// 파일이 1개만 있을 때도 일단 전체 호출 흐름으로 연결
+// =====================================================
+function runAnalysis(typeKey) {
+  // 개별 버튼을 눌러도 전체 분석으로 위임
+  handleReviewClick()
+}
+
+// =====================================================
+// 실제 API 호출: /work-plan/upload-pdf
+// masterSchedule, subSchedule, workPlans(배열) 전송
+// =====================================================
+async function callUploadApi() {
+  const formData = new FormData()
+
+  // 백엔드 파라미터명: masterSchedule, subSchedule, workPlans
+  if (uploads.value.master.file) {
+    formData.append('masterSchedule', uploads.value.master.file)
+  }
+  if (uploads.value.milestone.file) {
+    formData.append('subSchedule', uploads.value.milestone.file)
+  }
+  // trade는 여러 파일 → 같은 키 'workPlans'로 여러 번 append
+  uploads.value.trade.files.forEach((f) => {
+    formData.append('workPlans', f)
+  })
+
+  // 진행 상태 UI: 모든 파일을 uploading으로
   DOC_TYPES.forEach((dt) => {
-    if (uploads.value[dt.key].fileName && uploads.value[dt.key].status === 'idle') {
-      runAnalysis(dt.key)
+    if (uploads.value[dt.key].fileName) {
+      uploads.value[dt.key].status = 'uploading'
+      uploads.value[dt.key].progress = 0
     }
   })
-}
 
-function getMockResult(typeKey) {
-  return {
-    master: { tasks: 10, cpTasks: 6, dateRange: '2025-03-01 ~ 2026-09-30', confidence: 91 },
-    milestone: { milestones: 7, firstDate: '2025-03-01', lastDate: '2026-09-30', confidence: 88 },
-    trade: { trades: 3, tasks: 18, lowestConf: 72, confidence: 82 },
-  }[typeKey]
+  // 가상 프로그레스 바 (fetch는 업로드 진행률을 직접 알 수 없음)
+  const progressInterval = setInterval(() => {
+    DOC_TYPES.forEach((dt) => {
+      const u = uploads.value[dt.key]
+      if (u.status === 'uploading' || u.status === 'analyzing') {
+        u.progress = Math.min(u.progress + Math.random() * 10, 88)
+      }
+    })
+  }, 300)
+
+  try {
+    // uploading → analyzing 전환
+    setTimeout(() => {
+      DOC_TYPES.forEach((dt) => {
+        if (uploads.value[dt.key].status === 'uploading') {
+          uploads.value[dt.key].status = 'analyzing'
+        }
+      })
+    }, 1500)
+
+    const res = await fetch(`${API_BASE}/work-plan/upload-pdf`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+
+    const json = await res.json()
+
+    // 백엔드 응답: { code, message, data: [...WorkPlanDto.Res], success }
+    const dataList = json.data ?? json
+
+    if (!Array.isArray(dataList) || dataList.length === 0) {
+      throw new Error('AI 분석 결과가 비어 있습니다. 문서를 확인해주세요.')
+    }
+
+    // 원본 API 데이터 보관 (확정 시 DB 저장용)
+    apiRawData.value = dataList
+
+    // parseFromApi로 간트차트 형식 변환
+    const parsed = parseFromApi(dataList)
+    previewTasks.value = parsed.tasks
+    previewMilestones.value = parsed.milestones
+
+    // 각 카드 상태를 done으로 + result 요약 생성
+    const tradeSet = new Set(dataList.map((d) => d.trade).filter(Boolean))
+    uploads.value.master.status = 'done'
+    uploads.value.master.progress = 100
+    uploads.value.master.result = {
+      tasks: parsed.tasks.length,
+      cpTasks: parsed.tasks.filter((t) => t.isCritical).length,
+      dateRange: `${parsed.projectInfo.startDate} ~ ${parsed.projectInfo.endDate}`,
+      confidence: 88,
+    }
+    uploads.value.milestone.status = 'done'
+    uploads.value.milestone.progress = 100
+    uploads.value.milestone.result = {
+      milestones: parsed.milestones.length,
+      firstDate: parsed.projectInfo.startDate,
+      lastDate: parsed.projectInfo.endDate,
+      confidence: 85,
+    }
+    uploads.value.trade.status = 'done'
+    uploads.value.trade.progress = 100
+    uploads.value.trade.result = {
+      trades: tradeSet.size,
+      tasks: parsed.tasks.length,
+      lowestConf: 80,
+      confidence: 82,
+    }
+
+    currentStep.value = 3
+    return true
+  } catch (err) {
+    // 에러 처리
+    DOC_TYPES.forEach((dt) => {
+      if (['uploading', 'analyzing'].includes(uploads.value[dt.key].status)) {
+        uploads.value[dt.key].status = 'error'
+        uploads.value[dt.key].progress = 0
+        uploads.value[dt.key].error = err.message
+      }
+    })
+    analyzeError.value = err.message
+    return false
+  } finally {
+    clearInterval(progressInterval)
+  }
 }
 
 // =====================================================
 // 유효성 검사 & 공정표 검토 버튼
 // =====================================================
-function handleReviewClick() {
+async function handleReviewClick() {
   const errors = []
 
   // 프로젝트 기본 정보 검사
@@ -287,8 +431,8 @@ function handleReviewClick() {
     errors.push({ field: '마스터 공정표', msg: '마스터 공정표 파일을 업로드해주세요.' })
   if (!uploads.value.milestone.fileName)
     errors.push({ field: '마일스톤 공정표', msg: '마일스톤 공정표 파일을 업로드해주세요.' })
-  if (!uploads.value.trade.fileName)
-    errors.push({ field: '공종별 시공계획서', msg: '공종별 시공계획서 파일을 업로드해주세요.' })
+  if (uploads.value.trade.files.length === 0)
+    errors.push({ field: '공종별 시공계획서', msg: '공종별 시공계획서 파일을 1개 이상 업로드해주세요.' })
 
   if (errors.length > 0) {
     validationErrors.value = errors
@@ -296,144 +440,51 @@ function handleReviewClick() {
     return
   }
 
-  // AI 분석이 완료되지 않은 파일이 있으면 먼저 분석 실행
-  const needsAnalysis = DOC_TYPES.some(
-    (dt) => uploads.value[dt.key].fileName && uploads.value[dt.key].status === 'idle',
-  )
-  if (needsAnalysis) {
-    runAllAnalysis()
-    // 분석 완료 후 모달 열기 (polling)
-    const checkDone = setInterval(() => {
-      const allComplete = DOC_TYPES.filter((dt) => uploads.value[dt.key].fileName).every(
-        (dt) => uploads.value[dt.key].status === 'done',
-      )
-      if (allComplete) {
-        clearInterval(checkDone)
-        ganttPreviewModal.value = true
-      }
-    }, 500)
+  // 이미 분석 완료된 경우 바로 모달 오픈
+  if (
+    uploads.value.master.status === 'done' &&
+    uploads.value.milestone.status === 'done' &&
+    uploads.value.trade.status === 'done' &&
+    previewTasks.value.length > 0
+  ) {
+    ganttPreviewModal.value = true
     return
   }
 
-  // 이미 분석 완료된 경우 바로 모달 오픈
-  ganttPreviewModal.value = true
+  // API 호출
+  isAnalyzing.value = true
+  analyzeError.value = ''
+  currentStep.value = 2
+
+  const ok = await callUploadApi()
+  isAnalyzing.value = false
+
+  if (ok) {
+    ganttPreviewModal.value = true
+  } else {
+    // 에러는 각 카드에 표시됨
+    validationErrors.value = [{ field: 'AI 분석', msg: analyzeError.value || 'API 호출에 실패했습니다.' }]
+    validationModal.value = true
+    currentStep.value = 1
+  }
 }
 
 // =====================================================
-// 간트차트 미리보기 모달 - Mock 데이터
+// 간트차트 계산용 - projectMeta 기준
 // =====================================================
-const mockGanttTasks = [
-  {
-    id: 1,
-    group: '토목',
-    name: '터파기 및 흙막이',
-    start: '2025-03-01',
-    end: '2025-04-15',
-    isCritical: true,
-    weight: 8,
-    confidence: 95,
-  },
-  {
-    id: 2,
-    group: '토목',
-    name: '기초 콘크리트',
-    start: '2025-04-16',
-    end: '2025-05-31',
-    isCritical: true,
-    weight: 10,
-    confidence: 92,
-  },
-  {
-    id: 3,
-    group: '골조',
-    name: 'B3 ~ B1 골조',
-    start: '2025-06-01',
-    end: '2025-08-31',
-    isCritical: true,
-    weight: 15,
-    confidence: 88,
-  },
-  {
-    id: 4,
-    group: '골조',
-    name: '지상 1~5층 골조',
-    start: '2025-09-01',
-    end: '2025-11-30',
-    isCritical: true,
-    weight: 12,
-    confidence: 90,
-  },
-  {
-    id: 5,
-    group: '전기',
-    name: '전기 간선 배관',
-    start: '2025-09-15',
-    end: '2025-12-31',
-    isCritical: false,
-    weight: 6,
-    confidence: 82,
-  },
-  {
-    id: 6,
-    group: '설비',
-    name: '급배수 배관',
-    start: '2025-10-01',
-    end: '2026-02-28',
-    isCritical: false,
-    weight: 7,
-    confidence: 85,
-  },
-  {
-    id: 7,
-    group: '골조',
-    name: '지상 6~15층 골조',
-    start: '2025-12-01',
-    end: '2026-03-31',
-    isCritical: true,
-    weight: 14,
-    confidence: 78,
-  },
-  {
-    id: 8,
-    group: '마감',
-    name: '외벽 커튼월',
-    start: '2026-02-01',
-    end: '2026-06-30',
-    isCritical: false,
-    weight: 10,
-    confidence: 72,
-  },
-  {
-    id: 9,
-    group: '마감',
-    name: '내부 마감 공사',
-    start: '2026-04-01',
-    end: '2026-08-31',
-    isCritical: false,
-    weight: 11,
-    confidence: 75,
-  },
-  {
-    id: 10,
-    group: '준공',
-    name: '준공 검사 및 인수',
-    start: '2026-08-01',
-    end: '2026-09-30',
-    isCritical: true,
-    weight: 7,
-    confidence: 80,
-  },
-]
-
-const mockMilestones = [
-  { id: 1, name: '착공', date: '2025-03-01', status: '완료' },
-  { id: 2, name: '골조 완료', date: '2026-03-31', status: '지연 위험' },
-  { id: 3, name: '외장 완료', date: '2026-06-30', status: '예정' },
-  { id: 4, name: '준공', date: '2026-09-30', status: '예정' },
-]
-
-const projStart = computed(() => projectMeta.value.startDate || '2025-03-01')
-const projEnd = computed(() => projectMeta.value.endDate || '2026-09-30')
+const projStart = computed(() => {
+  if (previewTasks.value.length > 0) {
+    // API 데이터가 있으면 실제 작업 시작일 기준
+    return [...previewTasks.value].sort((a, b) => a.start.localeCompare(b.start))[0].start
+  }
+  return projectMeta.value.startDate || '2026-01-01'
+})
+const projEnd = computed(() => {
+  if (previewTasks.value.length > 0) {
+    return [...previewTasks.value].sort((a, b) => b.end.localeCompare(a.end))[0].end
+  }
+  return projectMeta.value.endDate || '2027-01-31'
+})
 const projTotalDays = computed(() => {
   const a = new Date(projStart.value),
     b = new Date(projEnd.value)
@@ -498,65 +549,76 @@ function milestoneStroke(m) {
 const confidenceClass = (n) =>
   n >= 90 ? 'text-emerald-600' : n >= 80 ? 'text-forena-600' : 'text-amber-600'
 
-// 그룹별 태스크 묶기
+// 그룹별 태스크 묶기 (실제 데이터 기반)
 const groupedGanttTasks = computed(() => {
   const map = new Map()
-  for (const t of mockGanttTasks) {
+  for (const t of previewTasks.value) {
     if (!map.has(t.group)) map.set(t.group, [])
     map.get(t.group).push(t)
   }
   return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
 })
 
-// 확인 후 대시보드 이동
-function confirmAndNavigate() {
-  // mockMilestones에 group 필드 추가
-  const milestonesWithGroup = [
-    {
-      id: 1,
-      name: '착공',
-      date: '2025-03-01',
-      status: '완료',
-      group: '토목',
-      relatedTask: '터파기 및 흙막이',
-      impact: '고',
-    },
-    {
-      id: 2,
-      name: '골조 완료',
-      date: '2026-03-31',
-      status: '지연 위험',
-      group: '골조',
-      relatedTask: '지상 6~15층 골조',
-      impact: '고',
-    },
-    {
-      id: 3,
-      name: '외장 완료',
-      date: '2026-06-30',
-      status: '예정',
-      group: '마감',
-      relatedTask: '외벽 커튼월',
-      impact: '중',
-    },
-    {
-      id: 4,
-      name: '준공',
-      date: '2026-09-30',
-      status: '예정',
-      group: '준공',
-      relatedTask: '준공 검사 및 인수',
-      impact: '고',
-    },
-  ]
+// =====================================================
+// 확정 버튼: DB 저장 후 간트차트 화면으로 이동
+// =====================================================
+const isConfirming = ref(false)
+const confirmError = ref('')
 
-  ganttStore.setData(mockGanttTasks, milestonesWithGroup, {
-    projectName: '강남 복합개발 1공구 신축공사',
-    startDate: '2025-03-01',
-    endDate: '2026-09-30',
-  })
-  ganttPreviewModal.value = false
-  router.push('/site/schedule')
+async function confirmAndNavigate() {
+  isConfirming.value = true
+  confirmError.value = ''
+
+  try {
+    // 각 WorkPlan 항목을 /work-plan POST로 저장
+    const saveResults = []
+    for (const item of apiRawData.value) {
+      const payload = {
+        name: item.name,
+        trade: item.trade,
+        location: item.location,
+        planType: item.planType,
+        status: item.status,
+        startDate: item.startDate,
+        endDate: item.endDate,
+        partner: item.partner,
+        manager: item.manager,
+        contact: item.contact,
+        note: item.note,
+        workers: item.workers ?? [],
+        equipment: item.equipment ?? [],
+      }
+
+      const res = await fetch(`${API_BASE}/work-plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(`저장 실패 (${item.name}): ${text}`)
+      }
+      const json = await res.json()
+      saveResults.push(json.data)
+    }
+
+    // ganttStore에 간트차트 데이터 저장
+    ganttStore.setData(previewTasks.value, previewMilestones.value, {
+      siteName: projectMeta.value.siteName,
+      projectName: projectMeta.value.projectName,
+      startDate: projStart.value,
+      endDate: projEnd.value,
+      finalApprover: projectMeta.value.manager,
+    })
+
+    ganttPreviewModal.value = false
+    router.push('/site/schedule')
+  } catch (err) {
+    confirmError.value = err.message
+  } finally {
+    isConfirming.value = false
+  }
 }
 
 function zoomIn() {
@@ -801,67 +863,71 @@ function zoomOut() {
         <div class="overflow-x-auto">
           <table class="w-full min-w-[580px] text-xs">
             <thead class="bg-forena-50/60 text-[10px] font-bold uppercase text-forena-500">
-              <tr>
-                <th class="px-4 py-2 text-left">문서 유형</th>
-                <th class="px-4 py-2 text-center">파일명</th>
-                <th class="px-4 py-2 text-center">분석 상태</th>
-                <th class="px-4 py-2 text-center">AI 신뢰도</th>
-                <th class="px-4 py-2 text-center">액션</th>
-              </tr>
+            <tr>
+              <th class="px-4 py-2 text-left">문서 유형</th>
+              <th class="px-4 py-2 text-center">파일명</th>
+              <th class="px-4 py-2 text-center">분석 상태</th>
+              <th class="px-4 py-2 text-center">AI 신뢰도</th>
+              <th class="px-4 py-2 text-center">액션</th>
+            </tr>
             </thead>
             <tbody class="divide-y divide-forena-50">
-              <tr v-for="dt in DOC_TYPES" :key="dt.key" class="hover:bg-forena-50/30">
-                <td class="px-4 py-2.5">
-                  <div class="flex items-center gap-2">
-                    <FileSpreadsheet
-                      v-if="dt.icon === 'spreadsheet'"
-                      class="h-3.5 w-3.5"
-                      :class="colorMap[dt.color].icon"
-                    />
-                    <Flag
-                      v-else-if="dt.icon === 'flag'"
-                      class="h-3.5 w-3.5"
-                      :class="colorMap[dt.color].icon"
-                    />
-                    <Layers v-else class="h-3.5 w-3.5" :class="colorMap[dt.color].icon" />
-                    <span class="font-semibold text-forena-800">{{ dt.label }}</span>
-                    <!-- 미업로드 경고 표시 -->
-                    <span
-                      v-if="!uploads[dt.key].fileName"
-                      class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
-                      >필수</span
-                    >
-                  </div>
-                </td>
-                <td class="px-4 py-2.5 text-center">
-                  <span v-if="uploads[dt.key].fileName" class="text-forena-700 font-medium">{{
+            <tr v-for="dt in DOC_TYPES" :key="dt.key" class="hover:bg-forena-50/30">
+              <td class="px-4 py-2.5">
+                <div class="flex items-center gap-2">
+                  <FileSpreadsheet
+                    v-if="dt.icon === 'spreadsheet'"
+                    class="h-3.5 w-3.5"
+                    :class="colorMap[dt.color].icon"
+                  />
+                  <Flag
+                    v-else-if="dt.icon === 'flag'"
+                    class="h-3.5 w-3.5"
+                    :class="colorMap[dt.color].icon"
+                  />
+                  <Layers v-else class="h-3.5 w-3.5" :class="colorMap[dt.color].icon" />
+                  <span class="font-semibold text-forena-800">{{ dt.label }}</span>
+                  <!-- 미업로드 경고 표시 -->
+                  <span
+                    v-if="dt.key !== 'trade' ? !uploads[dt.key].fileName : uploads.trade.files.length === 0"
+                    class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
+                  >필수</span
+                  >
+                </div>
+              </td>
+              <td class="px-4 py-2.5 text-center">
+                <!-- trade: 파일 개수 표시 -->
+                <span v-if="dt.key === 'trade' && uploads.trade.files.length > 0" class="text-forena-700 font-medium">
+                    {{ uploads.trade.files.length }}개 파일
+                  </span>
+                <span v-else-if="dt.key !== 'trade' && uploads[dt.key].fileName" class="text-forena-700 font-medium">{{
                     uploads[dt.key].fileName
                   }}</span>
-                  <span v-else class="text-slate-400 italic">미등록</span>
-                </td>
-                <td class="px-4 py-2.5 text-center">
-                  <div class="flex items-center justify-center gap-1.5">
-                    <Loader2
-                      v-if="['uploading', 'analyzing'].includes(uploads[dt.key].status)"
-                      class="h-3 w-3 animate-spin text-sky-600"
-                    />
-                    <CheckCircle2
-                      v-else-if="uploads[dt.key].status === 'done'"
-                      class="h-3 w-3 text-emerald-500"
-                    />
-                    <FileWarning
-                      v-else-if="uploads[dt.key].status === 'error'"
-                      class="h-3 w-3 text-rose-500"
-                    />
-                    <span
-                      class="rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                      :class="getStatusClass(uploads[dt.key].status)"
-                    >
+                <span v-else class="text-slate-400 italic">미등록</span>
+              </td>
+              <td class="px-4 py-2.5 text-center">
+                <div class="flex items-center justify-center gap-1.5">
+                  <Loader2
+                    v-if="['uploading', 'analyzing'].includes(uploads[dt.key].status)"
+                    class="h-3 w-3 animate-spin text-sky-600"
+                  />
+                  <CheckCircle2
+                    v-else-if="uploads[dt.key].status === 'done'"
+                    class="h-3 w-3 text-emerald-500"
+                  />
+                  <FileWarning
+                    v-else-if="uploads[dt.key].status === 'error'"
+                    class="h-3 w-3 text-rose-500"
+                  />
+                  <span
+                    class="rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                    :class="getStatusClass(uploads[dt.key].status)"
+                  >
                       {{ getStatusLabel(uploads[dt.key].status) }}
                     </span>
-                  </div>
-                </td>
-                <td class="px-4 py-2.5 text-center tabular-nums font-bold">
+                </div>
+              </td>
+              <td class="px-4 py-2.5 text-center tabular-nums font-bold">
                   <span
                     v-if="uploads[dt.key].result"
                     :class="
@@ -874,34 +940,34 @@ function zoomOut() {
                   >
                     {{ uploads[dt.key].result.confidence }}%
                   </span>
-                  <span v-else class="text-slate-300">—</span>
-                </td>
-                <td class="px-4 py-2.5 text-center">
-                  <div class="flex items-center justify-end gap-1">
-                    <button
-                      v-if="uploads[dt.key].fileName && uploads[dt.key].status === 'idle'"
-                      @click="runAnalysis(dt.key)"
-                      class="rounded px-2 py-1 text-[10px] font-bold bg-flare-50 text-flare-700 hover:bg-flare-100"
-                    >
-                      분석 실행
-                    </button>
-                    <button
-                      v-if="uploads[dt.key].status === 'done'"
-                      @click="runAnalysis(dt.key)"
-                      class="rounded p-1 text-forena-500 hover:bg-forena-100"
-                    >
-                      <RefreshCw class="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      v-if="uploads[dt.key].fileName"
-                      @click="removeFile(dt.key)"
-                      class="rounded p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                    >
-                      <Trash2 class="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
+                <span v-else class="text-slate-300">—</span>
+              </td>
+              <td class="px-4 py-2.5 text-center">
+                <div class="flex items-center justify-end gap-1">
+                  <button
+                    v-if="(dt.key !== 'trade' ? uploads[dt.key].fileName : uploads.trade.files.length > 0) && uploads[dt.key].status === 'idle'"
+                    @click="runAnalysis(dt.key)"
+                    class="rounded px-2 py-1 text-[10px] font-bold bg-flare-50 text-flare-700 hover:bg-flare-100"
+                  >
+                    분석 실행
+                  </button>
+                  <button
+                    v-if="uploads[dt.key].status === 'done'"
+                    @click="runAnalysis(dt.key)"
+                    class="rounded p-1 text-forena-500 hover:bg-forena-100"
+                  >
+                    <RefreshCw class="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    v-if="dt.key !== 'trade' ? uploads[dt.key].fileName : uploads.trade.files.length > 0"
+                    @click="removeFile(dt.key)"
+                    class="rounded p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                  >
+                    <Trash2 class="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </td>
+            </tr>
             </tbody>
           </table>
         </div>
@@ -912,10 +978,17 @@ function zoomOut() {
             <span
               v-for="dt in DOC_TYPES"
               :key="dt.key"
-              :class="uploads[dt.key].fileName ? 'text-emerald-600 font-bold' : 'text-slate-400'"
+              :class="(dt.key !== 'trade' ? uploads[dt.key].fileName : uploads.trade.files.length > 0) ? 'text-emerald-600 font-bold' : 'text-slate-400'"
             >
-              <CheckCircle2 v-if="uploads[dt.key].fileName" class="inline h-3 w-3 mr-0.5" />
-              {{ uploads[dt.key].fileName ? dt.label + ' 등록됨' : dt.label + ' 미등록' }}
+              <CheckCircle2
+                v-if="dt.key !== 'trade' ? uploads[dt.key].fileName : uploads.trade.files.length > 0"
+                class="inline h-3 w-3 mr-0.5"
+              />
+              {{
+                dt.key !== 'trade'
+                  ? (uploads[dt.key].fileName ? dt.label + ' 등록됨' : dt.label + ' 미등록')
+                  : (uploads.trade.files.length > 0 ? dt.label + ' ' + uploads.trade.files.length + '개 등록됨' : dt.label + ' 미등록')
+              }}
             </span>
           </div>
         </div>
@@ -959,7 +1032,7 @@ function zoomOut() {
             <div class="flex items-center gap-1.5">
               <p class="text-sm font-bold text-forena-900">{{ dt.label }}</p>
               <span class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
-                >필수</span
+              >필수</span
               >
             </div>
           </div>
@@ -976,7 +1049,7 @@ function zoomOut() {
 
           <!-- 업로드 영역 -->
           <div
-            v-if="!uploads[dt.key].fileName"
+            v-if="dt.key !== 'trade' && !uploads[dt.key].fileName"
             class="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-6 text-center transition cursor-pointer"
             :class="colorMap[dt.color].dragBorder"
             @dragover="onDragOver"
@@ -1005,8 +1078,115 @@ function zoomOut() {
             <p class="mt-2 text-[11px] text-forena-400">{{ dt.acceptedFormats.join(' · ') }}</p>
           </div>
 
-          <!-- 파일 등록 후 -->
-          <div v-else class="rounded-xl border border-forena-100 bg-forena-50/30 p-3">
+          <!-- trade: 다중 파일 업로드 영역 -->
+          <div
+            v-if="dt.key === 'trade'"
+            class="flex flex-col gap-2"
+          >
+            <!-- 드롭존 (항상 표시, 파일 추가 가능) -->
+            <div
+              class="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-5 text-center transition cursor-pointer"
+              :class="colorMap[dt.color].dragBorder"
+              @dragover="onDragOver"
+              @drop="(e) => onDrop(dt.key, e)"
+            >
+              <Upload class="h-5 w-5 mb-1" :class="colorMap[dt.color].icon" />
+              <p class="text-xs font-semibold text-forena-700">
+                {{ uploads.trade.files.length > 0 ? '파일 추가' : '파일을 끌어다 놓거나' }}
+              </p>
+              <label class="mt-1.5 cursor-pointer rounded-lg px-3 py-1.5 text-[11px] font-bold text-white transition bg-emerald-600 hover:bg-emerald-700">
+                {{ uploads.trade.files.length > 0 ? '+ 파일 추가' : '파일 선택' }}
+                <input
+                  type="file"
+                  class="sr-only"
+                  multiple
+                  :accept="dt.acceptedFormats.join(',')"
+                  @change="(e) => onFileSelect('trade', e)"
+                />
+              </label>
+              <p class="mt-1.5 text-[11px] text-forena-400">{{ dt.acceptedFormats.join(' · ') }} · 여러 개 선택 가능</p>
+            </div>
+
+            <!-- 업로드된 파일 목록 -->
+            <div
+              v-if="uploads.trade.files.length > 0"
+              class="rounded-xl border border-forena-100 bg-forena-50/30 p-3 flex flex-col gap-1.5"
+            >
+              <div class="flex items-center justify-between mb-0.5">
+                <span class="text-[10px] font-bold text-forena-500 uppercase">
+                  업로드된 파일 {{ uploads.trade.files.length }}개
+                </span>
+                <button
+                  @click="removeFile('trade')"
+                  class="text-[10px] text-rose-400 hover:text-rose-600 font-bold"
+                >
+                  전체 삭제
+                </button>
+              </div>
+
+              <!-- 파일 하나씩 -->
+              <div
+                v-for="(f, i) in uploads.trade.files"
+                :key="f.name"
+                class="flex items-center gap-2 rounded-lg bg-white px-2.5 py-1.5 border border-forena-100"
+              >
+                <FileText class="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                <span class="flex-1 min-w-0 truncate text-[11px] font-semibold text-forena-800">{{ f.name }}</span>
+                <span class="text-[10px] text-forena-400 shrink-0">{{ (f.size / 1024).toFixed(0) }}KB</span>
+                <button
+                  @click="removeTradeFile(i)"
+                  :disabled="['uploading','analyzing'].includes(uploads.trade.status)"
+                  class="rounded p-0.5 text-slate-300 hover:text-rose-500 disabled:opacity-30"
+                >
+                  <X class="h-3 w-3" />
+                </button>
+              </div>
+
+              <!-- 프로그레스 바 -->
+              <div v-if="['uploading', 'analyzing'].includes(uploads.trade.status)" class="mt-1">
+                <div class="flex items-center justify-between mb-1 text-[10px] text-forena-500">
+                  <span>{{ uploads.trade.status === 'uploading' ? '업로드 중…' : 'AI 분석 중…' }}</span>
+                  <span class="tabular-nums font-bold">{{ Math.round(uploads.trade.progress) }}%</span>
+                </div>
+                <div class="h-1.5 overflow-hidden rounded-full bg-forena-100">
+                  <div
+                    class="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                    :style="{ width: uploads.trade.progress + '%' }"
+                  />
+                </div>
+              </div>
+
+              <!-- 완료 결과 -->
+              <div
+                v-if="uploads.trade.status === 'done' && uploads.trade.result"
+                class="grid grid-cols-2 gap-1.5 text-[10px] mt-1"
+              >
+                <div class="rounded bg-white px-2 py-1 text-center border border-forena-100">
+                  <p class="text-forena-400">공종 수</p>
+                  <p class="font-bold text-forena-800">{{ uploads.trade.result.trades }}종</p>
+                </div>
+                <div class="rounded bg-white px-2 py-1 text-center border border-forena-100">
+                  <p class="text-forena-400">세부 작업</p>
+                  <p class="font-bold text-forena-800">{{ uploads.trade.result.tasks }}건</p>
+                </div>
+                <div class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between border border-forena-100">
+                  <span class="text-forena-400">AI 신뢰도</span>
+                  <span class="font-bold text-amber-600">{{ uploads.trade.result.confidence }}%</span>
+                </div>
+              </div>
+
+              <!-- 오류 -->
+              <div
+                v-if="uploads.trade.status === 'error'"
+                class="rounded bg-rose-50 px-2 py-1.5 text-[11px] text-rose-700"
+              >
+                {{ uploads.trade.error || '분석 중 오류가 발생했습니다.' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- 파일 등록 후 (master / milestone) -->
+          <div v-if="dt.key !== 'trade' && uploads[dt.key].fileName" class="rounded-xl border border-forena-100 bg-forena-50/30 p-3">
             <div class="flex items-center gap-2 mb-2">
               <FileText class="h-4 w-4 text-forena-500 shrink-0" />
               <p class="flex-1 min-w-0 truncate text-xs font-semibold text-forena-800">
@@ -1024,10 +1204,10 @@ function zoomOut() {
             <div v-if="['uploading', 'analyzing'].includes(uploads[dt.key].status)" class="mb-2">
               <div class="flex items-center justify-between mb-1 text-[10px] text-forena-500">
                 <span>{{
-                  uploads[dt.key].status === 'uploading' ? '업로드 중…' : 'AI 분석 중…'
-                }}</span>
+                    uploads[dt.key].status === 'uploading' ? '업로드 중…' : 'AI 분석 중…'
+                  }}</span>
                 <span class="tabular-nums font-bold"
-                  >{{ Math.round(uploads[dt.key].progress) }}%</span
+                >{{ Math.round(uploads[dt.key].progress) }}%</span
                 >
               </div>
               <div class="h-1.5 overflow-hidden rounded-full bg-forena-100">
@@ -1083,24 +1263,6 @@ function zoomOut() {
                 <div class="rounded bg-white px-2 py-1 text-center">
                   <p class="text-forena-400">AI 신뢰도</p>
                   <p class="font-bold text-emerald-600">{{ uploads[dt.key].result.confidence }}%</p>
-                </div>
-              </template>
-              <template v-else>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">공종 수</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.trades }}종</p>
-                </div>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">세부 작업</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.tasks }}건</p>
-                </div>
-                <div
-                  class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between"
-                >
-                  <span class="text-forena-400">AI 신뢰도</span>
-                  <span class="font-bold text-amber-600"
-                    >{{ uploads[dt.key].result.confidence }}%</span
-                  >
                 </div>
               </template>
             </div>
@@ -1268,17 +1430,17 @@ function zoomOut() {
             <span
               class="rounded-lg bg-forena-100 px-2.5 py-1 text-[11px] font-bold text-forena-700"
             >
-              전체 {{ mockGanttTasks.length }}개 공정
+              전체 {{ previewTasks.length }}개 공정
             </span>
             <span
               class="rounded-lg bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 ring-1 ring-rose-200"
             >
-              CP {{ mockGanttTasks.filter((t) => t.isCritical).length }}개
+              CP {{ previewTasks.filter((t) => t.isCritical).length }}개
             </span>
             <span
               class="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-200"
             >
-              마일스톤 {{ mockMilestones.length }}개
+              마일스톤 {{ previewMilestones.length }}개
             </span>
           </div>
 
@@ -1303,7 +1465,7 @@ function zoomOut() {
           <span class="text-[11px] font-bold text-forena-700 mr-2">마일스톤</span>
           <div class="flex gap-1.5 mr-4">
             <span
-              v-for="m in mockMilestones"
+              v-for="m in previewMilestones"
               :key="m.id"
               class="flex items-center gap-1 rounded-md border border-forena-100 bg-white px-2 py-0.5 text-[10px] font-bold text-forena-700"
             >
@@ -1326,7 +1488,7 @@ function zoomOut() {
               </button>
               <span
                 class="border-x border-forena-200 px-2 text-[10px] font-bold tabular-nums text-forena-600 leading-[28px]"
-                >{{ ganttZoom }}x</span
+              >{{ ganttZoom }}x</span
               >
               <button @click="zoomIn" class="p-1.5 hover:bg-forena-50">
                 <ZoomIn class="h-3.5 w-3.5 text-forena-600" />
@@ -1354,7 +1516,7 @@ function zoomOut() {
                   <span>{{ grp.group }}</span>
                   <span
                     class="ml-auto rounded bg-white/70 px-1.5 py-0.5 text-[9px] tabular-nums text-forena-500"
-                    >{{ grp.items.length }}</span
+                  >{{ grp.items.length }}</span
                   >
                 </div>
                 <!-- 각 작업 -->
@@ -1367,7 +1529,7 @@ function zoomOut() {
                     <span
                       v-if="t.isCritical"
                       class="rounded bg-rose-100 px-1 py-0.5 text-[8px] font-bold text-rose-700"
-                      >CP</span
+                    >CP</span
                     >
                     <p class="truncate text-xs font-semibold text-forena-800">{{ t.name }}</p>
                   </div>
@@ -1414,8 +1576,8 @@ function zoomOut() {
                     class="relative h-9 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50"
                   >
                     <div
-                      v-for="m in mockMilestones.filter((ms) =>
-                        mockGanttTasks.find((t) => t.group === grp.group && t.isCritical),
+                      v-for="m in previewMilestones.filter((ms) =>
+                        previewTasks.find((t) => t.group === grp.group && t.isCritical),
                       )"
                       :key="`ms-${m.id}-${grp.group}`"
                       class="pointer-events-auto absolute top-1/2 z-[4] -translate-y-1/2"
@@ -1460,13 +1622,13 @@ function zoomOut() {
           class="flex flex-wrap items-center gap-4 border-t border-forena-100 bg-forena-50/40 px-6 py-2 text-[10px] text-slate-600"
         >
           <span class="inline-flex items-center gap-1.5"
-            ><span class="h-1.5 w-5 rounded-full bg-rose-500" />CP 공정</span
+          ><span class="h-1.5 w-5 rounded-full bg-rose-500" />CP 공정</span
           >
           <span class="inline-flex items-center gap-1.5"
-            ><span class="h-1.5 w-5 rounded-full bg-blue-500" />일반 공정</span
+          ><span class="h-1.5 w-5 rounded-full bg-blue-500" />일반 공정</span
           >
           <span class="inline-flex items-center gap-1.5"
-            ><span class="h-3 w-px bg-flare-500" />오늘</span
+          ><span class="h-3 w-px bg-flare-500" />오늘</span
           >
           <span class="ml-auto text-forena-400">가로 스크롤하여 전체 일정 확인</span>
         </div>
@@ -1475,24 +1637,32 @@ function zoomOut() {
         <div
           class="flex items-center justify-between border-t border-forena-200 bg-white px-6 py-4"
         >
-          <div class="text-[11px] text-forena-500">
-            <CheckCircle2 class="inline h-3.5 w-3.5 text-emerald-500 mr-1" />
-            공정표 확정 후에도 변경 요청을 통해 수정이 가능합니다.
+          <div class="flex flex-col gap-1">
+            <div class="text-[11px] text-forena-500">
+              <CheckCircle2 class="inline h-3.5 w-3.5 text-emerald-500 mr-1" />
+              공정표 확정 후에도 변경 요청을 통해 수정이 가능합니다.
+            </div>
+            <div v-if="confirmError" class="text-[11px] text-rose-600 font-semibold">
+              <AlertTriangle class="inline h-3 w-3 mr-1" />{{ confirmError }}
+            </div>
           </div>
           <div class="flex gap-2">
             <button
               @click="ganttPreviewModal = false"
-              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
+              :disabled="isConfirming"
+              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50 disabled:opacity-40"
             >
               다시 검토하기
             </button>
             <button
               @click="confirmAndNavigate"
-              class="inline-flex items-center gap-2 rounded-lg bg-forena-800 px-5 py-2 text-xs font-bold text-white hover:bg-forena-900 shadow-sm"
+              :disabled="isConfirming"
+              class="inline-flex items-center gap-2 rounded-lg bg-forena-800 px-5 py-2 text-xs font-bold text-white hover:bg-forena-900 shadow-sm disabled:opacity-60"
             >
-              <ShieldCheck class="h-3.5 w-3.5" />
-              공정표 확정하기
-              <ArrowRight class="h-3.5 w-3.5" />
+              <Loader2 v-if="isConfirming" class="h-3.5 w-3.5 animate-spin" />
+              <ShieldCheck v-else class="h-3.5 w-3.5" />
+              {{ isConfirming ? 'DB 저장 중…' : '공정표 확정하기' }}
+              <ArrowRight v-if="!isConfirming" class="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
