@@ -25,6 +25,21 @@ export async function postStaffingReset(rosterDate) {
   return await api.post(`${PATH}/reset`, {}, { params })
 }
 
+/**
+ * 최종배치(확정): 현재 staffing_assignment → 해당 일 attendance_record zone_main/zone_sub 반영, confirmed=true
+ * @param {string} [rosterDate] yyyy-MM-dd
+ * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
+ */
+export async function postStaffingSave(rosterDate) {
+  const params = {}
+  if (rosterDate) params.rosterDate = rosterDate
+  return await api.request({
+    method: 'POST',
+    url: `${PATH}/save`,
+    params,
+  })
+}
+
 /** STAFFING_003 — 기본구역 트리 */
 export async function getStaffingZones() {
   return await api.get(`${PATH}/zones`)

@@ -22,6 +22,7 @@ import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import {
   postStaffingAutoRecommend,
   postStaffingReset,
+  postStaffingSave,
   getStaffingZones,
   getZoneSubDetail,
   getZoneSubWorkers,
@@ -49,8 +50,10 @@ const T = {
   confirm: '배치 확정 및 저장',
   zoneByZoneTitle: '구역별 인력 현황',
   zoneReset: '초기화',
-  zoneResetConfirmTitle: '배치 초기화',
-  zoneResetWarn: '현재 작업중인 구역이 있을 수 있습니다.\n그래도 초기화 하시겠습니까?',
+  savePlacementConfirmTitle: '배치 확정 및 저장',
+  savePlacementConfirmWarn:
+    '배치 내용을 확인하여 근태 기록을 업데이트합니다.\n이대로 진행하시겠습니까?',
+  savePlacementConfirmProceed: '진행',
   workerPoolTitle: '작업자 현황',
   needPerson: '필요 인원',
   currentAssign: '현재 배치',
@@ -80,7 +83,6 @@ const T = {
   assignOverflowOk: '확인',
   count: '명',
   alertAuto: '부족 구역 위주로 투입 가능 인력을 자동 배치했습니다. (데모)',
-  alertSave: '현재 배치가 확정되어 저장되었습니다. (데모)',
   totalWorkers: '보드 총인원',
   poolListAggregate: '목록 집계',
   countUnit: '명',
@@ -472,24 +474,23 @@ async function removeFromSubZone(subZoneId, workerId) {
   }
 }
 
-const resetConfirmOpen = ref(false)
-
-function openResetConfirm() {
-  resetConfirmOpen.value = true
-}
-
-function closeResetConfirm() {
-  resetConfirmOpen.value = false
-}
-
-async function confirmResetAllZones() {
-  closeResetConfirm()
+async function resetAllZones() {
   try {
     await postStaffingReset(rosterDate.value)
     await reloadBoard()
   } catch (e) {
     pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
   }
+}
+
+const saveConfirmOpen = ref(false)
+
+function openSaveConfirm() {
+  saveConfirmOpen.value = true
+}
+
+function closeSaveConfirm() {
+  saveConfirmOpen.value = false
 }
 
 const assignOverflowOpen = ref(false)
@@ -772,9 +773,21 @@ async function autoRecommend() {
   }
 }
 
-function confirmSave() {
-  syncPublish()
-  window.alert(T.alertSave)
+async function executeFinalizeSave() {
+  closeSaveConfirm()
+  try {
+    const raw = await postStaffingSave(rosterDate.value)
+    const { assignedCount } = normalizeSaveSummaryRes(raw)
+    await reloadBoard()
+    pushToast(
+      assignedCount > 0
+        ? `배치 저장 완료. 근태 카드 구역 반영 ${assignedCount}건입니다.`
+        : '배치 저장 완료. 반영할 배치가 없습니다.',
+      'success',
+    )
+  } catch (e) {
+    pushToast(e?.message || '최종 배치 저장에 실패했습니다.', 'danger')
+  }
 }
 
 const zoneEditOpen = ref(false)
@@ -875,7 +888,7 @@ function zoneGroupAssignedSum(group) {
         <button
           type="button"
           class="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-forena-700 to-forena-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:from-forena-800 hover:to-forena-950"
-          @click="confirmSave"
+          @click="openSaveConfirm"
         >
           {{ T.confirm }}
         </button>
@@ -887,7 +900,7 @@ function zoneGroupAssignedSum(group) {
         <button
           type="button"
           class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-800"
-          @click="openResetConfirm"
+          @click="resetAllZones"
         >
           {{ T.zoneReset }}
         </button>
@@ -1472,52 +1485,52 @@ function zoneGroupAssignedSum(group) {
 
     <Teleport to="body">
       <div
-        v-if="resetConfirmOpen"
+        v-if="saveConfirmOpen"
         class="fixed inset-0 z-[95] flex items-center justify-center p-4"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="reset-confirm-title"
-        aria-describedby="reset-confirm-desc"
+        aria-labelledby="save-confirm-title"
+        aria-describedby="save-confirm-desc"
       >
         <button
           type="button"
           class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
           :aria-label="T.cancel"
-          @click="closeResetConfirm"
+          @click="closeSaveConfirm"
         />
         <div
           class="relative z-10 w-full max-w-sm rounded-2xl border border-forena-100 bg-white p-6 text-center shadow-xl ring-1 ring-black/5"
           @click.stop
         >
           <div
-            class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600 ring-1 ring-amber-200/80"
+            class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-forena-100 text-forena-700 ring-1 ring-forena-200/80"
             aria-hidden="true"
           >
             <AlertTriangle class="h-6 w-6 shrink-0" stroke-width="2" />
           </div>
-          <h3 id="reset-confirm-title" class="text-base font-bold text-forena-900">
-            {{ T.zoneResetConfirmTitle }}
+          <h3 id="save-confirm-title" class="text-base font-bold text-forena-900">
+            {{ T.savePlacementConfirmTitle }}
           </h3>
           <p
-            id="reset-confirm-desc"
+            id="save-confirm-desc"
             class="mt-3 whitespace-pre-line text-sm leading-relaxed text-forena-600"
           >
-            {{ T.zoneResetWarn }}
+            {{ T.savePlacementConfirmWarn }}
           </p>
           <div class="mt-6 flex flex-wrap justify-center gap-2">
             <button
               type="button"
               class="rounded-xl border border-forena-200 bg-white px-4 py-2 text-sm font-bold text-forena-700 hover:bg-forena-50"
-              @click="closeResetConfirm"
+              @click="closeSaveConfirm"
             >
               {{ T.cancel }}
             </button>
             <button
               type="button"
-              class="rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 px-4 py-2 text-sm font-bold text-white hover:from-rose-700 hover:to-rose-800"
-              @click="confirmResetAllZones"
+              class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-sm font-bold text-white hover:from-forena-800 hover:to-forena-950"
+              @click="executeFinalizeSave"
             >
-              {{ T.zoneReset }}
+              {{ T.savePlacementConfirmProceed }}
             </button>
           </div>
         </div>
