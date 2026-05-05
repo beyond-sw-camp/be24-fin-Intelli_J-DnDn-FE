@@ -56,11 +56,21 @@ const DOC_TYPES = [
   {
     key: 'milestone',
     label: '마일스톤 공정표',
-    desc: '착공, 골조완료, 준공 등 주요 마일스톤 일정을 담은 문서입니다. AI가 마일스톤 목록과 기준일을 추출합니다.',
+    desc: '전체 공정을 세부 공종 및 작업 단위로 나누어 일정과 진행 순서를 관리하는 문서입니다. AI가 공종별 작업 목록과 시작일, 종료일, 진행 흐름을 추출합니다..',
     icon: 'flag',
     required: false,
     acceptedFormats: ['.xlsx', '.xls', '.pdf', '.pptx'],
     color: 'amber',
+    aiCapabilities: ['마일스톤 일자 추출', '영향도 분석', '연관 공정 매핑'],
+  },
+  {
+    key: 'milestone',
+    label: '보할 공정표',
+    desc: '착공, 골조완료, 준공 등 주요 마일스톤 일정을 담은 문서입니다. AI가 마일스톤 목록과 기준일을 추출합니다.',
+    icon: 'flag',
+    required: false,
+    acceptedFormats: ['.xlsx', '.xls', '.pdf', '.pptx'],
+    color: 'pink',
     aiCapabilities: ['마일스톤 일자 추출', '영향도 분석', '연관 공정 매핑'],
   },
   {
@@ -137,6 +147,15 @@ const colorMap = {
     badge: 'bg-amber-100 text-amber-700',
     icon: 'text-amber-600',
     dragBorder: 'border-amber-400 bg-amber-50/40',
+  },
+  pink: {
+    bg: 'bg-pink-50',
+    text: 'text-pink-700',
+    ring: 'ring-pink-200',
+    dot: 'bg-pink-500',
+    badge: 'bg-pink-100 text-pink-700',
+    icon: 'text-pink-600',
+    dragBorder: 'border-pink-400 bg-pink-50/40',
   },
   teal: {
     bg: 'bg-emerald-50',
@@ -998,7 +1017,7 @@ function zoomOut() {
     <!-- ============================================================ -->
     <!-- 문서 업로드 카드 3종                                            -->
     <!-- ============================================================ -->
-    <div class="grid gap-4 lg:grid-cols-3">
+    <div class="grid gap-4 lg:grid-cols-4">
       <div
         v-for="dt in DOC_TYPES"
         :key="dt.key"
@@ -1017,7 +1036,9 @@ function zoomOut() {
                 ? 'bg-sky-100'
                 : dt.color === 'amber'
                   ? 'bg-amber-100'
-                  : 'bg-emerald-100'
+                  : dt.color === 'pink'
+                    ? 'bg-pink-100'
+                    : 'bg-emerald-100'
             "
           >
             <FileSpreadsheet
@@ -1064,7 +1085,9 @@ function zoomOut() {
                   ? 'bg-sky-600 hover:bg-sky-700'
                   : dt.color === 'amber'
                     ? 'bg-amber-600 hover:bg-amber-700'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
+                    : dt.color === 'pink'
+                      ? 'bg-pink-600 hover:bg-pink-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
               "
             >
               파일 선택
