@@ -34,6 +34,11 @@ import {
   tradeNeedsFromZoneSubRes,
   buildZoneUpdateBody,
 } from '@/utils/staffingAdapter'
+import {
+  fatigueTotalFromWorker,
+  fatigueIsHighRisk,
+  fatigueTooltipForWorker,
+} from '@/utils/fatigueUi'
 
 const T = {
   pageKicker: '투입 관리',
@@ -82,7 +87,8 @@ const T = {
   badgeAgency: '인력',
   tradeWarn:
     '이 구역에 필요한 직종과 맞지 않을 수 있습니다. 배치는 가능하며, 안전/산업 관점에서 확인해 주세요.',
-  fatigueTitle: '안전 주의: 전날 야간 근무 또는 연속 근무 일수가 높음 (피로도 누적 의십)',
+  fatigueTitle:
+    '피로도 80점 이상 고위험. 안전사고·연속근무·교대간격·공종 위험도 항목 합(상한 100)으로 산정됩니다.',
   skillCarpenter: '목공',
   skillRebar: '철근',
   skillWelder: '용접',
@@ -130,13 +136,7 @@ function workerTagOk(w) {
 }
 
 function fatigueScore(w) {
-  if (w && typeof w.fatigueScore === 'number') {
-    return Math.min(100, Math.max(0, Math.round(w.fatigueScore)))
-  }
-  const f = w.fatigue || {}
-  let s = (f.consecutiveDays ?? 0) * 12
-  if (f.nightShiftYesterday) s += 28
-  return Math.min(100, Math.round(s))
+  return fatigueTotalFromWorker(w)
 }
 
 function rosterDateToday() {
@@ -1023,8 +1023,13 @@ function zoneGroupAssignedSum(group) {
                         </td>
                         <td class="px-3 py-1.5">
                           <span
+                            :title="fatigueTooltipForWorker(w)"
                             class="tabular-nums font-bold"
-                            :class="fatigueScore(w) >= 70 ? 'text-rose-600' : 'text-forena-800'"
+                            :class="
+                              fatigueIsHighRisk(fatigueScore(w), w)
+                                ? 'text-rose-600'
+                                : 'text-forena-800'
+                            "
                           >
                             {{ fatigueScore(w) }}
                           </span>
@@ -1274,7 +1279,12 @@ function zoneGroupAssignedSum(group) {
                 <td class="px-3 py-3">
                   <span
                     class="font-bold tabular-nums"
-                    :class="fatigueScore(row.worker) >= 70 ? 'text-rose-600' : 'text-forena-900'"
+                    :title="fatigueTooltipForWorker(row.worker)"
+                    :class="
+                      fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
+                        ? 'text-rose-600'
+                        : 'text-forena-900'
+                    "
                   >
                     {{ fatigueScore(row.worker) }}
                   </span>
