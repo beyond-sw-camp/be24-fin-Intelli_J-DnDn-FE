@@ -19,7 +19,21 @@ import {
   employmentKindDisplay,
 } from '@/utils/workerUi'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
-import { STAFFING_INITIAL_ZONE_GROUPS, STAFFING_INITIAL_WAITING } from '@/data/staffingMockData'
+import {
+  postStaffingReset,
+  getStaffingZones,
+  getZoneSubDetail,
+  getZoneSubWorkers,
+  patchZoneSub,
+  deleteZoneSubWorker,
+  postZoneSubAssign,
+  getStaffingWorkerPool,
+} from '@/api/staffing'
+import {
+  mapAssignedWorkerRes,
+  tradeNeedsFromZoneSubRes,
+  buildZoneUpdateBody,
+} from '@/utils/staffingAdapter'
 
 const T = {
   pageKicker: '투입 관리',
@@ -116,11 +130,24 @@ function workerTagOk(w) {
 }
 
 function fatigueScore(w) {
+  if (w && typeof w.fatigueScore === 'number') {
+    return Math.min(100, Math.max(0, Math.round(w.fatigueScore)))
+  }
   const f = w.fatigue || {}
   let s = (f.consecutiveDays ?? 0) * 12
   if (f.nightShiftYesterday) s += 28
   return Math.min(100, Math.round(s))
 }
+
+function rosterDateToday() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+const rosterDate = ref(rosterDateToday())
 
 function affiliationDisplayCell(w) {
   return w.affiliationLine ?? formatAffiliationDisplay(w.affiliation)
@@ -164,9 +191,9 @@ function poolEmploymentBadgeClass(label) {
 const router = useRouter()
 
 /** @type {import('vue').Ref<Array<{ id: string, title: string, expanded: boolean, subZones: Array<{ id: string, title: string, expanded: boolean, required: number, tradeNeeds: { trade: string, need: number }[], workers: object[] }> }>>} */
-const zoneGroups = ref(JSON.parse(JSON.stringify(STAFFING_INITIAL_ZONE_GROUPS)))
+const zoneGroups = ref([])
 
-const waiting = ref(JSON.parse(JSON.stringify(STAFFING_INITIAL_WAITING)))
+const waiting = ref([])
 
 const toasts = ref([])
 let toastSeq = 0
@@ -326,8 +353,62 @@ function syncPublish() {
   publish(packState())
 }
 
+async function reloadWaitingPool() {
+  let affiliationKind
+  if (poolAffiliationFilter.value === 'direct') affiliationKind = 'DIRECT'
+  else if (poolAffiliationFilter.value === 'partner') affiliationKind = 'PARTNER'
+  const keyword = workerPoolSearch.value.trim()
+  const data = await getStaffingWorkerPool({
+    rosterDate: rosterDate.value,
+    affiliationKind,
+    keyword: keyword || undefined,
+    unassignedOnly: showOnlyUnassignedInPool.value,
+  })
+  const rows = data?.rows ?? []
+  waiting.value = rows.filter((r) => !r.assigned).map((r) => mapAssignedWorkerRes(r))
+}
+
+async function reloadBoard() {
+  try {
+    const mains = await getStaffingZones()
+    const groups = []
+    for (const zm of mains || []) {
+      const subZones = []
+      for (const szSum of zm.subZones || []) {
+        const [detail, assignedList] = await Promise.all([
+          getZoneSubDetail(szSum.idx),
+          getZoneSubWorkers(szSum.idx, rosterDate.value),
+        ])
+        const tradeNeeds = tradeNeedsFromZoneSubRes(detail?.tradeNeeds)
+        const workers = (assignedList || []).map((row) => mapAssignedWorkerRes(row))
+        subZones.push({
+          id: String(szSum.idx),
+          title: detail?.title ?? szSum.title,
+          expanded: true,
+          required: detail?.required ?? szSum.required,
+          tradeNeeds,
+          workers,
+        })
+      }
+      groups.push({
+        id: String(zm.idx),
+        title: zm.title,
+        expanded: true,
+        subZones,
+      })
+    }
+    zoneGroups.value = groups
+    await reloadWaitingPool()
+    syncPublish()
+  } catch (e) {
+    pushToast(e?.message || '인력 배치 정보를 불러오지 못했습니다.', 'danger')
+  }
+}
+
+let poolReloadTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null)
+
 onMounted(() => {
-  syncPublish()
+  reloadBoard()
 })
 
 function zoneFillRatio(subZone) {
@@ -375,38 +456,18 @@ function openWorkerProfile(w) {
   router.push({ name: 'siteWorkerProfile', params: { id: String(id) } })
 }
 
-function removeFromSubZone(subZoneId, workerId) {
+async function removeFromSubZone(subZoneId, workerId) {
   const found = findSubZone(subZoneId)
   if (!found) return
   const w = found.subZone.workers.find((x) => x.id === workerId)
-  found.subZone.workers = found.subZone.workers.filter((x) => x.id !== workerId)
-  if (w) {
-    waiting.value.push(
-      cloneWorker({
-        ...w,
-        id: 'w-' + String(++idSeq),
-      }),
-    )
+  const workerIdx = w?.workerIdx ?? Number(workerId)
+  if (workerIdx == null || Number.isNaN(workerIdx)) return
+  try {
+    await deleteZoneSubWorker(subZoneId, workerIdx, rosterDate.value)
+    await reloadBoard()
+  } catch (e) {
+    pushToast(e?.message || '구역에서 제거하지 못했습니다.', 'danger')
   }
-  syncPublish()
-}
-
-function resetAllZonesToWaiting() {
-  for (const g of zoneGroups.value) {
-    for (const sz of g.subZones) {
-      for (const w of sz.workers) {
-        waiting.value.push(
-          cloneWorker({
-            ...w,
-            id: 'w-' + String(++idSeq),
-          }),
-        )
-      }
-      sz.workers = []
-    }
-  }
-  selectedWaitingIds.value = []
-  syncPublish()
 }
 
 const resetConfirmOpen = ref(false)
@@ -419,9 +480,14 @@ function closeResetConfirm() {
   resetConfirmOpen.value = false
 }
 
-function confirmResetAllZones() {
+async function confirmResetAllZones() {
   closeResetConfirm()
-  resetAllZonesToWaiting()
+  try {
+    await postStaffingReset(rosterDate.value)
+    await reloadBoard()
+  } catch (e) {
+    pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
+  }
 }
 
 const assignOverflowOpen = ref(false)
@@ -583,12 +649,19 @@ watch(poolAffiliationFilter, (v) => {
   if (v !== 'partner') poolPartnerCompanyFilter.value = ''
 })
 
-watch(
-  [poolAffiliationFilter, poolPartnerCompanyFilter, workerPoolSearch, showOnlyUnassignedInPool],
-  () => {
-    selectedWaitingIds.value = []
-  },
-)
+watch(poolPartnerCompanyFilter, () => {
+  selectedWaitingIds.value = []
+})
+
+watch([poolAffiliationFilter, workerPoolSearch, showOnlyUnassignedInPool], () => {
+  selectedWaitingIds.value = []
+  clearTimeout(poolReloadTimer)
+  poolReloadTimer = setTimeout(() => {
+    reloadWaitingPool().catch((e) =>
+      pushToast(e?.message || '작업자 현황을 불러오지 못했습니다.', 'danger'),
+    )
+  }, 320)
+})
 
 const poolSelectableWaitingIds = computed(() =>
   staffingTableRows.value.filter((r) => r.selectable && r.waitingId).map((r) => r.waitingId),
@@ -625,7 +698,7 @@ function togglePoolHeaderSelectAll() {
   }
 }
 
-function assignSelectedWorkers() {
+async function assignSelectedWorkers() {
   const targetId = assignTargetSubZoneId.value
   if (!targetId || selectedWaitingIds.value.length === 0) {
     pushToast(T.assignNeedSelection, 'warning')
@@ -651,40 +724,40 @@ function assignSelectedWorkers() {
   }
 
   const ids = [...selectedWaitingIds.value]
+  const workerIndices = []
   for (const wid of ids) {
     const w = waiting.value.find((x) => x.id === wid)
     if (!w || !workerTagOk(w)) continue
     if (shouldWarnTradeMismatch(found.subZone, w)) {
       pushToast(T.tradeWarn, 'warning')
     }
-    waiting.value = waiting.value.filter((x) => x.id !== wid)
-    found.subZone.workers.push({
-      ...cloneWorker(w),
-      id: 'z-' + String(++idSeq),
-    })
+    const idx = w.workerIdx ?? Number(wid)
+    if (idx != null && !Number.isNaN(Number(idx))) workerIndices.push(Number(idx))
   }
-  selectedWaitingIds.value = []
-  syncPublish()
-  window.alert(T.assignDone)
+  const unique = [...new Set(workerIndices)]
+  if (!unique.length) return
+
+  try {
+    await postZoneSubAssign(Number(subZone.id), unique, rosterDate.value)
+    selectedWaitingIds.value = []
+    await reloadBoard()
+    window.alert(T.assignDone)
+  } catch (e) {
+    const msg = String(e?.message || '')
+    if (msg.includes('초과')) {
+      assignOverflowMeta.value = {
+        selected: unique.length,
+        remaining,
+      }
+      assignOverflowOpen.value = true
+    } else {
+      pushToast(msg || '투입에 실패했습니다.', 'danger')
+    }
+  }
 }
 
 function autoRecommend() {
-  const pool = waiting.value.filter(workerTagOk).map(cloneWorker)
-  waiting.value = waiting.value.filter((w) => !workerTagOk(w))
-  for (const { subZone } of flattenSubZones()) {
-    while (subZone.workers.length < subZone.required && pool.length) {
-      const w = pool.shift()
-      subZone.workers.push({ ...cloneWorker(w), id: 'z-' + String(++idSeq) })
-    }
-  }
-  for (const w of pool) {
-    waiting.value.push({
-      ...cloneWorker(w),
-      id: 'w-' + String(++idSeq),
-    })
-  }
-  syncPublish()
-  window.alert(T.alertAuto)
+  pushToast('자동 추천 배치 API(STAFFING_001)는 추후 연동 예정입니다.', 'info')
 }
 
 function confirmSave() {
@@ -727,7 +800,7 @@ function removeZoneEditRow(index) {
   zoneEditDraft.value.tradeRows.splice(index, 1)
 }
 
-function saveZoneEdit() {
+async function saveZoneEdit() {
   const draft = zoneEditDraft.value
   if (!draft) return
   const g = zoneGroups.value.find((x) => x.id === draft.groupId)
@@ -745,13 +818,14 @@ function saveZoneEdit() {
     if (!row.trade || need <= 0) continue
     merged[row.trade] = (merged[row.trade] || 0) + need
   }
-  const tradeNeeds = Object.entries(merged).map(([trade, need]) => ({ trade, need }))
-  sz.title = title
-  sz.tradeNeeds = tradeNeeds
-  const sum = tradeNeeds.reduce((s, t) => s + t.need, 0)
-  sz.required = sum > 0 ? sum : Math.max(sz.workers.length, 1)
-  syncPublish()
-  closeZoneEdit()
+  const tradeRows = Object.entries(merged).map(([trade, need]) => ({ trade, need }))
+  try {
+    await patchZoneSub(Number(sz.id), buildZoneUpdateBody(title, tradeRows))
+    closeZoneEdit()
+    await reloadBoard()
+  } catch (e) {
+    pushToast(e?.message || '구역 저장에 실패했습니다.', 'danger')
+  }
 }
 
 function toastClass(v) {
@@ -773,7 +847,9 @@ function zoneGroupAssignedSum(group) {
   <div class="space-y-6 pb-10">
     <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
       <div>
-        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">{{ T.pageKicker }}</p>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">
+          {{ T.pageKicker }}
+        </p>
         <h1 class="text-xl font-bold text-forena-900">{{ T.boardTitle }}</h1>
       </div>
       <div class="flex flex-wrap items-center gap-2">
@@ -929,11 +1005,7 @@ function zoneGroupAssignedSum(group) {
                           {{ T.poolEmpty }}
                         </td>
                       </tr>
-                      <tr
-                        v-for="w in sz.workers"
-                        :key="w.id"
-                        class="align-middle"
-                      >
+                      <tr v-for="w in sz.workers" :key="w.id" class="align-middle">
                         <td class="px-3 py-1.5" />
                         <td class="px-3 py-1.5">
                           <span class="font-semibold text-forena-900">{{ w.name }}</span>
