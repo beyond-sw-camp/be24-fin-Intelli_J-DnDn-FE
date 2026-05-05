@@ -1,5 +1,21 @@
 /** API ↔ 인력 배치 화면 모델 (STAFFING.md / StaffingDto) */
 
+/** STAFFING_001 `SaveSummaryRes` — 배치 성공·잔여 미배치 수 */
+export function normalizeSaveSummaryRes(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return { assignedCount: 0, unassignedCount: 0 }
+  }
+  const assigned =
+    typeof raw.assignedCount === 'number'
+      ? raw.assignedCount
+      : Number(raw.assigned_count) || 0
+  const unassigned =
+    typeof raw.unassignedCount === 'number'
+      ? raw.unassignedCount
+      : Number(raw.unassigned_count) || 0
+  return { assignedCount: assigned, unassignedCount: unassigned }
+}
+
 export const TRADE_UI_TO_API = {
   carpenter: 'CARPENTER',
   rebar: 'REBAR',

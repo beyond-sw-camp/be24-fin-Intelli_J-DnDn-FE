@@ -20,6 +20,7 @@ import {
 } from '@/utils/workerUi'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import {
+  postStaffingAutoRecommend,
   postStaffingReset,
   getStaffingZones,
   getZoneSubDetail,
@@ -31,6 +32,7 @@ import {
 } from '@/api/staffing'
 import {
   mapAssignedWorkerRes,
+  normalizeSaveSummaryRes,
   tradeNeedsFromZoneSubRes,
   buildZoneUpdateBody,
 } from '@/utils/staffingAdapter'
@@ -756,8 +758,18 @@ async function assignSelectedWorkers() {
   }
 }
 
-function autoRecommend() {
-  pushToast('자동 추천 배치 API(STAFFING_001)는 추후 연동 예정입니다.', 'info')
+async function autoRecommend() {
+  try {
+    const raw = await postStaffingAutoRecommend(rosterDate.value)
+    const { assignedCount, unassignedCount } = normalizeSaveSummaryRes(raw)
+    await reloadBoard()
+    pushToast(
+      `본사 직영 미배치 인력 기준 신규 배치 ${assignedCount}명, 잔여 미배치 ${unassignedCount}명입니다.`,
+      'success',
+    )
+  } catch (e) {
+    pushToast(e?.message || '자동 추천 배치에 실패했습니다.', 'danger')
+  }
 }
 
 function confirmSave() {

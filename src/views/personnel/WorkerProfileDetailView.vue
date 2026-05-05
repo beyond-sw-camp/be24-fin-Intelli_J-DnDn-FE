@@ -12,7 +12,7 @@ import {
   Download,
   Loader2,
   X,
-  Table2,
+  Eye,
 } from 'lucide-vue-next'
 import {
   fetchWorkerProfile,
@@ -593,7 +593,7 @@ const todayAttendanceChip = computed(() => {
                     :title="T.fatigueCriteriaAriaLabel"
                     @click="openFatigueCriteriaModal"
                   >
-                    <Table2 class="h-3.5 w-3.5" aria-hidden="true" />
+                    <Eye class="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
                 </dd>
               </div>

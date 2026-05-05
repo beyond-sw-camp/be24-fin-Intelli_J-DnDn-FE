@@ -5,6 +5,17 @@ import api from './index.js'
 const PATH = '/staffing'
 
 /**
+ * STAFFING_001 — 자동 추천 배치 (본사 DIRECT·WORKER·당일 PRESENT/LATE·미배치만)
+ * @param {string} [rosterDate] yyyy-MM-dd
+ * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
+ */
+export async function postStaffingAutoRecommend(rosterDate) {
+  const params = {}
+  if (rosterDate) params.rosterDate = rosterDate
+  return await api.post(`${PATH}/auto-recommend`, {}, { params })
+}
+
+/**
  * STAFFING_002 — 배치 초기화
  * @param {string} [rosterDate] yyyy-MM-dd
  */
