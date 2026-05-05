@@ -37,6 +37,8 @@ import {
   ZoomOut,
   Locate,
   Diamond,
+  Pencil,
+  Plus,
 } from 'lucide-vue-next'
 
 // =====================================================
@@ -654,6 +656,152 @@ async function confirmAndNavigate() {
   } finally {
     isConfirming.value = false
   }
+}
+
+// =====================================================
+// 공정 편집 모달
+// =====================================================
+const editModal = ref(false)
+const editingTask = ref(null) // 현재 편집 중인 task
+const editForm = ref({
+  group: '',      // 공종
+  name: '',       // 공정명
+  start: '',      // 시작일
+  end: '',        // 종료일
+  weight: 0,      // 보할율
+  isMilestone: false,
+  responsible: '', // 협력사
+})
+
+// 공종 목록 (선택 드롭다운용)
+const TRADE_OPTIONS = ['형틀', '전기', '방수', '골조', '설비', '철근', '토공', '마감', '기타']
+
+// 공정 행 클릭 → 편집 모달 오픈
+function openEditModal(task) {
+  editingTask.value = task
+  editForm.value = {
+    group: task.group,
+    name: task.name,
+    start: task.start,
+    end: task.end,
+    weight: task.weight ?? 0,
+    isMilestone: task.isMilestone ?? false,
+    responsible: task.responsible ?? '',
+  }
+  editModal.value = true
+}
+
+// 편집 저장
+function saveEdit() {
+  const t = editingTask.value
+  if (!t) return
+
+  t.group = editForm.value.group
+  t.sub = editForm.value.group
+  t.name = editForm.value.name
+  t.start = editForm.value.start
+  t.end = editForm.value.end
+  t.durDays = Math.max(1, Math.round((new Date(editForm.value.end) - new Date(editForm.value.start)) / 86400000) + 1)
+  t.weight = editForm.value.weight
+  t.isMilestone = editForm.value.isMilestone
+  t.responsible = editForm.value.responsible
+
+  // 마일스톤 자동 갱신: 공종별 가장 늦은 종료일로
+  rebuildMilestones()
+
+  editModal.value = false
+  editingTask.value = null
+}
+
+// 새 공정 추가
+const addModal = ref(false)
+const addForm = ref({
+  group: '기타',
+  name: '',
+  start: '',
+  end: '',
+  weight: 0,
+  isMilestone: false,
+  responsible: '',
+})
+
+function openAddModal() {
+  addForm.value = {
+    group: '기타',
+    name: '',
+    start: projectMeta.value.startDate,
+    end: projectMeta.value.startDate,
+    weight: 0,
+    isMilestone: false,
+    responsible: '',
+  }
+  addModal.value = true
+}
+
+function saveAdd() {
+  if (!addForm.value.name.trim()) return
+  if (!addForm.value.start || !addForm.value.end) return
+
+  const newId = previewTasks.value.length > 0
+    ? Math.max(...previewTasks.value.map(t => t.id)) + 1
+    : 1
+
+  previewTasks.value.push({
+    id: newId,
+    checked: false,
+    group: addForm.value.group,
+    sub: addForm.value.group,
+    name: addForm.value.name,
+    start: addForm.value.start,
+    end: addForm.value.end,
+    durDays: Math.max(1, Math.round((new Date(addForm.value.end) - new Date(addForm.value.start)) / 86400000) + 1),
+    prev: '',
+    next: '',
+    isCritical: false,
+    weight: addForm.value.weight,
+    confidence: 100,
+    reviewStatus: '승인',
+    location: '',
+    responsible: addForm.value.responsible,
+    requiredCount: 0,
+    equipment: [],
+    memo: '',
+    isMilestone: addForm.value.isMilestone,
+    sourceDocId: null,
+  })
+
+  rebuildMilestones()
+  addModal.value = false
+}
+
+// 공정 삭제
+function deleteTask(taskId) {
+  const idx = previewTasks.value.findIndex(t => t.id === taskId)
+  if (idx >= 0) {
+    previewTasks.value.splice(idx, 1)
+    rebuildMilestones()
+  }
+  editModal.value = false
+  editingTask.value = null
+}
+
+// 마일스톤 자동 재생성: 공종별 가장 늦은 종료일
+function rebuildMilestones() {
+  const groupLatest = new Map()
+  previewTasks.value.forEach(t => {
+    if (!groupLatest.has(t.group) || t.end > groupLatest.get(t.group).end) {
+      groupLatest.set(t.group, t)
+    }
+  })
+  previewMilestones.value = [...groupLatest.entries()].map(([group, t], i) => ({
+    id: i + 1,
+    name: `${group} 완료`,
+    date: t.end,
+    group,
+    relatedTask: t.name,
+    status: '예정',
+    impact: '중',
+  }))
 }
 
 function zoomIn() {
@@ -1558,11 +1706,12 @@ function zoomOut() {
                   >{{ grp.items.length }}</span
                   >
                 </div>
-                <!-- 각 작업 -->
+                <!-- 각 작업 — 클릭하면 편집 모달 -->
                 <div
                   v-for="t in grp.items"
                   :key="t.id"
-                  class="flex h-12 flex-col justify-center border-b border-forena-50 px-4 hover:bg-forena-50/60"
+                  @click="openEditModal(t)"
+                  class="flex h-12 flex-col justify-center border-b border-forena-50 px-4 hover:bg-forena-50/60 cursor-pointer group"
                 >
                   <div class="flex items-center gap-1">
                     <span
@@ -1570,7 +1719,13 @@ function zoomOut() {
                       class="rounded bg-rose-100 px-1 py-0.5 text-[8px] font-bold text-rose-700"
                     >CP</span
                     >
+                    <span
+                      v-if="t.isMilestone"
+                      class="rounded bg-blue-100 px-1 py-0.5 text-[8px] font-bold text-blue-700"
+                    >MS</span
+                    >
                     <p class="truncate text-xs font-semibold text-forena-800">{{ t.name }}</p>
+                    <Pencil class="h-3 w-3 text-forena-300 opacity-0 group-hover:opacity-100 ml-auto shrink-0" />
                   </div>
                   <p class="truncate text-[10px] text-slate-400">
                     보할 {{ t.weight }}% · 신뢰도
@@ -1656,7 +1811,7 @@ function zoomOut() {
           </div>
         </div>
 
-        <!-- 범례 -->
+        <!-- 범례 + 공정 추가 버튼 -->
         <div
           class="flex flex-wrap items-center gap-4 border-t border-forena-100 bg-forena-50/40 px-6 py-2 text-[10px] text-slate-600"
         >
@@ -1669,7 +1824,15 @@ function zoomOut() {
           <span class="inline-flex items-center gap-1.5"
           ><span class="h-3 w-px bg-flare-500" />오늘</span
           >
-          <span class="ml-auto text-forena-400">가로 스크롤하여 전체 일정 확인</span>
+          <span class="inline-flex items-center gap-1 text-forena-400">
+            <Pencil class="h-3 w-3" /> 공정 클릭 시 편집
+          </span>
+          <button
+            @click="openAddModal"
+            class="ml-auto inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-bold text-forena-700 hover:bg-forena-50"
+          >
+            <Plus class="h-3 w-3" /> 공정 추가
+          </button>
         </div>
 
         <!-- 모달 푸터 -->
@@ -1704,6 +1867,177 @@ function zoomOut() {
               <ArrowRight v-if="!isConfirming" class="h-3.5 w-3.5" />
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+    <!-- ============================================================ -->
+    <!-- 모달: 공정 편집                                               -->
+    <!-- ============================================================ -->
+    <div
+      v-if="editModal"
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
+      @click.self="editModal = false"
+    >
+      <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-center gap-3 border-b border-forena-100 bg-forena-50 px-5 py-4">
+          <Pencil class="h-4 w-4 text-flare-600" />
+          <h3 class="text-sm font-bold text-forena-900">공정 편집</h3>
+          <button @click="editModal = false" class="ml-auto rounded-lg p-1 hover:bg-forena-100">
+            <X class="h-4 w-4 text-slate-400" />
+          </button>
+        </div>
+
+        <div class="p-5 space-y-3">
+          <!-- 공종 선택 -->
+          <div>
+            <label class="text-[10px] font-bold uppercase text-forena-400">공종 <span class="text-rose-500">*</span></label>
+            <select v-model="editForm.group"
+                    class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400">
+              <option v-for="opt in TRADE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+            </select>
+          </div>
+
+          <!-- 공정명 -->
+          <div>
+            <label class="text-[10px] font-bold uppercase text-forena-400">공정명 <span class="text-rose-500">*</span></label>
+            <input v-model="editForm.name" type="text"
+                   class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+          </div>
+
+          <!-- 시작일 / 종료일 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">시작일</label>
+              <input v-model="editForm.start" type="date"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">종료일</label>
+              <input v-model="editForm.end" type="date"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+          </div>
+
+          <!-- 보할율 / 협력사 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">보할율 (%)</label>
+              <input v-model.number="editForm.weight" type="number" min="0" max="100" step="0.1"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">협력사</label>
+              <input v-model="editForm.responsible" type="text"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+          </div>
+
+          <!-- 마일스톤 체크 -->
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" v-model="editForm.isMilestone" class="rounded border-forena-300" />
+            <span class="text-xs text-forena-700">마일스톤으로 설정 (종료일이 마일스톤 날짜로 사용됩니다)</span>
+          </label>
+        </div>
+
+        <div class="flex items-center justify-between border-t border-forena-100 bg-forena-50/30 px-5 py-3">
+          <button
+            @click="deleteTask(editingTask?.id)"
+            class="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[11px] font-bold text-rose-600 hover:bg-rose-50"
+          >
+            <Trash2 class="h-3 w-3" /> 삭제
+          </button>
+          <div class="flex gap-2">
+            <button @click="editModal = false"
+                    class="rounded-lg border border-forena-200 bg-white px-4 py-1.5 text-xs font-bold text-forena-700 hover:bg-forena-50">
+              취소
+            </button>
+            <button @click="saveEdit"
+                    class="rounded-lg bg-forena-800 px-4 py-1.5 text-xs font-bold text-white hover:bg-forena-900">
+              저장
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 모달: 공정 추가                                               -->
+    <!-- ============================================================ -->
+    <div
+      v-if="addModal"
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
+      @click.self="addModal = false"
+    >
+      <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div class="flex items-center gap-3 border-b border-forena-100 bg-emerald-50 px-5 py-4">
+          <Plus class="h-4 w-4 text-emerald-600" />
+          <h3 class="text-sm font-bold text-forena-900">공정 추가</h3>
+          <button @click="addModal = false" class="ml-auto rounded-lg p-1 hover:bg-emerald-100">
+            <X class="h-4 w-4 text-slate-400" />
+          </button>
+        </div>
+
+        <div class="p-5 space-y-3">
+          <!-- 공종 선택 -->
+          <div>
+            <label class="text-[10px] font-bold uppercase text-forena-400">공종 <span class="text-rose-500">*</span></label>
+            <select v-model="addForm.group"
+                    class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400">
+              <option v-for="opt in TRADE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+            </select>
+          </div>
+
+          <!-- 공정명 -->
+          <div>
+            <label class="text-[10px] font-bold uppercase text-forena-400">공정명 <span class="text-rose-500">*</span></label>
+            <input v-model="addForm.name" type="text" placeholder="예: 기초 배근 작업"
+                   class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+          </div>
+
+          <!-- 시작일 / 종료일 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">시작일</label>
+              <input v-model="addForm.start" type="date"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">종료일</label>
+              <input v-model="addForm.end" type="date"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+          </div>
+
+          <!-- 보할율 / 협력사 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">보할율 (%)</label>
+              <input v-model.number="addForm.weight" type="number" min="0" max="100" step="0.1"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">협력사</label>
+              <input v-model="addForm.responsible" type="text"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+          </div>
+
+          <!-- 마일스톤 체크 -->
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" v-model="addForm.isMilestone" class="rounded border-forena-300" />
+            <span class="text-xs text-forena-700">마일스톤으로 설정</span>
+          </label>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/30 px-5 py-3">
+          <button @click="addModal = false"
+                  class="rounded-lg border border-forena-200 bg-white px-4 py-1.5 text-xs font-bold text-forena-700 hover:bg-forena-50">
+            취소
+          </button>
+          <button @click="saveAdd"
+                  class="rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
+            추가
+          </button>
         </div>
       </div>
     </div>
