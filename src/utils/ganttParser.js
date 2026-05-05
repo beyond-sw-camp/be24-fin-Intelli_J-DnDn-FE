@@ -1,5 +1,8 @@
 // src/utils/ganttParser.js
 
+/**
+ * 기존 JSON 공정표 파일 형식 파싱 (사용처: 파일 직접 업로드 방식)
+ */
 export function parseGanttJSON(raw) {
   const data = typeof raw === 'string' ? JSON.parse(raw) : raw
   const rawList = Array.isArray(data) ? data : (data.공정목록 ?? [])
@@ -32,9 +35,7 @@ export function parseGanttJSON(raw) {
   const nullItems = tasks.filter((t) => t.weight === null)
   const usedWeight = tasks.reduce((s, t) => s + (t.weight ?? 0), 0)
   const share = nullItems.length > 0 ? Math.floor((100 - usedWeight) / nullItems.length) : 0
-  nullItems.forEach((t) => {
-    t.weight = share
-  })
+  nullItems.forEach((t) => { t.weight = share })
   const gap = 100 - tasks.reduce((s, t) => s + t.weight, 0)
   if (gap > 0 && nullItems.length > 0) nullItems[nullItems.length - 1].weight += gap
 
@@ -116,45 +117,66 @@ function _nearestTask(date, tasks, group) {
   }).name
 }
 
-// 백엔드 WorkPlan 데이터 → 간트차트 형식으로 변환
+/**
+ * 백엔드 TradeProcessDto.Res 목록 → 간트차트 형식 변환
+ *
+ * 변경 내용 (기존 WorkPlanDto.Res 필드명 → TradeProcessDto.Res 필드명):
+ *  trade        → tradeName
+ *  name         → processName
+ *  startDate    → plannedStart
+ *  endDate      → plannedEnd
+ *  effectiveEnd → (제거, TradeProcess는 연장 없음)
+ *  manager      → partnerCompany (협력사)
+ *
+ * ScheduleChartView.vue의 loadGanttFromApi()에서 사용됩니다.
+ */
 export function parseFromApi(apiList) {
   if (!apiList || apiList.length === 0) return { tasks: [], milestones: [], projectInfo: {} }
 
   let idSeq = 1
-  const tasks = apiList.map((item) => ({
-    id: idSeq++,
-    checked: false,
-    group: item.trade ?? '기타',      // 공종 → 그룹
-    sub: item.trade ?? '기타',
-    name: item.name,
-    start: item.startDate,
-    end: item.effectiveEnd ?? item.endDate,
-    durDays: Math.round((new Date(item.effectiveEnd ?? item.endDate) - new Date(item.startDate)) / 86400000) + 1,
-    prev: '',
-    next: '',
-    isCritical: false,               // 백엔드에 없으므로 기본값
-    weight: 0,                       // 백엔드에 없으므로 기본값
-    confidence: 100,
-    reviewStatus: '승인',
-    location: item.location ?? '',
-    responsible: item.manager ?? '',
-    requiredCount: item.requiredCount ?? 0,
-    equipment: item.equipmentDisplay ? [item.equipmentDisplay] : [],
-    memo: item.note ?? '',
-    sourceDocId: null,
-  }))
+  const tasks = apiList
+    .filter(item => item.plannedStart && item.plannedEnd)
+    .map((item) => ({
+      id: idSeq++,
+      checked: false,
+      group: item.tradeName ?? '기타',      // 공종 → 그룹
+      sub: item.tradeName ?? '기타',
+      name: item.processName ?? '(이름 없음)',
+      start: item.plannedStart,
+      end: item.plannedEnd,
+      durDays: Math.round(
+        (new Date(item.plannedEnd) - new Date(item.plannedStart)) / 86400000,
+      ) + 1,
+      prev: '',
+      next: '',
+      isCritical: false,
+      weight: item.weightPct ?? 0,
+      confidence: 100,
+      reviewStatus: '승인',
+      location: '',
+      responsible: item.partnerCompany ?? '',
+      requiredCount: 0,
+      equipment: [],
+      memo: '',
+      isMilestone: item.isMilestone ?? false,
+      sourceDocId: null,
+    }))
 
-  // 보할 자동 균등 배분
-  const equalWeight = Math.floor(100 / tasks.length)
-  tasks.forEach((t, i) => {
-    t.weight = equalWeight
-  })
-  // 나머지 첫 번째 항목에 추가
-  if (tasks.length > 0) {
-    tasks[0].weight += 100 - equalWeight * tasks.length
+  // 보할 미입력 항목 균등 배분
+  const noWeight = tasks.filter((t) => !t.weight)
+  const usedWeight = tasks.reduce((s, t) => s + (t.weight ?? 0), 0)
+  if (noWeight.length > 0) {
+    const share = Math.floor((100 - usedWeight) / noWeight.length)
+    noWeight.forEach((t) => { t.weight = share })
+    // 나머지 보정
+    const gap = 100 - tasks.reduce((s, t) => s + t.weight, 0)
+    if (gap > 0 && noWeight.length > 0) noWeight[noWeight.length - 1].weight += gap
   }
 
-  // 시작일/종료일 자동 계산
+  if (tasks.length === 0) {
+    return { tasks: [], milestones: [], projectInfo: {} }
+  }
+
   const startDate = [...tasks].sort((a, b) => a.start.localeCompare(b.start))[0].start
   const endDate = [...tasks].sort((a, b) => b.end.localeCompare(a.end))[0].end
 
@@ -167,27 +189,42 @@ export function parseFromApi(apiList) {
     actualProgress: 0,
     totalTasks: tasks.length,
     cpTasks: 0,
-    weightSum: 100,
+    weightSum: tasks.reduce((s, t) => s + (t.weight ?? 0), 0),
     lastModified: new Date().toISOString().slice(0, 10),
     finalApprover: '',
   }
 
-  // 공종별 마지막 종료일로 마일스톤 자동 생성
-  const groupLatest = new Map()
-  tasks.forEach((t) => {
-    if (!groupLatest.has(t.group) || t.end > groupLatest.get(t.group).end) {
-      groupLatest.set(t.group, t)
-    }
-  })
-  const milestones = [...groupLatest.entries()].map(([group, t], i) => ({
-    id: i + 1,
-    name: `${group} 완료`,
-    date: t.end,
-    group,
-    relatedTask: t.name,
-    status: '예정',
-    impact: '중',
-  }))
+  // 마일스톤: isMilestone=true인 항목 우선, 없으면 공종별 마지막 날
+  const milestoneItems = tasks.filter(t => t.isMilestone)
+  let milestones
+
+  if (milestoneItems.length > 0) {
+    milestones = milestoneItems.map((t, i) => ({
+      id: i + 1,
+      name: t.name,
+      date: t.end,
+      group: t.group,
+      relatedTask: t.name,
+      status: '예정',
+      impact: '중',
+    }))
+  } else {
+    const groupLatest = new Map()
+    tasks.forEach((t) => {
+      if (!groupLatest.has(t.group) || t.end > groupLatest.get(t.group).end) {
+        groupLatest.set(t.group, t)
+      }
+    })
+    milestones = [...groupLatest.entries()].map(([group, t], i) => ({
+      id: i + 1,
+      name: `${group} 완료`,
+      date: t.end,
+      group,
+      relatedTask: t.name,
+      status: '예정',
+      impact: '중',
+    }))
+  }
 
   return { tasks, milestones, projectInfo }
 }

@@ -64,7 +64,7 @@ const DOC_TYPES = [
     aiCapabilities: ['마일스톤 일자 추출', '영향도 분석', '연관 공정 매핑'],
   },
   {
-    key: 'milestone',
+    key: 'weight',
     label: '보할 공정표',
     desc: '착공, 골조완료, 준공 등 주요 마일스톤 일정을 담은 문서입니다. AI가 마일스톤 목록과 기준일을 추출합니다.',
     icon: 'flag',
@@ -85,7 +85,7 @@ const DOC_TYPES = [
   },
 ]
 
-const API_BASE = 'http://localhost:8081'
+const API_BASE = 'http://localhost:8080'
 
 // =====================================================
 // 상태
@@ -93,11 +93,13 @@ const API_BASE = 'http://localhost:8081'
 const uploads = ref({
   master: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
   milestone: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
+  weight: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
   // trade는 여러 파일 지원 → files 배열로 관리 (fileName은 호환성 유지용)
   trade: { files: [], fileName: '', status: 'idle', progress: 0, result: null, error: '' },
 })
 
 const projectMeta = ref({
+  projectId: null,   // 실제 서비스에서는 로그인한 현장의 projectId를 주입
   siteName: '강남 복합개발 1공구',
   projectName: '강남 복합개발 1공구 신축공사',
   startDate: '2025-01-01',
@@ -300,25 +302,37 @@ function runAnalysis(typeKey) {
 }
 
 // =====================================================
-// 실제 API 호출: /work-plan/upload-pdf
-// masterSchedule, subSchedule, workPlans(배열) 전송
+// 단일 파일 업로드 → /master-schedule/upload-pdf
+// docType별로 개별 호출, TradeProcess 목록 반환
 // =====================================================
-async function callUploadApi() {
+async function uploadSingleDoc(docTypeLabel, file) {
   const formData = new FormData()
+  // projectId가 없으면 임시로 1 사용 (실제 서비스에서는 로그인 현장 ID)
+  formData.append('projectId', projectMeta.value.projectId ?? 1)
+  formData.append('docType', docTypeLabel)
+  formData.append('file', file)
 
-  // 백엔드 파라미터명: masterSchedule, subSchedule, workPlans
-  if (uploads.value.master.file) {
-    formData.append('masterSchedule', uploads.value.master.file)
-  }
-  if (uploads.value.milestone.file) {
-    formData.append('subSchedule', uploads.value.milestone.file)
-  }
-  // trade는 여러 파일 → 같은 키 'workPlans'로 여러 번 append
-  uploads.value.trade.files.forEach((f) => {
-    formData.append('workPlans', f)
+  const res = await fetch(`${API_BASE}/master-schedule/upload-pdf`, {
+    method: 'POST',
+    body: formData,
   })
 
-  // 진행 상태 UI: 모든 파일을 uploading으로
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(text || `HTTP ${res.status}`)
+  }
+
+  const json = await res.json()
+  // 응답: { data: { schedule: {...}, tradeProcesses: [...] } }
+  const data = json.data ?? json
+  return data.tradeProcesses ?? []
+}
+
+// =====================================================
+// 실제 API 호출: 각 docType별로 /master-schedule/upload-pdf 순차 호출
+// =====================================================
+async function callUploadApi() {
+  // 진행 상태 UI: 업로드된 파일 카드를 uploading으로
   DOC_TYPES.forEach((dt) => {
     if (uploads.value[dt.key].fileName) {
       uploads.value[dt.key].status = 'uploading'
@@ -326,7 +340,7 @@ async function callUploadApi() {
     }
   })
 
-  // 가상 프로그레스 바 (fetch는 업로드 진행률을 직접 알 수 없음)
+  // 가상 프로그레스 바
   const progressInterval = setInterval(() => {
     DOC_TYPES.forEach((dt) => {
       const u = uploads.value[dt.key]
@@ -346,58 +360,90 @@ async function callUploadApi() {
       })
     }, 1500)
 
-    const res = await fetch(`${API_BASE}/work-plan/upload-pdf`, {
-      method: 'POST',
-      body: formData,
-    })
+    // 각 docType별로 순차 호출하여 TradeProcess 수집
+    const allTradeProcesses = []
 
-    if (!res.ok) {
-      const text = await res.text()
-      throw new Error(text || `HTTP ${res.status}`)
+    // 마스터 공정표
+    if (uploads.value.master.file) {
+      const result = await uploadSingleDoc('마스터 공정표', uploads.value.master.file)
+      allTradeProcesses.push(...result)
+      uploads.value.master.status = 'done'
+      uploads.value.master.progress = 100
     }
 
-    const json = await res.json()
+    // 마일스톤 공정표
+    if (uploads.value.milestone.file) {
+      const result = await uploadSingleDoc('마일스톤 공정표', uploads.value.milestone.file)
+      allTradeProcesses.push(...result)
+      uploads.value.milestone.status = 'done'
+      uploads.value.milestone.progress = 100
+    }
 
-    // 백엔드 응답: { code, message, data: [...WorkPlanDto.Res], success }
-    const dataList = json.data ?? json
+    // 보할 공정표
+    if (uploads.value.weight.file) {
+      const result = await uploadSingleDoc('보할 공정표', uploads.value.weight.file)
+      allTradeProcesses.push(...result)
+      uploads.value.weight.status = 'done'
+      uploads.value.weight.progress = 100
+    }
 
-    if (!Array.isArray(dataList) || dataList.length === 0) {
+    // 공종별 시공계획서 (여러 파일 → 파일별 순차 호출)
+    if (uploads.value.trade.files.length > 0) {
+      for (const tradeFile of uploads.value.trade.files) {
+        const result = await uploadSingleDoc('공종별 시공계획서', tradeFile)
+        allTradeProcesses.push(...result)
+      }
+      uploads.value.trade.status = 'done'
+      uploads.value.trade.progress = 100
+    }
+
+    if (allTradeProcesses.length === 0) {
       throw new Error('AI 분석 결과가 비어 있습니다. 문서를 확인해주세요.')
     }
 
-    // 원본 API 데이터 보관 (확정 시 DB 저장용)
-    apiRawData.value = dataList
+    // 원본 API 데이터 보관 (확정 시 이미 DB 저장 완료이므로 참조용)
+    apiRawData.value = allTradeProcesses
 
     // parseFromApi로 간트차트 형식 변환
-    const parsed = parseFromApi(dataList)
+    // (ganttParser.js의 parseFromApi가 TradeProcessDto.Res 필드명 사용)
+    const parsed = parseFromApi(allTradeProcesses)
     previewTasks.value = parsed.tasks
     previewMilestones.value = parsed.milestones
 
-    // 각 카드 상태를 done으로 + result 요약 생성
-    const tradeSet = new Set(dataList.map((d) => d.trade).filter(Boolean))
-    uploads.value.master.status = 'done'
-    uploads.value.master.progress = 100
-    uploads.value.master.result = {
-      tasks: parsed.tasks.length,
-      cpTasks: parsed.tasks.filter((t) => t.isCritical).length,
-      dateRange: `${parsed.projectInfo.startDate} ~ ${parsed.projectInfo.endDate}`,
-      confidence: 88,
+    // 각 카드 result 요약 생성
+    const tradeSet = new Set(allTradeProcesses.map((d) => d.tradeName).filter(Boolean))
+
+    if (uploads.value.master.fileName) {
+      uploads.value.master.result = {
+        tasks: parsed.tasks.length,
+        cpTasks: parsed.tasks.filter((t) => t.isCritical).length,
+        dateRange: `${parsed.projectInfo.startDate} ~ ${parsed.projectInfo.endDate}`,
+        confidence: 88,
+      }
     }
-    uploads.value.milestone.status = 'done'
-    uploads.value.milestone.progress = 100
-    uploads.value.milestone.result = {
-      milestones: parsed.milestones.length,
-      firstDate: parsed.projectInfo.startDate,
-      lastDate: parsed.projectInfo.endDate,
-      confidence: 85,
+    if (uploads.value.milestone.fileName) {
+      uploads.value.milestone.result = {
+        milestones: parsed.milestones.length,
+        firstDate: parsed.projectInfo.startDate,
+        lastDate: parsed.projectInfo.endDate,
+        confidence: 85,
+      }
     }
-    uploads.value.trade.status = 'done'
-    uploads.value.trade.progress = 100
-    uploads.value.trade.result = {
-      trades: tradeSet.size,
-      tasks: parsed.tasks.length,
-      lowestConf: 80,
-      confidence: 82,
+    if (uploads.value.weight.fileName) {
+      const weightItems = allTradeProcesses.filter((d) => d.weightPct != null)
+      uploads.value.weight.result = {
+        tasks: weightItems.length,
+        totalWeight: weightItems.reduce((s, d) => s + (d.weightPct ?? 0), 0).toFixed(1),
+        confidence: 83,
+      }
+    }
+    if (uploads.value.trade.files.length > 0) {
+      uploads.value.trade.result = {
+        trades: tradeSet.size,
+        tasks: parsed.tasks.length,
+        lowestConf: 80,
+        confidence: 82,
+      }
     }
 
     currentStep.value = 3
@@ -589,38 +635,8 @@ async function confirmAndNavigate() {
   confirmError.value = ''
 
   try {
-    // 각 WorkPlan 항목을 /work-plan POST로 저장
-    const saveResults = []
-    for (const item of apiRawData.value) {
-      const payload = {
-        name: item.name,
-        trade: item.trade,
-        location: item.location,
-        planType: item.planType,
-        status: item.status,
-        startDate: item.startDate,
-        endDate: item.endDate,
-        partner: item.partner,
-        manager: item.manager,
-        contact: item.contact,
-        note: item.note,
-        workers: item.workers ?? [],
-        equipment: item.equipment ?? [],
-      }
-
-      const res = await fetch(`${API_BASE}/work-plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`저장 실패 (${item.name}): ${text}`)
-      }
-      const json = await res.json()
-      saveResults.push(json.data)
-    }
+    // 새 구조: AI 분석 시점에 MasterSchedule + TradeProcess가 이미 DB에 저장됨
+    // 확정 시에는 ganttStore에 간트차트 데이터만 저장하고 화면 이동
 
     // ganttStore에 간트차트 데이터 저장
     ganttStore.setData(previewTasks.value, previewMilestones.value, {
