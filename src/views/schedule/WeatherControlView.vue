@@ -21,7 +21,8 @@ import {
 } from 'lucide-vue-next'
 
 // ─── 환경 ─────────────────────────────────────────────────────────────────────
-const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8081').replace(/\/$/, '')
+// feat: VITE_API_BASE_URL로 통일 (api/index.js와 동일한 변수 사용)
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080').replace(/\/$/, '')
 
 const T = {
   title: '기상 관제',
@@ -135,9 +136,7 @@ const riskLevel = computed(() => {
   return { label: '낮음', tone: 'text-emerald-700 bg-emerald-100 border-emerald-200' }
 })
 
-// 대표 위험 (백엔드 RiskItem 리스트에서 첫 번째)
-const equipmentPrimary = computed(() => equipmentRisks.value[0] ?? null)
-const planPrimary = computed(() => planRisks.value[0] ?? null)
+// REVIEW: 기존 첫 번째 항목만 표시하던 computed 제거 — 템플릿에서 전체 리스트 렌더링으로 변경
 
 // 실시간 위험 통제 — '지금 현장에서 즉시 해야 하는 액션' 체크리스트
 // (AI 위험 통제 추천이 '분석/판단'이라면, 여기는 '액션/타임라인' 관점)
@@ -650,76 +649,80 @@ function rainNote(value) {
         </div>
 
         <div class="flex flex-1 flex-col gap-4 p-4 md:p-5">
-          <!-- 계획 대비 위험 -->
+          <!-- 계획 대비 위험 — 전체 리스트 표시 -->
           <div
             class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/50 p-6 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-rose-600" />
-            <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-4">
-              <div class="flex min-w-[86px] items-center gap-3 md:pt-1">
-                <span class="rounded-lg bg-rose-100 px-3.5 py-2 text-sm font-extrabold text-rose-800">AI</span>
-                <AlertTriangle class="h-5 w-5 text-rose-600" />
-              </div>
+            <div class="flex items-center gap-3 mb-4">
+              <span class="rounded-lg bg-rose-100 px-3.5 py-2 text-sm font-extrabold text-rose-800">AI</span>
+              <AlertTriangle class="h-5 w-5 text-rose-600" />
+              <h3 class="text-[18px] font-extrabold tracking-tight text-forena-900">{{ T.row3Title }}</h3>
+              <span class="ml-auto rounded-full border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-bold text-rose-700">
+                {{ planRisks.length }}건
+              </span>
+            </div>
 
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="flex flex-wrap items-center gap-2.5">
-                  <h3 class="text-[20px] font-extrabold tracking-tight text-forena-900">{{ T.row3Title }}</h3>
-                  <span
-                    v-if="planPrimary"
-                    class="rounded-md px-3 py-1 text-[12px] font-extrabold uppercase tracking-wider"
-                    :class="levelBadgeClass(planPrimary.level)"
-                  >
-                    {{ planPrimary.level }}
+            <div v-if="planRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+              <div
+                v-for="(risk, index) in planRisks"
+                :key="`plan-${index}-${risk.title}`"
+                class="rounded-xl border border-rose-100 bg-white/70 px-4 py-3"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <p class="text-[14px] font-extrabold text-forena-900 leading-5">{{ risk.title }}</p>
+                  <span class="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(risk.level)">
+                    {{ risk.level }}
                   </span>
                 </div>
-
-                <p v-if="planPrimary" class="text-[16px] font-semibold leading-8 text-slate-800">
-                  {{ planPrimary.reason }}
-                </p>
-                <p v-if="planPrimary?.action" class="rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm leading-7 text-rose-900">
-                  <span class="font-bold">권장 조치 </span>· {{ planPrimary.action }}
-                </p>
-                <p v-if="!planPrimary" class="text-sm font-medium text-slate-600">
-                  현재 계획 연동 위험은 감지되지 않았습니다.
+                <p class="text-[13px] leading-6 text-slate-700">{{ risk.reason }}</p>
+                <p v-if="risk.action" class="mt-1.5 text-[12px] leading-5 text-rose-800 font-semibold">
+                  권장 조치 · {{ risk.action }}
                 </p>
               </div>
             </div>
+
+            <p v-else class="text-sm font-medium text-slate-600">
+              현재 계획 연동 위험은 감지되지 않았습니다.
+            </p>
           </div>
 
-          <!-- 장비 통제 -->
+          <!-- 장비 통제 — 전체 리스트 표시 -->
           <div
             class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-violet-200/80 bg-gradient-to-br from-violet-50/80 via-white to-violet-50/40 p-6 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-violet-400 to-violet-600" />
-            <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-4">
-              <div class="flex min-w-[86px] items-center gap-3 md:pt-1">
-                <span class="rounded-lg bg-violet-100 px-3.5 py-2 text-sm font-extrabold text-violet-800">AI</span>
-                <Sparkles class="h-5 w-5 text-violet-600" />
-              </div>
+            <div class="flex items-center gap-3 mb-4">
+              <span class="rounded-lg bg-violet-100 px-3.5 py-2 text-sm font-extrabold text-violet-800">AI</span>
+              <Sparkles class="h-5 w-5 text-violet-600" />
+              <h3 class="text-[18px] font-extrabold tracking-tight text-forena-900">{{ T.row2Title }}</h3>
+              <span class="ml-auto rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-bold text-violet-700">
+                {{ equipmentRisks.length }}건
+              </span>
+            </div>
 
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="flex flex-wrap items-center gap-2.5">
-                  <h3 class="text-[20px] font-extrabold tracking-tight text-forena-900">{{ T.row2Title }}</h3>
-                  <span
-                    v-if="equipmentPrimary"
-                    class="rounded-md px-3 py-1 text-[12px] font-extrabold uppercase tracking-wider"
-                    :class="levelBadgeClass(equipmentPrimary.level)"
-                  >
-                    {{ equipmentPrimary.level }}
+            <div v-if="equipmentRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+              <div
+                v-for="(risk, index) in equipmentRisks"
+                :key="`equip-${index}-${risk.title}`"
+                class="rounded-xl border border-violet-100 bg-white/70 px-4 py-3"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <p class="text-[14px] font-extrabold text-forena-900 leading-5">{{ risk.title }}</p>
+                  <span class="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(risk.level)">
+                    {{ risk.level }}
                   </span>
                 </div>
-
-                <p v-if="equipmentPrimary" class="text-[16px] font-semibold leading-8 text-slate-800">
-                  {{ equipmentPrimary.reason }}
-                </p>
-                <p v-if="equipmentPrimary?.action" class="rounded-lg border border-violet-100 bg-white/60 px-3 py-2 text-sm leading-7 text-violet-900">
-                  <span class="font-bold">권장 조치 </span>· {{ equipmentPrimary.action }}
-                </p>
-                <p v-if="!equipmentPrimary" class="text-sm font-medium text-slate-600">
-                  현재 장비 통제 위험은 감지되지 않았습니다.
+                <p class="text-[13px] leading-6 text-slate-700">{{ risk.reason }}</p>
+                <p v-if="risk.action" class="mt-1.5 text-[12px] leading-5 text-violet-800 font-semibold">
+                  권장 조치 · {{ risk.action }}
                 </p>
               </div>
             </div>
+
+            <p v-else class="text-sm font-medium text-slate-600">
+              현재 장비 통제 위험은 감지되지 않았습니다.
+            </p>
           </div>
         </div>
       </div>
