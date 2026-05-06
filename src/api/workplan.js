@@ -4,11 +4,9 @@ const PATH = '/work-plan'
 
 const normalizeStatus = (status) => {
   if (!status) return '진행 예정'
-
   if (status === '계획') return '진행 예정'
   if (status === '검토 중') return '진행 예정'
   if (status === '확정') return '진행 예정'
-
   return status
 }
 
@@ -29,6 +27,13 @@ const toPlan = (dto) => {
 
   return {
     id: dto.idx,
+    tradeProcessId: dto.tradeProcessId ?? dto.trade_process_id ?? dto.tradeProcess?.idx ?? null,
+
+    tradeProcessName: dto.tradeProcessName ?? dto.trade_process_name ?? null,
+    parentWorkPlanId:
+      dto.parentWorkPlanId ?? dto.parent_work_plan_id ?? dto.parentWorkPlan?.idx ?? null,
+
+    parentWorkPlanName: dto.parentWorkPlanName ?? dto.parent_work_plan_name ?? null,
     name: dto.name,
     trade: dto.trade,
     location: dto.location,
@@ -37,6 +42,9 @@ const toPlan = (dto) => {
     start: dto.startDate,
     end: dto.endDate,
     actualStart: dto.actualStart || null,
+    actualPct: dto.actualPct ?? dto.actualProgress ?? null,
+    progressPct: dto.progressPct ?? dto.progress ?? null,
+    processProgress: dto.processProgress ?? null,
     requiredCount: dto.requiredCount ?? 0,
     workers: normalizeStringList(dto.workers),
     equipment: normalizeStringList(dto.equipment),
@@ -58,11 +66,14 @@ const toPlan = (dto) => {
 
 /**
  * 프론트 plan 객체 → 백엔드 Req
- * (plan 등록/수정 시 사용)
  */
 const toReq = (plan) => ({
+  // ── 1단계 추가 ────────────────────────────────────────────────────────────
+  tradeProcessId: plan.tradeProcessId || null,
+  // ──────────────────────────────────────────────────────────────────────────
   name: plan.name,
   trade: plan.trade,
+  parentWorkPlanId: plan.parentWorkPlanId || null,
   location: plan.location,
   planType: plan.planType,
   status: normalizeStatus(plan.status),
@@ -77,10 +88,6 @@ const toReq = (plan) => ({
   workers: Array.isArray(plan.workers) ? plan.workers : [],
   equipment: Array.isArray(plan.equipment) ? plan.equipment : [],
 })
-
-// =========================================================
-// API 함수들
-// =========================================================
 
 /**
  * 작업 계획 등록
