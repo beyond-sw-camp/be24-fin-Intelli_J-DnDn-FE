@@ -100,6 +100,9 @@ const L = {
 const docTypes = [
   L.tabWorkInstruction,
   L.tabDailyReport,
+  L.tabMasterSchedule,
+  L.tabSubSchedule,
+  L.tabMilestone,
   L.tabConstructionPlan,
 ]
 
@@ -107,6 +110,9 @@ const docTypes = [
 const defaultOriginMap = {
   [L.tabWorkInstruction]: 'hq',
   [L.tabDailyReport]: 'hq',
+  [L.tabMasterSchedule]: 'hq',
+  [L.tabSubSchedule]: 'hq',
+  [L.tabMilestone]: 'hq',
   [L.tabConstructionPlan]: 'partner',
 }
 
@@ -316,7 +322,9 @@ const sortDir = ref('desc')
 const currentPage = ref(1)
 const rowsPerPage = ref(10)
 
-const tabs = [L.tabAll, ...docTypes]
+// 아래 리스트 탭: 마스터/보할/마일스톤 공정표는 공정표 현황에서만 표시
+const SCHEDULE_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
+const tabs = [L.tabAll, ...docTypes.filter((t) => !SCHEDULE_TYPES.includes(t))]
 
 /* ───── 새 문서 업로드 폼 ───── */
 const newDoc = ref({
@@ -355,6 +363,15 @@ const filteredDocuments = computed(() => {
             (d.partnerName && d.partnerName.toLowerCase().includes(q)) ||
             d.uploader.toLowerCase().includes(q),
     )
+  }
+
+  // 날짜 범위 필터 (작업지시서·작업일보 탭에서만)
+  if (showDateFilter.value && (dateFilterStart.value || dateFilterEnd.value)) {
+    result = result.filter((d) => {
+      if (dateFilterStart.value && d.docDate < dateFilterStart.value) return false
+      if (dateFilterEnd.value && d.docDate > dateFilterEnd.value) return false
+      return true
+    })
   }
 
   result.sort((a, b) => {
@@ -446,6 +463,9 @@ const submitUpload = () => {
     const prefixMap = {
       [L.tabWorkInstruction]: 'WI',
       [L.tabDailyReport]: 'DR',
+      [L.tabMasterSchedule]: 'MS',
+      [L.tabSubSchedule]: 'SS',
+      [L.tabMilestone]: 'ML',
       [L.tabConstructionPlan]: 'CP',
     }
     const prefix = prefixMap[newDoc.value.docType] || 'DC'
@@ -485,7 +505,72 @@ const submitUpload = () => {
   }, 800)
 }
 
-/* ───── 고정 공정표 카드 ───── */
+/* ───── 날짜 필터 (작업지시서·작업일보 탭 전용) ───── */
+const dateFilterStart = ref('')
+const dateFilterEnd = ref('')
+
+const DATE_FILTER_TABS = [L.tabWorkInstruction, L.tabDailyReport]
+const showDateFilter = computed(() => DATE_FILTER_TABS.includes(currentTab.value))
+
+const applyQuickDate = (preset) => {
+  const today = new Date()
+  const fmt = (d) => d.toISOString().substring(0, 10)
+  if (preset === 'today') {
+    dateFilterStart.value = fmt(today)
+    dateFilterEnd.value = fmt(today)
+  } else if (preset === 'yesterday') {
+    const y = new Date(today); y.setDate(today.getDate() - 1)
+    dateFilterStart.value = fmt(y)
+    dateFilterEnd.value = fmt(y)
+  } else if (preset === 'thisWeek') {
+    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7))
+    dateFilterStart.value = fmt(mon)
+    dateFilterEnd.value = fmt(today)
+  } else if (preset === 'lastWeek') {
+    const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 7)
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    dateFilterStart.value = fmt(mon)
+    dateFilterEnd.value = fmt(sun)
+  } else if (preset === 'thisMonth') {
+    dateFilterStart.value = fmt(new Date(today.getFullYear(), today.getMonth(), 1))
+    dateFilterEnd.value = fmt(today)
+  } else if (preset === 'lastMonth') {
+    const first = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+    const last  = new Date(today.getFullYear(), today.getMonth(), 0)
+    dateFilterStart.value = fmt(first)
+    dateFilterEnd.value = fmt(last)
+  }
+  currentPage.value = 1
+}
+
+const clearDateFilter = () => {
+  dateFilterStart.value = ''
+  dateFilterEnd.value = ''
+  currentPage.value = 1
+}
+
+const activeDatePreset = computed(() => {
+  const today = new Date()
+  const fmt = (d) => d.toISOString().substring(0, 10)
+  const s = dateFilterStart.value
+  const e = dateFilterEnd.value
+  if (!s && !e) return ''
+  const todayStr = fmt(today)
+  const yStr = fmt(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1))
+  if (s === todayStr && e === todayStr) return 'today'
+  if (s === yStr && e === yStr) return 'yesterday'
+  const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay() + 6) % 7))
+  const monStr = fmt(mon)
+  if (s === monStr && e === todayStr) return 'thisWeek'
+  const lmon = new Date(today); lmon.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 7)
+  const lsun = new Date(lmon); lsun.setDate(lmon.getDate() + 6)
+  if (s === fmt(lmon) && e === fmt(lsun)) return 'lastWeek'
+  if (s === fmt(new Date(today.getFullYear(), today.getMonth(), 1)) && e === todayStr) return 'thisMonth'
+  const lf = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+  const ll = new Date(today.getFullYear(), today.getMonth(), 0)
+  if (s === fmt(lf) && e === fmt(ll)) return 'lastMonth'
+  return 'custom'
+})
 const PINNED_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
 
 const pinnedSchedules = computed(() =>
@@ -559,6 +644,9 @@ const docTypeBadgeClass = (type) => {
   const map = {
     '작업지시서': 'bg-forena-50 text-forena-700 ring-forena-200/70',
     '작업 일보': 'bg-flare-50 text-flare-600 ring-flare-200/70',
+    '마스터 공정표': 'bg-violet-50 text-violet-700 ring-violet-200/70',
+    '보할 공정표': 'bg-indigo-50 text-indigo-700 ring-indigo-200/70',
+    '마일스톤 공정표': 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200/70',
     '시공 계획서': 'bg-amber-50 text-amber-700 ring-amber-200/70',
   }
   return map[type] || 'bg-slate-50 text-slate-600 ring-slate-200/70'
@@ -567,51 +655,34 @@ const docTypeBadgeClass = (type) => {
 
 <template>
   <div class="space-y-6 pb-10">
-    <!-- ═══ 헤더 카드 ═══ -->
-    <div
-        class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-gradient-to-br from-white via-forena-50/50 to-flare-50/30 p-6 shadow-card"
-    >
-      <div
-          class="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-flare-400 via-forena-500 to-flare-500"
-      />
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex items-start gap-4">
-          <span
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md"
-          >
-            <Upload class="h-5 w-5" />
-          </span>
-          <div>
-            <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">
-              {{ L.kicker }}
-            </p>
-            <h2 class="text-gradient-brand text-xl font-bold tracking-tight">{{ L.title }}</h2>
-            <p class="mt-2 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ L.desc }}</p>
-          </div>
-        </div>
-        <div class="flex shrink-0 gap-2">
-          <button
-              type="button"
-              class="flex items-center gap-1.5 rounded-xl border border-forena-200/80 bg-white px-4 py-2.5 text-xs font-bold text-forena-700 shadow-sm transition hover:border-flare-300 hover:bg-flare-50/50"
-              @click="downloadExcel"
-          >
-            <Download class="h-3.5 w-3.5" />
-            {{ L.excel }}
-          </button>
-          <button
-              type="button"
-              class="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-5 py-2.5 text-xs font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950"
-              @click="showUploadDrawer = true"
-          >
-            <Plus class="h-3.5 w-3.5" />
-            {{ L.upload }}
-          </button>
-        </div>
+    <!-- ═══ 헤더 ═══ -->
+    <div class="flex shrink-0 flex-wrap items-center justify-between gap-3 mb-4">
+      <div>
+        <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">{{ L.kicker }}</p>
+        <h1 class="text-xl font-bold text-forena-900">{{ L.title }}</h1>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+            @click="downloadExcel"
+        >
+          <Download class="h-3.5 w-3.5 text-forena-400" />
+          {{ L.excel }}
+        </button>
+        <button
+            type="button"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
+            @click="showUploadDrawer = true"
+        >
+          <Plus class="h-3.5 w-3.5 text-flare-600" />
+          {{ L.upload }}
+        </button>
       </div>
     </div>
 
     <!-- ═══ 통계 카드 ═══ -->
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 ">
       <!-- 전체 -->
       <article
           class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
@@ -697,21 +768,19 @@ const docTypeBadgeClass = (type) => {
         <span class="text-[11px] text-slate-400">— 유형별 최신 1건 고정</span>
       </div>
       <!-- 리스트 헤더 -->
-      <div class="grid grid-cols-[180px_1fr_130px_110px_110px_80px_90px_72px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
+      <div class="grid grid-cols-[180px_1fr_130px_110px_110px_72px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
         <span>문서 유형</span>
         <span>파일명</span>
         <span>문서 코드</span>
         <span>문서 일자</span>
         <span>업로드 일자</span>
-        <span>버전</span>
-        <span class="text-center">상태</span>
         <span class="text-center">액션</span>
       </div>
       <!-- 리스트 행 -->
       <div
           v-for="item in pinnedSchedules"
           :key="item.type"
-          class="group grid grid-cols-[180px_1fr_130px_110px_110px_80px_90px_72px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
+          class="group grid grid-cols-[180px_1fr_130px_110px_110px_72px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
       >
         <!-- 문서 유형 -->
         <div class="flex items-center gap-2">
@@ -745,21 +814,6 @@ const docTypeBadgeClass = (type) => {
 
         <!-- 업로드 일자 -->
         <span class="text-xs text-slate-500">{{ item.doc ? formatDate(item.doc.uploadDate) : '—' }}</span>
-
-        <!-- 버전 -->
-        <span v-if="item.doc" class="inline-flex">
-          <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-600">{{ item.doc.version }}</span>
-        </span>
-        <span v-else class="text-xs text-slate-300">—</span>
-
-        <!-- 상태 -->
-        <div class="flex justify-center">
-          <span v-if="item.doc" class="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-bold" :class="statusBadge(item.doc.status)">
-            <component :is="statusIcon(item.doc.status)" class="h-2.5 w-2.5" />
-            {{ item.doc.status }}
-          </span>
-          <span v-else class="text-xs text-slate-300">—</span>
-        </div>
 
         <!-- 액션 -->
         <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
@@ -826,7 +880,7 @@ const docTypeBadgeClass = (type) => {
               ? 'bg-forena-500 text-white shadow-sm'
               : 'text-slate-500 hover:bg-forena-50 hover:text-forena-700'
           "
-            @click="currentTab = tab; currentPage = 1"
+            @click="currentTab = tab; currentPage = 1; clearDateFilter()"
         >
           {{ tab }}
         </button>
@@ -838,6 +892,63 @@ const docTypeBadgeClass = (type) => {
         >
           <RotateCcw class="h-3 w-3" />
           {{ L.resetFilter }}
+        </button>
+      </div>
+
+      <!-- 날짜 빠른 선택 (작업지시서·작업일보 탭 전용) -->
+      <div
+          v-if="showDateFilter"
+          class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
+      >
+        <CalendarDays class="h-3.5 w-3.5 shrink-0 text-forena-400" />
+        <span class="text-[11px] font-bold text-forena-500 shrink-0">날짜 필터</span>
+        <!-- 빠른 선택 프리셋 -->
+        <div class="flex flex-wrap gap-1">
+          <button
+              v-for="preset in [
+                { key: 'today', label: '오늘' },
+                { key: 'yesterday', label: '어제' },
+                { key: 'thisWeek', label: '이번 주' },
+                { key: 'lastWeek', label: '지난 주' },
+                { key: 'thisMonth', label: '이번 달' },
+                { key: 'lastMonth', label: '지난 달' },
+              ]"
+              :key="preset.key"
+              type="button"
+              class="rounded-md px-2.5 py-1 text-[11px] font-bold transition"
+              :class="
+                activeDatePreset === preset.key
+                  ? 'bg-forena-500 text-white shadow-sm'
+                  : 'border border-forena-200 bg-white text-slate-600 hover:border-forena-300 hover:bg-forena-50'
+              "
+              @click="applyQuickDate(preset.key)"
+          >{{ preset.label }}</button>
+        </div>
+        <!-- 직접 입력 -->
+        <div class="ml-1 flex items-center gap-1.5">
+          <input
+              v-model="dateFilterStart"
+              type="date"
+              class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+              @change="currentPage = 1"
+          />
+          <span class="text-[11px] text-slate-400">~</span>
+          <input
+              v-model="dateFilterEnd"
+              type="date"
+              class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+              @change="currentPage = 1"
+          />
+        </div>
+        <!-- 초기화 -->
+        <button
+            v-if="dateFilterStart || dateFilterEnd"
+            type="button"
+            class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
+            @click="clearDateFilter"
+        >
+          <X class="h-3 w-3" />
+          초기화
         </button>
       </div>
 
@@ -884,8 +995,7 @@ const docTypeBadgeClass = (type) => {
                   <ArrowUpDown class="h-3 w-3 text-slate-400" />
                 </span>
             </th>
-            <th class="px-4 py-3.5 font-semibold">{{ L.colVersion }}</th>
-            <th class="px-4 py-3.5 text-center font-semibold">{{ L.colStatus }}</th>
+            <th class="px-4 py-3.5 font-semibold">{{ L.colUploader }}</th>
             <th class="w-20 px-4 py-3.5 text-center font-semibold">{{ L.colActions }}</th>
           </tr>
           </thead>
@@ -971,23 +1081,8 @@ const docTypeBadgeClass = (type) => {
               {{ formatDate(doc.uploadDate) }}
             </td>
 
-            <!-- 버전 -->
-            <td class="px-4 py-3.5">
-                <span class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-bold text-slate-600">
-                  {{ doc.version }}
-                </span>
-            </td>
-
-            <!-- 상태 -->
-            <td class="px-4 py-3.5 text-center">
-                <span
-                    class="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold"
-                    :class="statusBadge(doc.status)"
-                >
-                  <component :is="statusIcon(doc.status)" class="h-3 w-3" />
-                  {{ doc.status }}
-                </span>
-            </td>
+            <!-- 업로드자 -->
+            <td class="px-4 py-3.5 text-xs text-slate-600">{{ doc.uploader }}</td>
 
             <!-- 액션 -->
             <td class="px-4 py-3.5 text-center">
