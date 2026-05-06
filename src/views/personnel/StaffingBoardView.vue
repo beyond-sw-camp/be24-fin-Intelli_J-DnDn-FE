@@ -157,15 +157,17 @@ function affiliationDisplayCell(w) {
   return w.affiliationLine ?? formatAffiliationDisplay(w.affiliation)
 }
 
-/** 소속 열: affiliationLine 의 조직 구간, 없으면 소속 문자열 */
+/** 소속 열: PARTNER → "구산토건 / 태양목공", DIRECT → "본사" */
 function staffingOrgCell(w) {
   const line = String(w?.affiliationLine ?? '').trim()
-  const idx = line.indexOf('/')
-  if (idx !== -1) {
-    const left = line.slice(0, idx).trim()
-    if (left) return left
+  const slashIdx = line.indexOf('/')
+  const left = slashIdx !== -1 ? line.slice(0, slashIdx).trim() : line
+  const companyName = left || formatAffiliationDisplay(w?.affiliation)
+  const detail = String(w?.partnerCompanyDetail ?? '').trim()
+  if (detail && companyName && companyName !== '본사') {
+    return `${companyName} / ${detail}`
   }
-  return formatAffiliationDisplay(w?.affiliation)
+  return companyName
 }
 
 /** 공종 열: affiliationLine 의 공종 구간, 없으면 skills 라벨 */
@@ -614,7 +616,23 @@ const staffingTableGrouped = computed(() => {
     if (b === '본사 직영') return 1
     return a.localeCompare(b, 'ko')
   })
-  return labels.map((label) => ({ label, rows: map.get(label) }))
+  return labels.map((label) => {
+    const groupRows = map.get(label)
+    const isDirect = label === '본사 직영'
+    if (isDirect) {
+      return { label, isDirect: true, rows: groupRows, subGroups: null }
+    }
+    // 협력사: 공정별 협력업체(partnerCompanyDetail) 기준 2차 그룹
+    const subMap = new Map()
+    for (const row of groupRows) {
+      const detail = String(row.worker.partnerCompanyDetail ?? '').trim() || '—'
+      if (!subMap.has(detail)) subMap.set(detail, [])
+      subMap.get(detail).push(row)
+    }
+    const subLabels = [...subMap.keys()].sort((a, b) => a.localeCompare(b, 'ko'))
+    const subGroups = subLabels.map((sl) => ({ label: sl, rows: subMap.get(sl) }))
+    return { label, isDirect: false, rows: groupRows, subGroups }
+  })
 })
 
 /** 그룹 접기 상태 — 키 없음 / true 는 펼침, false 만 접힘 */
@@ -627,6 +645,19 @@ function poolGroupIsOpen(label) {
 function togglePoolGroupExpanded(label) {
   const open = poolGroupExpanded.value[label] !== false
   poolGroupExpanded.value = { ...poolGroupExpanded.value, [label]: !open }
+}
+
+/** 협력사 그룹 내 공정별 협력업체 2차 접기 상태 */
+const poolSubGroupExpanded = ref(/** @type Record<string, boolean> */ ({}))
+
+function poolSubGroupIsOpen(groupLabel, subLabel) {
+  return poolSubGroupExpanded.value[`${groupLabel}::${subLabel}`] !== false
+}
+
+function togglePoolSubGroupExpanded(groupLabel, subLabel) {
+  const key = `${groupLabel}::${subLabel}`
+  const open = poolSubGroupExpanded.value[key] !== false
+  poolSubGroupExpanded.value = { ...poolSubGroupExpanded.value, [key]: !open }
 }
 
 function poolGroupSelectableIds(groupRows) {
@@ -1241,6 +1272,7 @@ function zoneGroupAssignedSum(group) {
               <td colspan="8" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
             </tr>
             <template v-for="grp in staffingTableGrouped" :key="grp.label">
+              <!-- 1차 그룹 헤더 (본사 직영 / 협력 건설사) -->
               <tr class="border-b border-forena-100 bg-indigo-50/75">
                 <td class="w-11 min-w-[2.75rem] px-3 py-2 align-middle">
                   <div class="flex items-center justify-center" @click.stop>
@@ -1270,69 +1302,167 @@ function zoneGroupAssignedSum(group) {
                   </div>
                 </td>
               </tr>
-              <tr
-                v-for="row in grp.rows"
-                v-show="poolGroupIsOpen(grp.label)"
-                :key="(row.waitingId || row.worker.id) + row.placement"
-                class="border-b border-forena-50 transition hover:bg-flare-50/30"
-              >
-                <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
-                  <div class="flex items-center justify-center">
-                    <input
-                      v-if="row.selectable && row.waitingId"
-                      type="checkbox"
-                      class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
-                      :checked="selectedWaitingIds.includes(row.waitingId)"
-                      @change="toggleSelectWaiting(row.waitingId)"
-                    />
-                  </div>
-                </td>
-                <td class="px-3 py-3">
-                  <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
-                </td>
-                <td class="px-3 py-3 text-xs font-medium">
-                  {{ staffingOrgCell(row.worker) }}
-                </td>
-                <td class="px-3 py-3 text-xs font-medium text-forena-700">
-                  {{ staffingTradeCell(row.worker) }}
-                </td>
-                <td class="px-3 py-3">
-                  <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
-                    {{ poolEmploymentDisplay(row.worker) }}
-                  </span>
-                </td>
-                <td class="px-3 py-3">
-                  <span
-                    class="font-bold tabular-nums"
-                    :title="fatigueTooltipForWorker(row.worker)"
-                    :class="
-                      fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
-                        ? 'text-rose-600'
-                        : 'text-forena-900'
-                    "
+
+              <!-- 본사 직영: 2차 그룹 없이 평면 나열 -->
+              <template v-if="grp.isDirect">
+                <tr
+                  v-for="row in grp.rows"
+                  v-show="poolGroupIsOpen(grp.label)"
+                  :key="(row.waitingId || row.worker.id) + row.placement"
+                  class="border-b border-forena-50 transition hover:bg-flare-50/30"
+                >
+                  <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                    <div class="flex items-center justify-center">
+                      <input
+                        v-if="row.selectable && row.waitingId"
+                        type="checkbox"
+                        class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
+                        :checked="selectedWaitingIds.includes(row.waitingId)"
+                        @change="toggleSelectWaiting(row.waitingId)"
+                      />
+                    </div>
+                  </td>
+                  <td class="px-3 py-3">
+                    <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
+                  </td>
+                  <td class="px-3 py-3 text-xs font-medium">{{ staffingOrgCell(row.worker) }}</td>
+                  <td class="px-3 py-3 text-xs font-medium text-forena-700">
+                    {{ staffingTradeCell(row.worker) }}
+                  </td>
+                  <td class="px-3 py-3">
+                    <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
+                      {{ poolEmploymentDisplay(row.worker) }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-3">
+                    <span
+                      class="font-bold tabular-nums"
+                      :title="fatigueTooltipForWorker(row.worker)"
+                      :class="
+                        fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
+                          ? 'text-rose-600'
+                          : 'text-forena-900'
+                      "
+                    >
+                      {{ fatigueScore(row.worker) }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-3">
+                    <span
+                      class="text-xs font-bold"
+                      :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
+                    >
+                      {{ row.placement }}
+                    </span>
+                  </td>
+                  <td class="px-3 py-3 text-center">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
+                      :title="T.workerDetail"
+                      @click="openWorkerProfile(row.worker)"
+                    >
+                      <ExternalLink class="h-3.5 w-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              </template>
+
+              <!-- 협력사: 공정별 협력업체 2차 그룹 -->
+              <template v-else>
+                <template v-for="sg in grp.subGroups" :key="sg.label">
+                  <!-- 2차 그룹 헤더 (공정별 협력업체) -->
+                  <tr
+                    v-show="poolGroupIsOpen(grp.label)"
+                    class="border-b border-forena-100 bg-purple-50/60"
                   >
-                    {{ fatigueScore(row.worker) }}
-                  </span>
-                </td>
-                <td class="px-3 py-3">
-                  <span
-                    class="text-xs font-bold"
-                    :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
+                    <td class="w-11 min-w-[2.75rem] px-3 py-1.5 align-middle" />
+                    <td colspan="7" class="py-1.5 pr-3 pl-6">
+                      <div class="flex min-w-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          class="inline-flex shrink-0 items-center justify-center rounded p-0.5 text-purple-700 hover:bg-white/80"
+                          @click="togglePoolSubGroupExpanded(grp.label, sg.label)"
+                        >
+                          <ChevronDown
+                            v-if="poolSubGroupIsOpen(grp.label, sg.label)"
+                            class="h-3.5 w-3.5"
+                          />
+                          <ChevronRight v-else class="h-3.5 w-3.5" />
+                        </button>
+                        <span class="text-[11px] font-bold text-purple-900">{{ sg.label }}</span>
+                        <span class="text-[10px] text-purple-500"
+                          >({{ sg.rows.length }}{{ T.countUnit }})</span
+                        >
+                      </div>
+                    </td>
+                  </tr>
+                  <!-- 2차 그룹 작업자 행 -->
+                  <tr
+                    v-for="row in sg.rows"
+                    v-show="poolGroupIsOpen(grp.label) && poolSubGroupIsOpen(grp.label, sg.label)"
+                    :key="(row.waitingId || row.worker.id) + row.placement"
+                    class="border-b border-forena-50 transition hover:bg-flare-50/30"
                   >
-                    {{ row.placement }}
-                  </span>
-                </td>
-                <td class="px-3 py-3 text-center">
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
-                    :title="T.workerDetail"
-                    @click="openWorkerProfile(row.worker)"
-                  >
-                    <ExternalLink class="h-3.5 w-3.5" />
-                  </button>
-                </td>
-              </tr>
+                    <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                      <div class="flex items-center justify-center">
+                        <input
+                          v-if="row.selectable && row.waitingId"
+                          type="checkbox"
+                          class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
+                          :checked="selectedWaitingIds.includes(row.waitingId)"
+                          @change="toggleSelectWaiting(row.waitingId)"
+                        />
+                      </div>
+                    </td>
+                    <td class="px-3 py-3">
+                      <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
+                    </td>
+                    <td class="px-3 py-3 text-xs font-medium">
+                      {{ staffingOrgCell(row.worker) }}
+                    </td>
+                    <td class="px-3 py-3 text-xs font-medium text-forena-700">
+                      {{ staffingTradeCell(row.worker) }}
+                    </td>
+                    <td class="px-3 py-3">
+                      <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
+                        {{ poolEmploymentDisplay(row.worker) }}
+                      </span>
+                    </td>
+                    <td class="px-3 py-3">
+                      <span
+                        class="font-bold tabular-nums"
+                        :title="fatigueTooltipForWorker(row.worker)"
+                        :class="
+                          fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
+                            ? 'text-rose-600'
+                            : 'text-forena-900'
+                        "
+                      >
+                        {{ fatigueScore(row.worker) }}
+                      </span>
+                    </td>
+                    <td class="px-3 py-3">
+                      <span
+                        class="text-xs font-bold"
+                        :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
+                      >
+                        {{ row.placement }}
+                      </span>
+                    </td>
+                    <td class="px-3 py-3 text-center">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
+                        :title="T.workerDetail"
+                        @click="openWorkerProfile(row.worker)"
+                      >
+                        <ExternalLink class="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                </template>
+              </template>
             </template>
           </tbody>
         </table>

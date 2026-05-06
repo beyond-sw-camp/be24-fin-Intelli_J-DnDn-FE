@@ -63,6 +63,7 @@ export function mapAssignedWorkerRes(apiRow) {
     name: apiRow.name ?? '',
     affiliation,
     affiliationLine: apiRow.affiliationLine ?? '',
+    partnerCompanyDetail: apiRow.partnerCompanyDetail ?? '',
     employmentKind: apiRow.employmentKind,
     fatigueScore: score,
     fatigueHighRisk: apiRow.fatigueHighRisk === true || apiRow.fatigue_high_risk === true,

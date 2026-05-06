@@ -23,8 +23,6 @@ import {
   fetchWorkerAccidents,
 } from '@/api/worker.js'
 import {
-  displayWorkerAffiliation,
-  displayWorkerTradeLine,
   employmentKindDisplay,
   pickWorkerTradeSubLabel,
   deriveAttendanceTag,
@@ -40,6 +38,7 @@ const T = {
   emergencyPhone: '비상 연락망',
   emergencyRelation: '관계',
   todayAttendance: '금일 근태',
+  employmentKind: '고용형태',
   blood: '혈액형',
   registered: '최초 등록일',
   fatigueScore: '피로도 점수',
@@ -129,9 +128,17 @@ function formatRegisteredAt(raw) {
 
 function mapJobRankKo(rank) {
   const r = String(rank ?? '').toUpperCase()
-  if (r === 'CHIEF') return '현장 총 책임자'
-  if (r === 'MANAGER') return '현장 관리자'
+  if (r === 'SITE_DIRECTOR') return '현장 총 책임자'
+  if (r === 'SECTION_LEADER') return '공종 책임자'
+  if (r === 'FIELD_SUPERVISOR') return '현장 관리자'
   return '작업자'
+}
+
+function jobRankBadgeClass(rank) {
+  if (rank === '현장 총 책임자') return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
+  if (rank === '공종 책임자') return 'bg-purple-50 text-purple-900 ring-1 ring-purple-200/80'
+  if (rank === '현장 관리자') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
 /** 브라우저 로컬 기준 YYYY-MM-DD */
@@ -222,16 +229,23 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
   const mergedForMeta = { ...p, subLabel: tradeText }
   const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
   const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
-  const metaAffiliationLine = `${displayWorkerAffiliation({
-    affiliationKind: p.affiliationKind,
-    partnerCompany: p.partnerCompany,
-  })} | ${displayWorkerTradeLine(mergedForMeta)} | ${employmentKindDisplay(p.employmentKind)}`
+  const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
+  const affiliationLabel =
+    affiliationKindUpper === 'DIRECT'
+      ? '본사'
+      : String(p.partnerCompany ?? '').trim() || '협력사'
+  const subAffilLabel =
+    affiliationKindUpper === 'DIRECT'
+      ? '직영'
+      : String(p.partnerCompanyDetail ?? '').trim() || pickWorkerTradeSubLabel(mergedForMeta) || '—'
+  const metaAffiliationLine = `${affiliationLabel} | ${subAffilLabel}`
 
   return {
     id: p.idx,
     name: p.name ?? '—',
     metaAffiliationLine,
     jobRank: mapJobRankKo(p.jobRank),
+    employmentKindLabel: employmentKindDisplay(p.employmentKind),
     phone: p.phone ?? '—',
     emergencyPhone: ePhone || '—',
     emergencyRelation: rel || '—',
@@ -537,7 +551,13 @@ const todayAttendanceChip = computed(() => {
             >
               {{ avatarLetter }}
             </div>
-            <h2 class="mt-4 text-lg font-bold text-forena-900">{{ profile.name }}</h2>
+            <div class="mt-4 flex items-center justify-center gap-2">
+              <span
+                class="inline-flex rounded-lg px-2.5 py-1 text-[10px] font-bold"
+                :class="jobRankBadgeClass(profile.jobRank)"
+              >{{ profile.jobRank }}</span>
+              <h2 class="text-lg font-bold text-forena-900">{{ profile.name }}</h2>
+            </div>
             <p class="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">
               {{ profile.metaAffiliationLine }}
             </p>
@@ -567,6 +587,10 @@ const todayAttendanceChip = computed(() => {
               <dd class="min-w-0 text-right font-medium text-forena-900">
                 {{ profile.emergencyRelation }}
               </dd>
+            </div>
+            <div class="flex justify-between gap-2">
+              <dt class="shrink-0 text-slate-500">{{ T.employmentKind }}</dt>
+              <dd class="font-medium text-forena-900">{{ profile.employmentKindLabel }}</dd>
             </div>
             <div class="flex justify-between gap-2">
               <dt class="shrink-0 text-slate-500">{{ T.blood }}</dt>
