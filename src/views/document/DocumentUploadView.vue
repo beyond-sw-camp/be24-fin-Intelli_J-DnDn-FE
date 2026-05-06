@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import {
   Upload,
   Search,
@@ -53,7 +53,7 @@ const L = {
   tabMasterSchedule: '마스터 공정표',
   tabSubSchedule: '보할 공정표',
   tabMilestone: '마일스톤 공정표',
-  tabConstructionPlan: '시공 계획서',
+  tabConstructionPlan: '공종별 시공계획서',
 
   colDocCode: '문서 코드',
   colDocType: '문서 유형',
@@ -101,18 +101,18 @@ const docTypes = [
   L.tabWorkInstruction,
   L.tabDailyReport,
   L.tabMasterSchedule,
-  L.tabSubSchedule,
   L.tabMilestone,
+  L.tabSubSchedule,
   L.tabConstructionPlan,
 ]
 
 /* ── 문서 유형 → 기본 작성 주체 매핑 ── */
 const defaultOriginMap = {
-  [L.tabWorkInstruction]: 'hq',
-  [L.tabDailyReport]: 'hq',
-  [L.tabMasterSchedule]: 'hq',
-  [L.tabSubSchedule]: 'hq',
-  [L.tabMilestone]: 'hq',
+  [L.tabWorkInstruction]:  'hq',
+  [L.tabDailyReport]:      'hq',
+  [L.tabMasterSchedule]:   'hq',
+  [L.tabMilestone]:        'hq',
+  [L.tabSubSchedule]:      'hq',
   [L.tabConstructionPlan]: 'partner',
 }
 
@@ -127,189 +127,87 @@ const partnerList = [
   '태양산업개발',
 ]
 
-/* ───── Mock 데이터 ───── */
-const documents = ref([
-  {
-    id: 1,
-    docCode: 'WI-2026-0501-001',
-    docType: '작업지시서',
-    fileName: '5월_1주차_작업지시서_골조.pdf',
-    fileExt: 'pdf',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-05-01',
-    uploadDate: '2026-05-01',
-    uploader: '김현장',
-    status: '승인',
-    version: 'v1.0',
-    fileSize: '2.4 MB',
-  },
-  {
-    id: 2,
-    docCode: 'DR-2026-0501-001',
-    docType: '작업 일보',
-    fileName: '20260501_작업일보_A공구.xlsx',
-    fileExt: 'xlsx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-05-01',
-    uploadDate: '2026-05-01',
-    uploader: '박관리',
-    status: '승인',
-    version: 'v1.0',
-    fileSize: '580 KB',
-  },
-  {
-    id: 3,
-    docCode: 'MS-2026-0430-001',
-    docType: '마스터 공정표',
-    fileName: '2026_마스터공정표_전체.xlsx',
-    fileExt: 'xlsx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-04-30',
-    uploadDate: '2026-04-30',
-    uploader: '김현장',
-    status: '승인',
-    version: 'v3.2',
-    fileSize: '4.1 MB',
-  },
-  {
-    id: 4,
-    docCode: 'CP-2026-0502-001',
-    docType: '시공 계획서',
-    fileName: '전기공사_시공계획서_5월.pdf',
-    fileExt: 'pdf',
-    origin: 'partner',
-    partnerName: '한빛전기공사',
-    docDate: '2026-05-02',
-    uploadDate: '2026-05-02',
-    uploader: '이기사',
-    status: '검토 대기',
-    version: 'v1.0',
-    fileSize: '8.7 MB',
-  },
-  {
-    id: 5,
-    docCode: 'SS-2026-0428-001',
-    docType: '보할 공정표',
-    fileName: '보할공정표_형틀_4월.xlsx',
-    fileExt: 'xlsx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-04-28',
-    uploadDate: '2026-04-29',
-    uploader: '박관리',
-    status: '승인',
-    version: 'v2.1',
-    fileSize: '1.2 MB',
-  },
-  {
-    id: 6,
-    docCode: 'ML-2026-0425-001',
-    docType: '마일스톤 공정표',
-    fileName: '2026_마일스톤_Q2.pdf',
-    fileExt: 'pdf',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-04-25',
-    uploadDate: '2026-04-26',
-    uploader: '김현장',
-    status: '승인',
-    version: 'v1.0',
-    fileSize: '3.5 MB',
-  },
-  {
-    id: 7,
-    docCode: 'CP-2026-0503-001',
-    docType: '시공 계획서',
-    fileName: '비계공사_시공계획서_5월.hwp',
-    fileExt: 'hwp',
-    origin: 'partner',
-    partnerName: '대한건설(주)',
-    docDate: '2026-05-03',
-    uploadDate: '2026-05-03',
-    uploader: '최안전',
-    status: '검토 대기',
-    version: 'v1.0',
-    fileSize: '5.3 MB',
-  },
-  {
-    id: 8,
-    docCode: 'WI-2026-0504-001',
-    docType: '작업지시서',
-    fileName: '5월_2주차_작업지시서_설비.docx',
-    fileExt: 'docx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-05-04',
-    uploadDate: '2026-05-04',
-    uploader: '김현장',
-    status: '임시저장',
-    version: 'v0.1',
-    fileSize: '1.8 MB',
-  },
-  {
-    id: 9,
-    docCode: 'DR-2026-0502-001',
-    docType: '작업 일보',
-    fileName: '20260502_작업일보_B공구.xlsx',
-    fileExt: 'xlsx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-05-02',
-    uploadDate: '2026-05-02',
-    uploader: '박관리',
-    status: '승인',
-    version: 'v1.0',
-    fileSize: '620 KB',
-  },
-  {
-    id: 10,
-    docCode: 'CP-2026-0505-001',
-    docType: '시공 계획서',
-    fileName: '토공사_시공계획서_5월.pdf',
-    fileExt: 'pdf',
-    origin: 'partner',
-    partnerName: '명진토건(주)',
-    docDate: '2026-05-05',
-    uploadDate: '2026-05-05',
-    uploader: '정기술',
-    status: '반려',
-    version: 'v1.0',
-    fileSize: '6.2 MB',
-  },
-  {
-    id: 11,
-    docCode: 'MS-2026-0505-001',
-    docType: '마스터 공정표',
-    fileName: '2026_마스터공정표_수정.xlsx',
-    fileExt: 'xlsx',
-    origin: 'hq',
-    partnerName: null,
-    docDate: '2026-05-05',
-    uploadDate: '2026-05-06',
-    uploader: '김현장',
-    status: '검토 대기',
-    version: 'v3.3',
-    fileSize: '4.3 MB',
-  },
-  {
-    id: 12,
-    docCode: 'CP-2026-0504-001',
-    docType: '시공 계획서',
-    fileName: '중장비_시공계획서_5월.pdf',
-    fileExt: 'pdf',
-    origin: 'partner',
-    partnerName: '삼호중기',
-    docDate: '2026-05-04',
-    uploadDate: '2026-05-04',
-    uploader: '한중장',
-    status: '검토 대기',
-    version: 'v1.0',
-    fileSize: '7.1 MB',
-  },
-])
+/* ───── 문서 목록 (DB에서 로드) ───── */
+const documents = ref([])
+
+/* ═══════════════════════════════════════════════════════════════
+ * 백엔드 → 프론트 필드 매핑
+ * ──────────────────────────────────────────────────────────────
+ * 나중에 백엔드 JSON 형식이 바뀌면 이 함수만 수정하면 됩니다.
+ * 프론트 필드에 매핑되지 않는 항목은 자동으로 빈 값 처리됩니다.
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* ── docType enum → 프론트 라벨 매핑 (백엔드 DocType enum 기준) ── */
+const DOC_TYPE_MAP = {
+  'MASTER':      '마스터 공정표',
+  'MILESTONE':   '마일스톤 공정표',
+  'WEIGHT':      '보할 공정표',
+  'TRADE_PLAN':  '공종별 시공계획서',
+}
+
+function mapApiToFront(apiDoc) {
+  const fileName = apiDoc.fileName || ''
+  const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : ''
+  const createdAt = apiDoc.createAt || apiDoc.createdAt || ''
+  const dateOnly = createdAt ? createdAt.substring(0, 10) : ''
+
+  // origin이 없으면 'hq'를 기본값으로 (백엔드에서 오면 그 값 그대로)
+  const origin = apiDoc.origin ?? 'hq'
+
+  return {
+    id:          apiDoc.idx        ?? apiDoc.id       ?? Date.now(),
+    docCode:     apiDoc.docCode    ?? '',
+    docType:     DOC_TYPE_MAP[apiDoc.docType] ?? apiDoc.docType ?? '',
+    fileName:    fileName,
+    fileExt:     ext,
+    fileUrl:     apiDoc.fileUrl    ?? '',
+    origin:      origin,
+    partnerName: apiDoc.partnerName ?? null,
+    docDate:     apiDoc.docDate    ?? dateOnly,
+    uploadDate:  apiDoc.uploadDate ?? dateOnly,
+    uploader:    apiDoc.uploader   ?? '',
+    status:      apiDoc.status     ?? '검토 대기',   // ← 없으면 '검토 대기' 기본값
+    version:     apiDoc.version    ?? '',
+    fileSize:    apiDoc.fileSize   ?? '',
+  }
+}
+
+/* ── 백엔드 응답 배열 → 프론트 배열 변환 ── */
+function mapApiListToFront(apiList) {
+  return (apiList || []).map(mapApiToFront)
+}
+
+/* ── API 호출 (마운트 시 + 수동 새로고침) ── */
+const API_BASE = 'http://localhost:8080'
+const isLoading = ref(false)
+const apiError = ref('')
+
+async function fetchDocuments() {
+  isLoading.value = true
+  apiError.value = ''
+  try {
+    const res = await fetch(`${API_BASE}/document-management/1`)
+    const json = await res.json()
+    console.log('[API 응답]', json)
+
+    if (json.success && json.data) {
+      const list = Array.isArray(json.data) ? json.data : [json.data]
+      documents.value = mapApiListToFront(list)
+    } else {
+      documents.value = []
+    }
+  } catch (e) {
+    apiError.value = '서버 연결 실패 — 데이터를 불러올 수 없습니다.'
+    console.warn('[DocumentUpload] API fetch failed:', e)
+    documents.value = []
+  } finally {
+    isLoading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchDocuments()
+})
 
 /* ───── 상태 관리 ───── */
 const searchQuery = ref('')
@@ -322,9 +220,11 @@ const sortDir = ref('desc')
 const currentPage = ref(1)
 const rowsPerPage = ref(10)
 
-// 아래 리스트 탭: 마스터/보할/마일스톤 공정표는 공정표 현황에서만 표시
+// 공정표 3종: 위쪽 고정 섹션에만 표시, 아래 테이블 탭에서는 제외
 const SCHEDULE_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
-const tabs = [L.tabAll, ...docTypes.filter((t) => !SCHEDULE_TYPES.includes(t))]
+// 아래 테이블 탭: 공정표 3종 제외 (작업지시서·작업일보·공종별 시공계획서)
+const TABLE_DOC_TYPES = [L.tabWorkInstruction, L.tabDailyReport, L.tabConstructionPlan]
+const tabs = [L.tabAll, ...TABLE_DOC_TYPES]
 
 /* ───── 새 문서 업로드 폼 ───── */
 const newDoc = ref({
@@ -346,9 +246,14 @@ const summary = computed(() => ({
   pending: documents.value.filter((d) => d.status === '검토 대기').length,
 }))
 
-/* ───── 필터링 + 정렬 ───── */
+/* ───── 아래 테이블 전용: 공정표 3종 제외 ───── */
+const tableDocuments = computed(() =>
+    documents.value.filter((d) => !SCHEDULE_TYPES.includes(d.docType))
+)
+
+/* ───── 필터링 + 정렬 (공정표 3종 제외된 tableDocuments 기준) ───── */
 const filteredDocuments = computed(() => {
-  let result = [...documents.value]
+  let result = [...tableDocuments.value]
 
   if (currentTab.value !== L.tabAll) {
     result = result.filter((d) => d.docType === currentTab.value)
@@ -461,12 +366,12 @@ const submitUpload = () => {
   isSubmitting.value = true
   setTimeout(() => {
     const prefixMap = {
-      [L.tabWorkInstruction]: 'WI',
-      [L.tabDailyReport]: 'DR',
-      [L.tabMasterSchedule]: 'MS',
-      [L.tabSubSchedule]: 'SS',
-      [L.tabMilestone]: 'ML',
-      [L.tabConstructionPlan]: 'CP',
+      [L.tabWorkInstruction]:  'WI',
+      [L.tabDailyReport]:      'DR',
+      [L.tabMasterSchedule]:   'MS',
+      [L.tabMilestone]:        'ML',
+      [L.tabSubSchedule]:      'SS',
+      [L.tabConstructionPlan]: 'TP',
     }
     const prefix = prefixMap[newDoc.value.docType] || 'DC'
     const dateStr = newDoc.value.docDate.replace(/-/g, '').substring(2)
@@ -571,7 +476,7 @@ const activeDatePreset = computed(() => {
   if (s === fmt(lf) && e === fmt(ll)) return 'lastMonth'
   return 'custom'
 })
-const PINNED_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
+const PINNED_TYPES = [L.tabMasterSchedule, L.tabMilestone, L.tabSubSchedule]
 
 const pinnedSchedules = computed(() =>
     PINNED_TYPES.map((type) => {
@@ -642,12 +547,12 @@ const formatDate = (dateStr) => {
 
 const docTypeBadgeClass = (type) => {
   const map = {
-    '작업지시서': 'bg-forena-50 text-forena-700 ring-forena-200/70',
-    '작업 일보': 'bg-flare-50 text-flare-600 ring-flare-200/70',
-    '마스터 공정표': 'bg-violet-50 text-violet-700 ring-violet-200/70',
-    '보할 공정표': 'bg-indigo-50 text-indigo-700 ring-indigo-200/70',
-    '마일스톤 공정표': 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200/70',
-    '시공 계획서': 'bg-amber-50 text-amber-700 ring-amber-200/70',
+    '작업지시서':        'bg-forena-50 text-forena-700 ring-forena-200/70',
+    '작업 일보':         'bg-flare-50 text-flare-600 ring-flare-200/70',
+    '마스터 공정표':     'bg-violet-50 text-violet-700 ring-violet-200/70',
+    '마일스톤 공정표':   'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200/70',
+    '보할 공정표':       'bg-indigo-50 text-indigo-700 ring-indigo-200/70',
+    '공종별 시공계획서': 'bg-amber-50 text-amber-700 ring-amber-200/70',
   }
   return map[type] || 'bg-slate-50 text-slate-600 ring-slate-200/70'
 }
