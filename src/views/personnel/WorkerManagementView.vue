@@ -69,7 +69,7 @@ const T = {
   colAffil: '소속',
   colEmployment: '상용 / 일용',
   colRank: '직급',
-  colTrade: '공종',
+  colTrade: '공정',
   colTime: '출·퇴근',
   colStatus: '상태',
   empty: '조회된 근태 내역이 없습니다.',
@@ -87,14 +87,15 @@ const T = {
   calNextMonth: '다음 달',
 }
 
-/** 직급 표시 (현장 총 책임자 · 현장 관리자 · 작업자) */
-const JOB_RANK_CHIEF = '현장 총 책임자'
-const JOB_RANK_MANAGER = '현장 관리자'
+const JOB_RANK_SITE_DIRECTOR = '현장 총 책임자'
+const JOB_RANK_SECTION_LEADER = '공종 책임자'
+const JOB_RANK_FIELD_SUPERVISOR = '현장 관리자'
 const JOB_RANK_WORKER = '작업자'
 
 function jobRankBadgeClass(rank) {
-  if (rank === JOB_RANK_CHIEF) return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
-  if (rank === JOB_RANK_MANAGER) return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  if (rank === JOB_RANK_SITE_DIRECTOR) return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
+  if (rank === JOB_RANK_SECTION_LEADER) return 'bg-purple-50 text-purple-900 ring-1 ring-purple-200/80'
+  if (rank === JOB_RANK_FIELD_SUPERVISOR) return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
   return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
@@ -105,14 +106,12 @@ const affiliationCategoryOptions = [
   { value: 'partner', label: '협력사 소속' },
 ]
 
-/** 협력사 소속 선택 시 특정 협력사 (value는 데이터와 일치, label은 표시명만) */
+/** 협력 건설사 소속 선택 시 특정 협력 건설사 (value는 데이터와 일치, label은 표시명만) */
 const partnerDetailOptions = [
-  { value: '', label: '전체 협력사' },
-  { value: '협력사 (태양목공)', label: '태양목공' },
-  { value: '협력사 (대한철근)', label: '대한철근' },
-  { value: '협력사 (성신용접)', label: '성신용접' },
-  { value: '협력사 (강남인력사무소)', label: '강남인력사무소' },
-  { value: '협력사 (미래타일)', label: '미래타일' },
+  { value: '', label: '전체 협력 건설사' },
+  { value: '협력사 (구산토건)', label: '구산토건' },
+  { value: '협력사 (삼보이앤씨)', label: '삼보이앤씨' },
+  { value: '협력사 (삼원)', label: '삼원' },
 ]
 
 /** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
@@ -384,8 +383,9 @@ function formatApiTime(t) {
 
 function mapJobRankFromApi(rank) {
   const r = String(rank ?? '').toUpperCase()
-  if (r === 'CHIEF') return JOB_RANK_CHIEF
-  if (r === 'MANAGER') return JOB_RANK_MANAGER
+  if (r === 'SITE_DIRECTOR') return JOB_RANK_SITE_DIRECTOR
+  if (r === 'SECTION_LEADER') return JOB_RANK_SECTION_LEADER
+  if (r === 'FIELD_SUPERVISOR') return JOB_RANK_FIELD_SUPERVISOR
   return JOB_RANK_WORKER
 }
 
