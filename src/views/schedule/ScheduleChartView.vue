@@ -39,6 +39,8 @@ import {
   Sparkles,
   FilePlus2,
   MoveRight,
+  Plus,
+  Trash2,
 } from 'lucide-vue-next'
 import { parseGanttJSON } from '@/utils/ganttParser.js'
 
@@ -777,6 +779,203 @@ function scrollToToday() {
   if (el) el.scrollLeft = Math.max(0, dayOffset(today) * cellW.value - 200)
 }
 
+// ======================================================
+// 권한 데모
+// ======================================================
+const ROLES = ['현장 총책임자', '공정 책임자', '공정 관리자', '협력사 담당자']
+const currentRole = ref('현장 총책임자')
+const canConfirm = computed(() => currentRole.value === '현장 총책임자')
+
+// ======================================================
+// 공정 등록/수정 모달 (왼쪽 파일 업로드 + 오른쪽 수동 등록)
+// ======================================================
+const scheduleManageModal = ref(false)
+
+// --- 왼쪽: PDF 업로드 → AI 분석 ---
+const manageUploadFile = ref(null)
+const manageUploadFileName = ref('')
+const manageUploadDocType = ref('마스터 공정표')
+const manageUploadStatus = ref('idle') // idle | uploading | analyzing | done | error
+const manageUploadProgress = ref(0)
+const manageUploadError = ref('')
+const manageUploadResult = ref([]) // AI 분석 결과 TradeProcess 목록
+
+const MANAGE_DOC_TYPES = ['마스터 공정표', '마일스톤 공정표', '보할 공정표', '공종별 시공계획서']
+const API_BASE = 'http://localhost:8080'
+
+function onManageFileSelect(e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  manageUploadFile.value = f
+  manageUploadFileName.value = f.name
+  manageUploadStatus.value = 'idle'
+  manageUploadError.value = ''
+  e.target.value = ''
+}
+function onManageDrop(e) {
+  e.preventDefault()
+  const f = e.dataTransfer.files?.[0]
+  if (!f) return
+  manageUploadFile.value = f
+  manageUploadFileName.value = f.name
+  manageUploadStatus.value = 'idle'
+  manageUploadError.value = ''
+}
+function clearManageUpload() {
+  manageUploadFile.value = null
+  manageUploadFileName.value = ''
+  manageUploadStatus.value = 'idle'
+  manageUploadProgress.value = 0
+  manageUploadError.value = ''
+  manageUploadResult.value = []
+}
+
+async function runManageUploadAnalysis() {
+  if (!manageUploadFile.value) return
+  manageUploadStatus.value = 'uploading'
+  manageUploadProgress.value = 0
+
+  const progressInterval = setInterval(() => {
+    if (['uploading', 'analyzing'].includes(manageUploadStatus.value)) {
+      manageUploadProgress.value = Math.min(manageUploadProgress.value + Math.random() * 12, 88)
+    }
+  }, 300)
+
+  try {
+    setTimeout(() => {
+      if (manageUploadStatus.value === 'uploading') manageUploadStatus.value = 'analyzing'
+    }, 1200)
+
+    const formData = new FormData()
+    formData.append('docType', manageUploadDocType.value)
+    formData.append('file', manageUploadFile.value)
+
+    const res = await fetch(`${API_BASE}/master-schedule/analyze-pdf`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+
+    const json = await res.json()
+    const data = json.data ?? json
+    manageUploadResult.value = Array.isArray(data) ? data : []
+
+    manageUploadStatus.value = 'done'
+    manageUploadProgress.value = 100
+  } catch (err) {
+    manageUploadStatus.value = 'error'
+    manageUploadError.value = err.message
+  } finally {
+    clearInterval(progressInterval)
+  }
+}
+
+// AI 결과를 간트차트에 반영
+function applyUploadResult() {
+  if (manageUploadResult.value.length === 0) return
+  let nextId = aiTasks.value.length > 0 ? Math.max(...aiTasks.value.map(t => t.id)) + 1 : 1
+
+  for (const item of manageUploadResult.value) {
+    if (!item.processName || !item.plannedStart || !item.plannedEnd) continue
+    aiTasks.value.push({
+      id: nextId++,
+      checked: false,
+      group: item.tradeName ?? '기타',
+      sub: item.tradeName ?? '기타',
+      name: item.processName,
+      start: item.plannedStart,
+      end: item.plannedEnd,
+      durDays: Math.max(1, Math.round((new Date(item.plannedEnd) - new Date(item.plannedStart)) / 86400000) + 1),
+      prev: '',
+      next: '',
+      isCritical: false,
+      weight: item.weightPct ?? 0,
+      confidence: 85,
+      reviewStatus: '미검토',
+      location: '',
+      responsible: item.partnerCompany ?? '',
+      requiredCount: 0,
+      equipment: [],
+      memo: '',
+      isMilestone: item.isMilestone ?? false,
+      sourceDocId: null,
+    })
+  }
+  rebuildManageMilestones()
+  clearManageUpload()
+}
+
+// --- 오른쪽: 수동 공정 추가 ---
+const TRADE_OPTIONS = ['형틀', '전기', '방수', '골조', '설비', '철근', '토공', '마감', '기타']
+const manageAddForm = ref({
+  group: '기타',
+  name: '',
+  start: '',
+  end: '',
+  weight: 0,
+  isMilestone: false,
+  responsible: '',
+})
+
+function addManageTask() {
+  if (!manageAddForm.value.name.trim() || !manageAddForm.value.start || !manageAddForm.value.end) return
+
+  const nextId = aiTasks.value.length > 0 ? Math.max(...aiTasks.value.map(t => t.id)) + 1 : 1
+  aiTasks.value.push({
+    id: nextId,
+    checked: false,
+    group: manageAddForm.value.group,
+    sub: manageAddForm.value.group,
+    name: manageAddForm.value.name,
+    start: manageAddForm.value.start,
+    end: manageAddForm.value.end,
+    durDays: Math.max(1, Math.round((new Date(manageAddForm.value.end) - new Date(manageAddForm.value.start)) / 86400000) + 1),
+    prev: '',
+    next: '',
+    isCritical: false,
+    weight: manageAddForm.value.weight,
+    confidence: 100,
+    reviewStatus: '미검토',
+    location: '',
+    responsible: manageAddForm.value.responsible,
+    requiredCount: 0,
+    equipment: [],
+    memo: '',
+    isMilestone: manageAddForm.value.isMilestone,
+    sourceDocId: null,
+  })
+
+  rebuildManageMilestones()
+
+  // 폼 리셋
+  manageAddForm.value = { group: '기타', name: '', start: '', end: '', weight: 0, isMilestone: false, responsible: '' }
+}
+
+// 마일스톤 자동 재생성
+function rebuildManageMilestones() {
+  const groupLatest = new Map()
+  aiTasks.value.forEach(t => {
+    if (!groupLatest.has(t.group) || t.end > groupLatest.get(t.group).end) {
+      groupLatest.set(t.group, t)
+    }
+  })
+  milestones.value = [...groupLatest.entries()].map(([group, t], i) => ({
+    id: i + 1,
+    name: `${group} 완료`,
+    date: t.end,
+    group,
+    relatedTask: t.name,
+    status: '예정',
+    impact: '중',
+  }))
+  // ganttStore도 업데이트
+  ganttStore.setData(aiTasks.value, milestones.value, projectInfo.value)
+}
+
 onMounted(async () => {
   await loadGanttFromApi()
   await nextTick()
@@ -891,6 +1090,15 @@ onMounted(async () => {
             <option v-for="r in ROLES" :key="r">{{ r }}</option>
           </select>
         </div>
+
+        <!-- 공정 등록/수정 버튼 -->
+        <button
+          @click="scheduleManageModal = true"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-forena-900 shadow-sm"
+        >
+          <FilePlus2 class="h-3.5 w-3.5" />
+          공정 등록/수정
+        </button>
       </div>
     </div>
 
@@ -2890,6 +3098,191 @@ onMounted(async () => {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ============================================================ -->
+    <!-- 모달: 공정 등록/수정 (왼쪽 파일 업로드 + 오른쪽 수동 등록)      -->
+    <!-- ============================================================ -->
+    <div
+      v-if="scheduleManageModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+      @click.self="scheduleManageModal = false"
+    >
+      <div class="w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-2xl" style="max-height: 90vh; overflow-y: auto;">
+        <!-- 헤더 -->
+        <div class="flex items-center gap-3 border-b border-forena-100 bg-gradient-to-r from-forena-50 to-white px-6 py-4">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-flare-100">
+            <FilePlus2 class="h-5 w-5 text-flare-600" />
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-forena-900">공정 등록 / 수정</h3>
+            <p class="text-[11px] text-forena-500">파일을 업로드하여 AI 분석하거나, 직접 공정을 추가할 수 있습니다.</p>
+          </div>
+          <button @click="scheduleManageModal = false" class="ml-auto rounded-lg p-1.5 hover:bg-forena-100">
+            <X class="h-4 w-4 text-slate-400" />
+          </button>
+        </div>
+
+        <!-- 본문: 2열 -->
+        <div class="grid grid-cols-2 divide-x divide-forena-100">
+          <!-- 왼쪽: 파일 업로드 → AI 분석 -->
+          <div class="p-5 space-y-4">
+            <div class="flex items-center gap-2 mb-1">
+              <Upload class="h-4 w-4 text-sky-600" />
+              <h4 class="text-sm font-bold text-forena-900">파일 업로드 (AI 분석)</h4>
+            </div>
+
+            <!-- docType 선택 -->
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">공정표 종류</label>
+              <select v-model="manageUploadDocType"
+                      class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400">
+                <option v-for="dt in MANAGE_DOC_TYPES" :key="dt" :value="dt">{{ dt }}</option>
+              </select>
+            </div>
+
+            <!-- 파일 드롭존 -->
+            <div v-if="!manageUploadFileName"
+                 class="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-sky-300 bg-sky-50/30 px-4 py-8 text-center cursor-pointer"
+                 @dragover.prevent @drop="onManageDrop"
+            >
+              <Upload class="h-7 w-7 text-sky-500 mb-2" />
+              <p class="text-xs font-semibold text-forena-700">파일을 끌어다 놓거나</p>
+              <label class="mt-2 cursor-pointer rounded-lg bg-sky-600 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-sky-700">
+                파일 선택
+                <input type="file" class="sr-only" accept=".pdf" @change="onManageFileSelect" />
+              </label>
+              <p class="mt-2 text-[10px] text-forena-400">PDF</p>
+            </div>
+
+            <!-- 파일 선택됨 -->
+            <div v-else class="rounded-xl border border-forena-100 bg-forena-50/30 p-3 space-y-2">
+              <div class="flex items-center gap-2">
+                <FileText class="h-4 w-4 text-sky-500" />
+                <span class="flex-1 truncate text-xs font-semibold text-forena-800">{{ manageUploadFileName }}</span>
+                <button @click="clearManageUpload" class="rounded p-0.5 text-slate-400 hover:text-rose-600">
+                  <X class="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <!-- 프로그레스 -->
+              <div v-if="['uploading', 'analyzing'].includes(manageUploadStatus)">
+                <div class="flex justify-between text-[10px] text-forena-500 mb-1">
+                  <span>{{ manageUploadStatus === 'uploading' ? '업로드 중…' : 'AI 분석 중…' }}</span>
+                  <span class="font-bold">{{ Math.round(manageUploadProgress) }}%</span>
+                </div>
+                <div class="h-1.5 rounded-full bg-forena-100 overflow-hidden">
+                  <div class="h-full rounded-full bg-sky-500 transition-all" :style="{ width: manageUploadProgress + '%' }" />
+                </div>
+              </div>
+
+              <!-- 완료 -->
+              <div v-if="manageUploadStatus === 'done'" class="space-y-2">
+                <div class="rounded-lg bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
+                  <CheckCircle2 class="inline h-3.5 w-3.5 mr-1" />
+                  {{ manageUploadResult.length }}개 공정이 추출되었습니다.
+                </div>
+                <button @click="applyUploadResult"
+                        class="w-full rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">
+                  공정표에 반영하기
+                </button>
+              </div>
+
+              <!-- 에러 -->
+              <div v-if="manageUploadStatus === 'error'" class="rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+                {{ manageUploadError }}
+              </div>
+
+              <!-- AI 분석 버튼 -->
+              <button v-if="manageUploadStatus === 'idle'"
+                      @click="runManageUploadAnalysis"
+                      class="w-full rounded-lg bg-sky-600 px-3 py-2 text-xs font-bold text-white hover:bg-sky-700">
+                <BrainCircuit class="inline h-3.5 w-3.5 mr-1" />
+                AI 분석 시작
+              </button>
+            </div>
+          </div>
+
+          <!-- 오른쪽: 직접 공정 등록 -->
+          <div class="p-5 space-y-4">
+            <div class="flex items-center gap-2 mb-1">
+              <Pencil class="h-4 w-4 text-emerald-600" />
+              <h4 class="text-sm font-bold text-forena-900">직접 공정 등록</h4>
+            </div>
+
+            <!-- 공종 -->
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">공종 <span class="text-rose-500">*</span></label>
+              <select v-model="manageAddForm.group"
+                      class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400">
+                <option v-for="opt in TRADE_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+
+            <!-- 공정명 -->
+            <div>
+              <label class="text-[10px] font-bold uppercase text-forena-400">공정명 <span class="text-rose-500">*</span></label>
+              <input v-model="manageAddForm.name" type="text" placeholder="예: 기초 배근 작업"
+                     class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+            </div>
+
+            <!-- 시작일 / 종료일 -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[10px] font-bold uppercase text-forena-400">시작일 <span class="text-rose-500">*</span></label>
+                <input v-model="manageAddForm.start" type="date"
+                       class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+              </div>
+              <div>
+                <label class="text-[10px] font-bold uppercase text-forena-400">종료일 <span class="text-rose-500">*</span></label>
+                <input v-model="manageAddForm.end" type="date"
+                       class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+              </div>
+            </div>
+
+            <!-- 보할율 / 협력사 -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-[10px] font-bold uppercase text-forena-400">보할율 (%)</label>
+                <input v-model.number="manageAddForm.weight" type="number" min="0" max="100" step="0.1"
+                       class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+              </div>
+              <div>
+                <label class="text-[10px] font-bold uppercase text-forena-400">협력사</label>
+                <input v-model="manageAddForm.responsible" type="text"
+                       class="mt-1 w-full rounded-lg border border-forena-200 px-2.5 py-2 text-xs text-forena-800 outline-none focus:border-flare-400" />
+              </div>
+            </div>
+
+            <!-- 마일스톤 -->
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" v-model="manageAddForm.isMilestone" class="rounded border-forena-300" />
+              <span class="text-xs text-forena-700">마일스톤으로 설정</span>
+            </label>
+
+            <!-- 추가 버튼 -->
+            <button @click="addManageTask"
+                    class="w-full rounded-lg bg-forena-800 px-3 py-2.5 text-xs font-bold text-white hover:bg-forena-900">
+              <Plus class="inline h-3.5 w-3.5 mr-1" />
+              공정 추가
+            </button>
+          </div>
+        </div>
+
+        <!-- 하단: 현재 등록된 공정 요약 -->
+        <div class="border-t border-forena-100 bg-forena-50/30 px-6 py-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3 text-[11px] text-forena-600">
+              <span>전체 <strong class="text-forena-800">{{ aiTasks.length }}</strong>개 공정</span>
+              <span>마일스톤 <strong class="text-forena-800">{{ milestones.length }}</strong>개</span>
+              <span>공종 <strong class="text-forena-800">{{ [...new Set(aiTasks.map(t => t.group))].length }}</strong>개</span>
+            </div>
+            <button @click="scheduleManageModal = false"
+                    class="rounded-lg bg-forena-800 px-4 py-1.5 text-xs font-bold text-white hover:bg-forena-900">
+              완료
+            </button>
           </div>
         </div>
       </div>
