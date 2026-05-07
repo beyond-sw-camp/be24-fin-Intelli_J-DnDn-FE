@@ -15,6 +15,12 @@ const router = createRouter({
       meta: meta('로그인'),
     },
     {
+      path: '/site/upload',
+      name: 'siteUpload',
+      component: () => import('../views/schedule/FirstDocumentUpload.vue'), // 실제 경로로 수정
+      meta: meta('최초 공정표 문서 등록'),
+    },
+    {
       path: '/site/onboarding',
       name: 'siteOnboarding',
       component: () => import('../views/personnel/WorkerOnboardingView.vue'),
@@ -24,7 +30,7 @@ const router = createRouter({
       path: '/site/workers/manage',
       name: 'siteWorkerManagement',
       component: () => import('../views/personnel/WorkerManagementView.vue'),
-      meta: meta('작업자 관리'),
+      meta: meta('근무자 관리'),
     },
     {
       path: '/site/workers/manage/:id',

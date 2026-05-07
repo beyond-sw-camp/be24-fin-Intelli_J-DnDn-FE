@@ -16,7 +16,7 @@ import {
   getAffiliationKind,
   affiliationKindBadgeClass,
   formatAffiliationDisplay,
-} from '@/utils/workerAffiliation'
+} from '@/utils/workerUi'
 
 const props = defineProps({
   embed: { type: Boolean, default: false },
@@ -324,7 +324,9 @@ const getStatusBadge = (status) => {
           <ScanLine class="h-5 w-5" />
         </span>
         <div class="min-w-0 flex-1">
-          <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">{{ T.kicker }}</p>
+          <p class="text-[10px] font-bold uppercase tracking-[0.14em] text-flare-600">
+            {{ T.kicker }}
+          </p>
           <h2 class="text-gradient-brand text-xl font-bold tracking-tight">{{ T.title }}</h2>
           <p class="mt-2 max-w-3xl text-sm leading-relaxed text-forena-700/80">{{ T.desc }}</p>
           <p class="mt-3 text-[11px] font-medium text-forena-400">{{ T.breadcrumb }}</p>
@@ -360,10 +362,10 @@ const getStatusBadge = (status) => {
     <div
       class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card backdrop-blur-sm sm:p-5"
     >
-      <p class="text-[11px] font-bold uppercase tracking-wide text-forena-500">{{ T.kindBreakdown }}</p>
-      <div
-        class="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-forena-800"
-      >
+      <p class="text-[11px] font-bold uppercase tracking-wide text-forena-500">
+        {{ T.kindBreakdown }}
+      </p>
+      <div class="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-forena-800">
         <span class="tabular-nums">
           <span class="font-semibold text-indigo-700">{{ T.kindDirect }}</span>
           {{ kindBreakdown.direct }}{{ T.countPeople }}
@@ -390,7 +392,9 @@ const getStatusBadge = (status) => {
     >
       <div class="flex flex-wrap items-end gap-4">
         <div>
-          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterDate }}</label>
+          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+            T.filterDate
+          }}</label>
           <input
             v-model="filters.date"
             type="date"
@@ -398,17 +402,23 @@ const getStatusBadge = (status) => {
           />
         </div>
         <div>
-          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterSite }}</label>
+          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+            T.filterSite
+          }}</label>
           <select
             v-model="filters.siteName"
             class="w-48 rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
           >
             <option value="">{{ T.siteAll }}</option>
-            <option v-for="opt in siteOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            <option v-for="opt in siteOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
           </select>
         </div>
         <div>
-          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterAffil }}</label>
+          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+            T.filterAffil
+          }}</label>
           <select
             v-model="filters.affiliationType"
             class="w-44 rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
@@ -420,7 +430,9 @@ const getStatusBadge = (status) => {
           </select>
         </div>
         <div class="relative min-w-[200px] flex-1">
-          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.filterSearch }}</label>
+          <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+            T.filterSearch
+          }}</label>
           <Search
             class="pointer-events-none absolute bottom-2.5 left-3 h-4 w-4 text-flare-500/80"
             aria-hidden="true"
@@ -470,7 +482,9 @@ const getStatusBadge = (status) => {
               <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
               <th class="px-6 py-4 font-semibold">{{ T.colMan }}</th>
               <th class="px-6 py-4 text-center font-semibold">{{ T.colStatus }}</th>
-              <th v-if="showProfileColumn" class="px-6 py-4 text-center font-semibold">{{ T.colDetail }}</th>
+              <th v-if="showProfileColumn" class="px-6 py-4 text-center font-semibold">
+                {{ T.colDetail }}
+              </th>
               <th class="px-6 py-4 text-center font-semibold">{{ T.colDel }}</th>
             </tr>
           </thead>
@@ -523,9 +537,11 @@ const getStatusBadge = (status) => {
                   :class="getStatusBadge(record.status)"
                   >{{ record.status }}</span
                 >
-                <span v-if="record.isClosed" class="mt-1 block text-[9px] font-bold text-slate-400">{{
-                  T.closedTag
-                }}</span>
+                <span
+                  v-if="record.isClosed"
+                  class="mt-1 block text-[9px] font-bold text-slate-400"
+                  >{{ T.closedTag }}</span
+                >
               </td>
               <td v-if="showProfileColumn" class="px-6 py-4 text-center">
                 <button
@@ -584,13 +600,17 @@ const getStatusBadge = (status) => {
               </p>
               <p class="text-lg font-bold text-forena-900">
                 {{ selectedWorkerName }}
-                <span class="ml-1 text-xs font-normal text-slate-500">| {{ selectedWorkerSite }}</span>
+                <span class="ml-1 text-xs font-normal text-slate-500"
+                  >| {{ selectedWorkerSite }}</span
+                >
               </p>
             </div>
 
             <div class="space-y-4">
               <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.affilChange }}</label>
+                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                  T.affilChange
+                }}</label>
                 <select
                   v-model="editForm.affiliationType"
                   class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
@@ -603,7 +623,9 @@ const getStatusBadge = (status) => {
 
               <div class="grid grid-cols-2 gap-3">
                 <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockIn }}</label>
+                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                    T.clockIn
+                  }}</label>
                   <input
                     v-model="editForm.clockIn"
                     type="time"
@@ -611,7 +633,9 @@ const getStatusBadge = (status) => {
                   />
                 </div>
                 <div>
-                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.clockOut }}</label>
+                  <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                    T.clockOut
+                  }}</label>
                   <input
                     v-model="editForm.clockOut"
                     type="time"
@@ -621,7 +645,9 @@ const getStatusBadge = (status) => {
               </div>
 
               <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ T.manDays }}</label>
+                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
+                  T.manDays
+                }}</label>
                 <input
                   v-model="editForm.manDays"
                   type="number"
@@ -646,7 +672,9 @@ const getStatusBadge = (status) => {
             </div>
           </div>
 
-          <div class="flex shrink-0 justify-end gap-3 border-t border-forena-100 bg-forena-50/30 px-6 py-4">
+          <div
+            class="flex shrink-0 justify-end gap-3 border-t border-forena-100 bg-forena-50/30 px-6 py-4"
+          >
             <button
               type="button"
               class="rounded-xl border border-forena-200 bg-white px-5 py-2.5 text-sm font-bold text-forena-600 transition hover:bg-forena-50"

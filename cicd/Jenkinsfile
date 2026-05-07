@@ -54,6 +54,8 @@ spec:
           def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
           env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
           env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
+          // 프론트와 API가 같은 호스트 Ingress + nginx location /api/ 일 때 동일하게 유지
+          env.VITE_API_BASE_URL = '/api'
         }
       }
     }
@@ -76,6 +78,7 @@ spec:
             /kaniko/executor \
               --context=${WORKSPACE} \
               --dockerfile=${WORKSPACE}/Dockerfile \
+              --build-arg VITE_API_BASE_URL=${env.VITE_API_BASE_URL} \
               --destination=${env.IMAGE_NAME}:${env.IMAGE_TAG} \
               --destination=${env.IMAGE_NAME}:latest \
               --single-snapshot \

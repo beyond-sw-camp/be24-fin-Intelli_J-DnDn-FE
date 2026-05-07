@@ -83,7 +83,7 @@ const scheduleNavAll = [
 const deploymentNavAll = [
   {
     path: '/site/workers/manage',
-    label: '작업자 관리',
+    label: '근무자 관리',
     icon: Users,
     activePrefix: '/site/workers/manage',
   },
