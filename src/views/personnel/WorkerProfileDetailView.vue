@@ -11,6 +11,8 @@ import {
   ShieldAlert,
   Download,
   Loader2,
+  X,
+  Eye,
 } from 'lucide-vue-next'
 import {
   fetchWorkerProfile,
@@ -21,14 +23,13 @@ import {
   fetchWorkerAccidents,
 } from '@/api/worker.js'
 import {
-  displayWorkerAffiliation,
-  displayWorkerTradeLine,
   employmentKindDisplay,
   pickWorkerTradeSubLabel,
   deriveAttendanceTag,
   attendanceTagBadgeClass,
   formatWorkerZoneDisplay,
 } from '@/utils/workerUi'
+import { normalizeFatigueFromProfileApi } from '@/utils/fatigueUi'
 
 const T = {
   title: '근무자 상세 프로필',
@@ -37,8 +38,20 @@ const T = {
   emergencyPhone: '비상 연락망',
   emergencyRelation: '관계',
   todayAttendance: '금일 근태',
+  employmentKind: '고용형태',
   blood: '혈액형',
   registered: '최초 등록일',
+  fatigueScore: '피로도 점수',
+  fatigueCriteriaAriaLabel: '피로도 산정 기준 보기',
+  fatigueModalTitle: '피로도 산정 항목',
+  fatigueModalColItem: '항목',
+  fatigueModalColPoints: '부여 점수',
+  fatigueModalColRule: '산정 기준',
+  fatigueModalFooterNote:
+    '표의 「부여 점수」는 해당 작업자에게 적용된 항목별 점수입니다. 총점은 항목 합에 상한 100을 적용하며, 80점 이상은 고위험으로 표시됩니다.',
+  fatigueModalClose: '닫기',
+  fatigueHighRiskBadge: '고위험 (80점 이상)',
+  fatigueCalcAt: '마지막 산정',
   tabDocs: '안전 및 서류 현황',
   tabAttendance: '최근 출결 이력',
   tabZone: '구역 배치 이력',
@@ -73,6 +86,15 @@ const router = useRouter()
 
 const profile = ref(null)
 const loading = ref(false)
+const fatigueCriteriaModalOpen = ref(false)
+
+function openFatigueCriteriaModal() {
+  fatigueCriteriaModalOpen.value = true
+}
+
+function closeFatigueCriteriaModal() {
+  fatigueCriteriaModalOpen.value = false
+}
 /** MANAGEMENT_004~009 로드 후 유지 — 출결 월 변경 시에만 attendance 재조회 */
 const activeWorkerIdx = ref(null)
 let suppressAttendanceMonthWatch = false
@@ -106,9 +128,17 @@ function formatRegisteredAt(raw) {
 
 function mapJobRankKo(rank) {
   const r = String(rank ?? '').toUpperCase()
-  if (r === 'CHIEF') return '현장 총 책임자'
-  if (r === 'MANAGER') return '현장 관리자'
+  if (r === 'SITE_DIRECTOR') return '현장 총 책임자'
+  if (r === 'SECTION_LEADER') return '공종 책임자'
+  if (r === 'FIELD_SUPERVISOR') return '현장 관리자'
   return '작업자'
+}
+
+function jobRankBadgeClass(rank) {
+  if (rank === '현장 총 책임자') return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
+  if (rank === '공종 책임자') return 'bg-purple-50 text-purple-900 ring-1 ring-purple-200/80'
+  if (rank === '현장 관리자') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
+  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
 /** 브라우저 로컬 기준 YYYY-MM-DD */
@@ -199,16 +229,23 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
   const mergedForMeta = { ...p, subLabel: tradeText }
   const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
   const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
-  const metaAffiliationLine = `${displayWorkerAffiliation({
-    affiliationKind: p.affiliationKind,
-    partnerCompany: p.partnerCompany,
-  })} | ${displayWorkerTradeLine(mergedForMeta)} | ${employmentKindDisplay(p.employmentKind)}`
+  const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
+  const affiliationLabel =
+    affiliationKindUpper === 'DIRECT'
+      ? '본사'
+      : String(p.partnerCompany ?? '').trim() || '협력사'
+  const subAffilLabel =
+    affiliationKindUpper === 'DIRECT'
+      ? '직영'
+      : String(p.partnerCompanyDetail ?? '').trim() || pickWorkerTradeSubLabel(mergedForMeta) || '—'
+  const metaAffiliationLine = `${affiliationLabel} | ${subAffilLabel}`
 
   return {
     id: p.idx,
     name: p.name ?? '—',
     metaAffiliationLine,
     jobRank: mapJobRankKo(p.jobRank),
+    employmentKindLabel: employmentKindDisplay(p.employmentKind),
     phone: p.phone ?? '—',
     emergencyPhone: ePhone || '—',
     emergencyRelation: rel || '—',
@@ -220,6 +257,7 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
     zoneHistory: Array.isArray(deployments) ? deployments.map(mapDeploymentRow) : [],
     sanctions: Array.isArray(penalties) ? penalties.map(mapSanctionRow) : [],
     accidents: Array.isArray(accidentsRows) ? accidentsRows.map(mapAccidentRow) : [],
+    fatigue: normalizeFatigueFromProfileApi(p),
   }
 }
 
@@ -513,7 +551,13 @@ const todayAttendanceChip = computed(() => {
             >
               {{ avatarLetter }}
             </div>
-            <h2 class="mt-4 text-lg font-bold text-forena-900">{{ profile.name }}</h2>
+            <div class="mt-4 flex items-center justify-center gap-2">
+              <span
+                class="inline-flex rounded-lg px-2.5 py-1 text-[10px] font-bold"
+                :class="jobRankBadgeClass(profile.jobRank)"
+              >{{ profile.jobRank }}</span>
+              <h2 class="text-lg font-bold text-forena-900">{{ profile.name }}</h2>
+            </div>
             <p class="mt-2 text-xs leading-relaxed text-slate-600 sm:text-sm">
               {{ profile.metaAffiliationLine }}
             </p>
@@ -545,12 +589,47 @@ const todayAttendanceChip = computed(() => {
               </dd>
             </div>
             <div class="flex justify-between gap-2">
+              <dt class="shrink-0 text-slate-500">{{ T.employmentKind }}</dt>
+              <dd class="font-medium text-forena-900">{{ profile.employmentKindLabel }}</dd>
+            </div>
+            <div class="flex justify-between gap-2">
               <dt class="shrink-0 text-slate-500">{{ T.blood }}</dt>
               <dd class="font-bold text-rose-600">{{ profile.bloodType }}</dd>
             </div>
             <div class="flex justify-between gap-2">
               <dt class="shrink-0 text-slate-500">{{ T.registered }}</dt>
               <dd class="font-medium tabular-nums text-forena-900">{{ profile.registeredAt }}</dd>
+            </div>
+            <div v-if="profile.fatigue" class="space-y-3 border-t border-forena-100 pt-4">
+              <div class="flex items-start justify-between gap-2">
+                <dt class="shrink-0 pt-0.5 text-slate-500">{{ T.fatigueScore }}</dt>
+                <dd class="flex flex-wrap items-center justify-end gap-1.5">
+                  <span
+                    class="font-bold tabular-nums"
+                    :class="profile.fatigue.highRisk ? 'text-rose-600' : 'text-forena-900'"
+                  >
+                    {{ profile.fatigue.total }} / 100
+                  </span>
+                  <button
+                    type="button"
+                    class="inline-flex shrink-0 items-center justify-center rounded-md border border-forena-200 bg-white p-1 text-forena-600 shadow-sm transition hover:bg-forena-50 hover:text-forena-800"
+                    :aria-label="T.fatigueCriteriaAriaLabel"
+                    :title="T.fatigueCriteriaAriaLabel"
+                    @click="openFatigueCriteriaModal"
+                  >
+                    <Eye class="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </dd>
+              </div>
+              <div
+                v-if="profile.fatigue.highRisk"
+                class="rounded-lg bg-rose-50 px-2.5 py-2 text-center text-[11px] font-semibold text-rose-900 ring-1 ring-rose-200/80"
+              >
+                {{ T.fatigueHighRiskBadge }}
+              </div>
+              <p v-if="profile.fatigue.calculatedAtLabel" class="text-[10px] text-slate-400">
+                {{ T.fatigueCalcAt }} · {{ profile.fatigue.calculatedAtLabel }}
+              </p>
             </div>
           </dl>
         </div>
@@ -846,4 +925,76 @@ const todayAttendanceChip = computed(() => {
       {{ T.backList }}
     </button>
   </div>
+
+  <Teleport to="body">
+    <div
+      v-if="fatigueCriteriaModalOpen && profile?.fatigue"
+      class="fixed inset-0 z-[95] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="fatigue-modal-title"
+    >
+      <button
+        type="button"
+        class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
+        :aria-label="T.fatigueModalClose"
+        @click="closeFatigueCriteriaModal"
+      />
+      <div
+        class="relative z-10 flex max-h-[min(85vh,680px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-forena-100 bg-white shadow-xl ring-1 ring-black/5"
+      >
+        <div class="flex shrink-0 items-center justify-between gap-3 border-b border-forena-100 px-4 py-3">
+          <h3 id="fatigue-modal-title" class="text-sm font-bold text-forena-900 sm:text-base">
+            {{ T.fatigueModalTitle }}
+          </h3>
+          <button
+            type="button"
+            class="rounded-lg p-1.5 text-slate-500 transition hover:bg-forena-50 hover:text-forena-900"
+            :aria-label="T.fatigueModalClose"
+            @click="closeFatigueCriteriaModal"
+          >
+            <X class="h-5 w-5" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4">
+          <div class="overflow-x-auto rounded-xl border border-forena-100">
+            <table class="w-full min-w-[280px] text-left text-xs sm:text-sm">
+              <thead class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-600">
+                <tr>
+                  <th class="px-2.5 py-2 sm:px-3">{{ T.fatigueModalColItem }}</th>
+                  <th class="w-[4.5rem] whitespace-nowrap px-2 py-2 text-right tabular-nums sm:w-[5rem]">
+                    {{ T.fatigueModalColPoints }}
+                  </th>
+                  <th class="min-w-[8rem] px-2.5 py-2 sm:px-3">{{ T.fatigueModalColRule }}</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-forena-100 text-forena-800">
+                <tr v-for="row in profile.fatigue.breakdownRows" :key="row.key">
+                  <td class="align-top px-2.5 py-2 font-semibold sm:px-3">{{ row.label }}</td>
+                  <td class="align-top px-2 py-2 text-right font-bold tabular-nums text-forena-900">
+                    {{ row.points }}점
+                  </td>
+                  <td class="align-top px-2.5 py-2 text-[11px] leading-snug text-slate-600 sm:px-3 sm:text-xs">
+                    {{ row.desc }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="mt-3 text-[11px] leading-relaxed text-slate-500">
+            {{ T.fatigueModalFooterNote }}
+          </p>
+        </div>
+        <div class="flex shrink-0 justify-end border-t border-forena-100 bg-forena-50/40 px-4 py-3">
+          <button
+            type="button"
+            class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-xs font-bold text-white sm:text-sm"
+            @click="closeFatigueCriteriaModal"
+          >
+            {{ T.fatigueModalClose }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
