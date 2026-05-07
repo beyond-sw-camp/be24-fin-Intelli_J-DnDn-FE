@@ -38,7 +38,6 @@ const L = {
   statTotal: '전체 문서',
   statHq: '본사 문서',
   statPartner: '협력사 문서',
-  statPending: '검토 대기',
   unit: '건',
 
   searchPh: '문서코드, 파일명, 협력사명 검색',
@@ -70,7 +69,6 @@ const L = {
   originPartner: '협력사',
 
   statusApproved: '승인',
-  statusPending: '검토 대기',
   statusRejected: '반려',
   statusDraft: '임시저장',
 
@@ -167,7 +165,6 @@ function mapApiToFront(apiDoc) {
     partnerName: partnerName,
     uploadDate:  uploadDate,
     uploader:    apiDoc.name       ?? '',  // DTO 필드: name → 업로드자
-    status:      '검토 대기',  // DTO에 없으므로 기본값
     version:     'v1.0',       // DTO에 없으므로 기본값
     fileSize:    '',           // DTO에 없으므로 비워둠
   }
@@ -284,7 +281,6 @@ const summary = computed(() => ({
   total: documents.value.length,
   hq: documents.value.filter((d) => d.origin === 'hq').length,
   partner: documents.value.filter((d) => d.origin === 'partner').length,
-  pending: documents.value.filter((d) => d.status === '검토 대기').length,
 }))
 
 /* ───── 아래 테이블 전용: 공정표 3종 제외 ───── */
@@ -489,6 +485,35 @@ const submitUpload = async () => {
   }
 }
 
+/* ───── 파일 다운로드 ───── */
+const downloadFile = async (id, fileName) => {
+  try {
+    const res = await fetch(`${API_BASE}/document-management/download/${id}`)
+
+    if (!res.ok) {
+      throw new Error(`다운로드 실패: ${res.status}`)
+    }
+
+    // 응답을 Blob(바이너리)으로 받기
+    const blob = await res.blob()
+
+    // 임시 다운로드 링크 생성 후 자동 클릭
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName || 'download'
+    document.body.appendChild(a)
+    a.click()
+
+    // 정리
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  } catch (e) {
+    console.error('[다운로드 오류]', e)
+    alert(`다운로드 중 오류가 발생했습니다.\n${e.message}`)
+  }
+}
+
 /* ───── 날짜 필터 (작업지시서·작업일보 탭 전용) ───── */
 const dateFilterStart = ref('')
 const dateFilterEnd = ref('')
@@ -581,7 +606,6 @@ const pinnedSchedules = computed(() =>
 const pinnedStatusClass = (status) => {
   if (!status) return ''
   if (status === '승인')      return 'text-emerald-600 bg-emerald-50 ring-1 ring-emerald-200/80'
-  if (status === '검토 대기') return 'text-amber-600 bg-amber-50 ring-1 ring-amber-200/80'
   if (status === '반려')      return 'text-rose-600 bg-rose-50 ring-1 ring-rose-200/80'
   return 'text-slate-500 bg-slate-50 ring-1 ring-slate-200/80'
 }
@@ -613,8 +637,6 @@ const fileIconColor = (ext) => {
 const statusBadge = (status) => {
   if (status === '승인')
     return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80'
-  if (status === '검토 대기')
-    return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/80'
   if (status === '반려')
     return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
   return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'
@@ -622,7 +644,6 @@ const statusBadge = (status) => {
 
 const statusIcon = (status) => {
   if (status === '승인') return CircleCheck
-  if (status === '검토 대기') return Clock
   if (status === '반려') return AlertTriangle
   return File
 }
@@ -675,7 +696,7 @@ const docTypeBadgeClass = (type) => {
     </div>
 
     <!-- ═══ 통계 카드 ═══ -->
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 ">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ">
       <!-- 전체 -->
       <article
           class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
@@ -732,23 +753,6 @@ const docTypeBadgeClass = (type) => {
           <span class="text-sm font-medium text-slate-400">{{ L.unit }}</span>
         </div>
       </article>
-
-      <!-- 검토 대기 -->
-      <article
-          class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-amber-100/80 bg-gradient-to-br from-amber-50/80 to-white/90 p-5 shadow-card"
-      >
-        <div class="absolute right-0 top-0 h-24 w-24 rounded-bl-full bg-amber-200/20" />
-        <div class="relative z-10 flex items-start justify-between">
-          <h3 class="text-sm font-semibold text-amber-900">{{ L.statPending }}</h3>
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-            <Clock class="h-4 w-4" />
-          </span>
-        </div>
-        <div class="relative z-10 flex items-baseline gap-1">
-          <span class="text-3xl font-light tabular-nums text-forena-900">{{ summary.pending }}</span>
-          <span class="text-sm font-medium text-slate-400">{{ L.unit }}</span>
-        </div>
-      </article>
     </div>
 
     <!-- ═══ 고정 공정표 섹션 ═══ -->
@@ -761,7 +765,7 @@ const docTypeBadgeClass = (type) => {
         <span class="text-[11px] text-slate-400">— 유형별 최신 1건 고정</span>
       </div>
       <!-- 리스트 헤더 -->
-      <div class="grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_110px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
+      <div class="grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
         <span class="text-left">문서 유형</span>
         <span class="text-left">파일명</span>
         <span class="text-center">문서 코드</span>
@@ -773,7 +777,7 @@ const docTypeBadgeClass = (type) => {
       <div
           v-for="item in pinnedSchedules"
           :key="item.type"
-          class="group grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_110px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
+          class="group grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
       >
         <!-- 문서 유형 -->
         <div class="flex items-center gap-2 text-left">
@@ -807,14 +811,15 @@ const docTypeBadgeClass = (type) => {
 
         <!-- 액션 -->
         <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
-          <button v-if="item.doc" type="button"
-                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-flare-700" title="다운로드">
-            <Download class="h-3.5 w-3.5" />
-          </button>
           <button type="button"
                   class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
                   title="목록 보기" @click="jumpToTab(item.type)">
-            <Eye class="h-3.5 w-3.5" />
+            <Eye class="h-5 w-5" />
+          </button>
+          <button v-if="item.doc" type="button"
+                  class="rounded-lg p-2.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700" title="다운로드"
+                  @click="downloadFile(item.doc.id, item.doc.fileName)">
+            <Download class="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -1091,17 +1096,18 @@ const docTypeBadgeClass = (type) => {
               <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
                 <button
                     type="button"
-                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
+                    class="rounded-lg p-2.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
                     title="미리보기"
                 >
-                  <Eye class="h-3.5 w-3.5" />
+                  <Eye class="h-5 w-5" />
                 </button>
                 <button
                     type="button"
-                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-flare-700"
+                    class="rounded-lg p-2.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
                     title="다운로드"
+                    @click="downloadFile(doc.id, doc.fileName)"
                 >
-                  <Download class="h-3.5 w-3.5" />
+                  <Download class="h-5 w-5" />
                 </button>
               </div>
             </td>
