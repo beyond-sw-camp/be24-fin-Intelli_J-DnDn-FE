@@ -1,4 +1,10 @@
 pipeline {
+  // 동시 트리거 시 이전 빌드 중단 후 최신만 완료(quietPeriod 로 짧은 연속 신호 완화)
+  options {
+    disableConcurrentBuilds(abortPrevious: true)
+    quietPeriod(30)
+  }
+
   agent {
     kubernetes {
       label "node-kaniko-${UUID.randomUUID().toString()}"
