@@ -563,9 +563,9 @@ const onGateClick = (gateId, event) => {
                   class="relative flex min-h-[82px] flex-col items-center justify-center gap-2 rounded-2xl border p-3 transition-all sm:p-4 xl:min-h-[88px]"
                   :class="machine.active ? 'border-flare-200 bg-flare-50 text-flare-700' : 'border-slate-100 bg-slate-50 text-slate-400'"
                   @click="toggleMachine(machine.idx)">
-                  <button type="button" class="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100" @click.stop="removeMachine(machine.idx)">
+                  <div class="absolute -right-2 -top-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm hover:bg-slate-100 cursor-pointer transition-colors hover:shadow-md" @click.stop="removeMachine(machine.idx)">
                     <X class="h-3 w-3" />
-                  </button>
+                  </div>
                   <component :is="machine.active ? Power : PowerOff" class="h-6 w-6" />
                   <span class="text-[10px] font-bold">{{ idx + 1 }}번 기계 {{ machine.active ? 'ON' : 'OFF' }}</span>
                 </button>
