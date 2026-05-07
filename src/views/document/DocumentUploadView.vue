@@ -42,7 +42,7 @@ const L = {
   unit: '건',
 
   searchPh: '문서코드, 파일명, 협력사명 검색',
-  excel: '엑셀 다운로드',
+  excel: '종합 공사일보 PDF 다운로드',
   upload: '문서 업로드',
   filterLabel: '유형 필터',
   resetFilter: '필터 초기화',
@@ -98,11 +98,6 @@ const L = {
 
 /* ───── 문서 유형 목록 ───── */
 const docTypes = [
-  L.tabWorkInstruction,
-  L.tabDailyReport,
-  L.tabMasterSchedule,
-  L.tabMilestone,
-  L.tabSubSchedule,
   L.tabConstructionPlan,
 ]
 
@@ -353,7 +348,15 @@ const onDocTypeChange = () => {
   }
 }
 
-const submitUpload = () => {
+/* ── 프론트 라벨 → 백엔드 enum 역매핑 ── */
+const DOC_TYPE_REVERSE_MAP = {
+  '마스터 공정표':       'MASTER',
+  '마일스톤 공정표':     'MILESTONE',
+  '보할 공정표':         'WEIGHT',
+  '공종별 시공계획서':   'TRADE_PLAN',
+}
+
+const submitUpload = async () => {
   if (!newDoc.value.docType || !newDoc.value.docDate || !newDoc.value.file) {
     alert(L.alertFields)
     return
@@ -364,39 +367,45 @@ const submitUpload = () => {
   }
 
   isSubmitting.value = true
-  setTimeout(() => {
-    const prefixMap = {
-      [L.tabWorkInstruction]:  'WI',
-      [L.tabDailyReport]:      'DR',
-      [L.tabMasterSchedule]:   'MS',
-      [L.tabMilestone]:        'ML',
-      [L.tabSubSchedule]:      'SS',
-      [L.tabConstructionPlan]: 'TP',
-    }
-    const prefix = prefixMap[newDoc.value.docType] || 'DC'
-    const dateStr = newDoc.value.docDate.replace(/-/g, '').substring(2)
-    const seq = String(documents.value.length + 1).padStart(3, '0')
 
-    documents.value.unshift({
-      id: Date.now(),
-      docCode: `${prefix}-${newDoc.value.docDate.substring(0, 4)}-${dateStr.substring(2)}-${seq}`,
-      docType: newDoc.value.docType,
-      fileName: newDoc.value.fileName,
-      fileExt: newDoc.value.fileName.split('.').pop().toLowerCase(),
-      origin: newDoc.value.origin,
-      partnerName: newDoc.value.origin === 'partner' ? newDoc.value.partnerName : null,
-      docDate: newDoc.value.docDate,
-      uploadDate: new Date().toISOString().substring(0, 10),
-      uploader: '김현장',
-      status: '검토 대기',
-      version: newDoc.value.version || 'v1.0',
-      fileSize: `${(Math.random() * 9 + 1).toFixed(1)} MB`,
+  try {
+    // multipart/form-data 구성
+    const formData = new FormData()
+    formData.append('file', newDoc.value.file)
+    formData.append('docType', DOC_TYPE_REVERSE_MAP[newDoc.value.docType] || newDoc.value.docType)
+    formData.append('docDate', newDoc.value.docDate)
+    formData.append('origin', newDoc.value.origin)
+    if (newDoc.value.origin === 'partner' && newDoc.value.partnerName) {
+      formData.append('partnerName', newDoc.value.partnerName)
+    }
+    if (newDoc.value.version) {
+      formData.append('version', newDoc.value.version)
+    }
+    if (newDoc.value.memo) {
+      formData.append('memo', newDoc.value.memo)
+    }
+
+    const res = await fetch(`${API_BASE}/document-management/upload`, {
+      method: 'POST',
+      body: formData,
+      // ※ Content-Type 은 직접 설정하지 않습니다.
+      //    FormData 사용 시 브라우저가 boundary 까지 포함해 자동으로 설정해줍니다.
     })
 
-    isSubmitting.value = false
+    if (!res.ok) {
+      throw new Error(`업로드 실패: ${res.status} ${res.statusText}`)
+    }
+
+    const json = await res.json()
+    console.log('[업로드 응답]', json)
+
+    // 업로드 성공 후 목록 새로고침
+    await fetchDocuments()
+
     showUploadDrawer.value = false
     alert(L.alertOk)
 
+    // 폼 초기화
     newDoc.value = {
       docType: '',
       docDate: '',
@@ -407,7 +416,12 @@ const submitUpload = () => {
       file: null,
       fileName: '',
     }
-  }, 800)
+  } catch (e) {
+    console.error('[업로드 오류]', e)
+    alert(`업로드 중 오류가 발생했습니다.\n${e.message}`)
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
 /* ───── 날짜 필터 (작업지시서·작업일보 탭 전용) ───── */
@@ -1188,16 +1202,7 @@ const docTypeBadgeClass = (type) => {
             </div>
 
             <!-- 버전 + 비고 -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelVersion }}</label>
-                <input
-                    v-model="newDoc.version"
-                    type="text"
-                    placeholder="v1.0"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                />
-              </div>
+            <div>
               <div>
                 <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelMemo }}</label>
                 <input
