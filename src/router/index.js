@@ -14,14 +14,11 @@ const router = createRouter({
       component: () => import('../views/auth/LoginView.vue'),
       meta: meta('로그인'),
     },
-    // {
-    //   path: '/site/upload',
-    //   name: 'siteUpload',
-    //   component: () => import('../views/schedule/FirstDocumentUpload.vue'), // 실제 경로로 수정
-    //   meta: meta('최초 공정표 문서 등록'),
-    // },
     {
-      path: '/site/upload', redirect: '/site/dashboard'
+      path: '/site/upload',
+      name: 'siteUpload',
+      component: () => import('../views/schedule/FirstDocumentUpload.vue'), // 실제 경로로 수정
+      meta: meta('최초 공정표 문서 등록'),
     },
     {
       path: '/site/onboarding',
