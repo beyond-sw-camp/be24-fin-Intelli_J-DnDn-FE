@@ -83,6 +83,35 @@ function workPlanStatus(plan) {
   return formatDateLocal(new Date()) >= plan.start ? '진행 중' : '진행 예정'
 }
 
+function isDateInRange(start, end, date = formatDateLocal(new Date())) {
+  if (!start || !end) return false
+  return start <= date && date <= end
+}
+
+function isWorkPlanInProgress(plan) {
+  return isDateInRange(plan?.start, effectiveEnd(plan))
+}
+
+function isYearlyProcessInProgress(item) {
+  if (isDateInRange(item?.baselineStart, item?.baselineEnd)) return true
+  return (item?.workPlans ?? []).some((plan) => isDateInRange(plan?.start, plan?.end))
+}
+
+function isMonthlyProcessInProgress(item) {
+  if (isDateInRange(item?.baselineStart, item?.baselineEnd)) return true
+  return (item?.details ?? []).some(
+    (detail) =>
+      isDateInRange(detail?.start, detail?.end) ||
+      isDateInRange(detail?.plannedStart, detail?.plannedEnd),
+  )
+}
+
+function isWorkPlanGroupInProgress(group) {
+  return (group?.items ?? []).some(
+    (item) => isYearlyProcessInProgress(item) || isMonthlyProcessInProgress(item),
+  )
+}
+
 // =========================
 // 주간 캘린더
 // =========================
@@ -718,7 +747,7 @@ async function loadPlans() {
       fetchWorkPlanList({ planType: '연간' }),
     ])
 
-    baselinePlans.value = baselineRes
+    baselinePlans.value = baselineRes.filter((b) => !baseIsMilestone(b))
     weeklyPlans.value = weeklyRes
     monthlyPlans.value = monthlyRes
     annualPlans.value = yearlyRes
@@ -750,7 +779,7 @@ function importAi() {
 // =========================
 const GANTT_DAY_W = 42
 const GANTT_MONTH_W = 108
-const NAME_COL_W = 240
+const NAME_COL_W = 280
 
 const today = new Date()
 const viewYear = ref(today.getFullYear())
@@ -1047,6 +1076,9 @@ function buildGroups(plans) {
   const tradeMap = new Map()
 
   for (const b of baselinePlans.value) {
+    // 마일스톤은 연간 계획 행으로 보여주면 안 됨
+    if (baseIsMilestone(b)) continue
+
     if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
 
     const trade = baseTradeName(b)
@@ -1196,7 +1228,11 @@ function buildMonthlyGroups(plans) {
 
   // 1) baseline(trade_process) 기준으로 공종 → 공정 골격 생성
   for (const b of baselinePlans.value) {
+    // 마일스톤은 연간 계획 행으로 보여주면 안 됨
+    if (baseIsMilestone(b)) continue
+
     if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
+
     const trade = baseTradeName(b)
     const tpid = baseId(b)
     if (!tradeMap.has(trade)) tradeMap.set(trade, [])
@@ -1312,19 +1348,15 @@ watch(
   [yearlyGroups, monthlyGroups],
   () => {
     const all = [...yearlyGroups.value, ...monthlyGroups.value]
-    for (const g of all) {
-      if (groupOpen.value[g.group] === undefined) {
-        groupOpen.value[g.group] = true
-      }
-    }
-    // 월간 공정 펼침 상태 초기화 (기본: 펼쳐짐)
-    for (const g of monthlyGroups.value) {
-      for (const item of g.items) {
-        if (monthlyProcessOpen.value[item.id] === undefined) {
-          monthlyProcessOpen.value[item.id] = true
-        }
-      }
-    }
+
+    groupOpen.value = Object.fromEntries(all.map((g) => [g.group, isWorkPlanGroupInProgress(g)]))
+
+    // 월간 공정도 오늘 진행 중인 공정만 기본 펼침
+    monthlyProcessOpen.value = Object.fromEntries(
+      monthlyGroups.value.flatMap((g) =>
+        g.items.map((item) => [item.id, isMonthlyProcessInProgress(item)]),
+      ),
+    )
   },
   { immediate: true },
 )
@@ -1746,7 +1778,9 @@ function onClickWorkPlan(wp) {
                 </div>
               </div>
 
+              <!-- 🌟 여기서부터 교체 시작 🌟 -->
               <div class="grid gap-3 sm:grid-cols-3">
+                <!-- 1. 작업 위치 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <MapPin class="h-3.5 w-3.5 text-flare-600" />
@@ -1754,8 +1788,12 @@ function onClickWorkPlan(wp) {
                       >작업 위치</span
                     >
                   </div>
-                  <p class="text-sm font-semibold text-forena-900">{{ selectedPlan.location }}</p>
+                  <p class="text-sm font-semibold text-forena-900">
+                    {{ selectedPlan.location || '위치 미지정' }}
+                  </p>
                 </div>
+
+                <!-- 2. 필요 인원 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <Users class="h-3.5 w-3.5 text-flare-600" />
@@ -1773,17 +1811,24 @@ function onClickWorkPlan(wp) {
                       <span class="tabular-nums text-forena-700">{{ w.count }}명</span>
                     </li>
                   </ul>
-                  <p v-else class="text-sm text-slate-400">해당 없음</p>
+                  <!-- 🔥 요청사항 반영: 해당 없음 대신 [공정명] N명 표시 -->
+                  <p v-else class="text-sm font-bold text-forena-900">
+                    <span class="text-flare-700 mr-1">[{{ selectedPlan.trade }}]</span>
+                    {{ selectedPlan.requiredCount || 0 }}명
+                  </p>
+
                   <div
                     v-if="selectedPlan.requiredCount"
                     class="mt-2 flex items-baseline justify-between border-t border-forena-100 pt-1.5"
                   >
                     <span class="text-[10px] font-bold uppercase text-forena-400">합계</span>
-                    <span class="text-xs font-bold tabular-nums text-flare-700">
-                      {{ selectedPlan.requiredCount }}명
-                    </span>
+                    <span class="text-xs font-bold tabular-nums text-flare-700"
+                      >{{ selectedPlan.requiredCount }}명</span
+                    >
                   </div>
                 </div>
+
+                <!-- 필요 장비 섹션 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <Wrench class="h-3.5 w-3.5 text-flare-600" />
@@ -1791,22 +1836,66 @@ function onClickWorkPlan(wp) {
                       >필요 장비</span
                     >
                   </div>
-                  <ul
-                    v-if="selectedPlan.equipment && selectedPlan.equipment.length"
-                    class="space-y-1"
+
+                  <!-- ✨ 여기에 찾으신 변수명(예: plan)을 넣으세요! ✨ -->
+                  <div v-if="plan?.equipmentDisplay" class="flex flex-wrap gap-2">
+                    <span class="text-xs font-semibold text-forena-700">{{
+                      plan.equipmentDisplay
+                    }}</span>
+                  </div>
+
+                  <div
+                    v-else-if="plan?.equipment && plan.equipment.length"
+                    class="flex flex-wrap gap-2"
                   >
-                    <li
-                      v-for="(eq, i) in selectedPlan.equipment"
-                      :key="i"
-                      class="flex items-baseline justify-between text-sm"
+                    <span
+                      v-for="(eq, idx) in plan.equipment"
+                      :key="idx"
+                      class="text-xs font-semibold text-forena-700"
                     >
-                      <span class="font-semibold text-forena-900">{{ eq.type }}</span>
-                      <span class="tabular-nums text-forena-700">{{ eq.count }}대</span>
-                    </li>
-                  </ul>
-                  <p v-else class="text-sm text-slate-400">해당 없음</p>
+                      {{ eq.type }} {{ eq.count }}대
+                    </span>
+                  </div>
+
+                  <div v-else class="text-[11px] text-slate-400 italic">
+                    등록된 장비 정보가 없습니다.
+                  </div>
                 </div>
               </div>
+
+              <!--  요청사항 반영: 하단 작업 상세 & 안전 유의사항 카드 영역 -->
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <!-- 작업 상세 내역 -->
+                <div class="rounded-xl border border-forena-100 bg-white p-4 shadow-sm">
+                  <p
+                    class="text-[10px] font-bold uppercase tracking-wide text-forena-400 mb-2.5 flex items-center gap-1.5"
+                  >
+                    <ClipboardList class="h-3.5 w-3.5 text-forena-500" /> 작업 상세 내역
+                  </p>
+                  <div class="min-h-[80px] rounded-lg bg-slate-50 p-3">
+                    <!-- 백엔드에서 받은 note 필드. 비어있으면 기본값 -->
+                    <p class="text-xs leading-relaxed text-forena-800 whitespace-pre-wrap">
+                      {{ selectedPlan.note || selectedPlan.name + ' 공정 진행' }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- 안전 유의사항 -->
+                <div class="rounded-xl border border-rose-100 bg-rose-50/30 p-4 shadow-sm">
+                  <p
+                    class="text-[10px] font-bold uppercase tracking-wide text-rose-500 mb-2.5 flex items-center gap-1.5"
+                  >
+                    <AlertTriangle class="h-3.5 w-3.5 text-rose-500" /> 안전 유의사항
+                  </p>
+                  <div class="min-h-[80px] rounded-lg bg-white p-3 border border-rose-100">
+                    <p class="text-xs leading-relaxed text-rose-800 whitespace-pre-wrap">
+                      추락/낙하/화재 등 위험요인 사전 점검 및 안전조치 철저. (지시서 및 일일 TBM
+                      준수)
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <!-- 🌟 여기까지 교체 끝 🌟 -->
             </template>
           </div>
         </template>
@@ -2277,8 +2366,7 @@ function onClickWorkPlan(wp) {
                                   : '기준 공정 종료일'
                               "
                             >
-                              <span class="inline-block h-1.5 w-1.5 rotate-45 bg-rose-500"></span>
-                              마일스톤 {{ item.milestoneDate }}
+                              종료 예정일 {{ item.milestoneDate }}
                             </span>
                             <span v-else class="italic text-slate-300">마일스톤 없음</span>
                           </p>
