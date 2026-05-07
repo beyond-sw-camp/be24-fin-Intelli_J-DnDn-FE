@@ -116,7 +116,7 @@ spec:
             echo "Active: ${activeVersion} → Deploying to: ${inactiveVersion}"
 
             sh "kubectl set image deployment/dndn-frontend-${inactiveVersion} frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
-            sh "kubectl scale deployment/dndn-frontend-${inactiveVersion} --replicas=1 -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl scale deployment/dndn-frontend-${inactiveVersion} --replicas=2 -n ${env.TARGET_NAMESPACE}"
             sh "kubectl rollout status deployment/dndn-frontend-${inactiveVersion} --timeout=180s -n ${env.TARGET_NAMESPACE}"
 
             sh """
