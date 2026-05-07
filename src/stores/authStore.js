@@ -1,93 +1,227 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-export const ROLE_SITE_MANAGER = 'site_manager'
-export const ACCESS_FULL = 'full'
-export const ACCESS_SITE_DASHBOARD_ONLY = 'site_dashboard_only'
+/** Spring {@code UserRole} 값과 동일 */
+export const USER_ROLE = {
+  ADMIN: 'ADMIN',
+  HEADQUARTOR: 'HEADQUARTOR',
+  SITE_DIRECTOR: 'SITE_DIRECTOR',
+  SECTION_LEADER: 'SECTION_LEADER',
+  SECTION_SUPERVISOR: 'SECTION_SUPERVISOR',
+}
 
-const AUTH_STORAGE_KEY = 'dndnAuth'
+/** @deprecated 레거시 로컬 데모 — 마이그레이션용 */
+const LEGACY_SITE_MANAGER = 'site_manager'
+
+/** 이전 버전 키 — 남아 있으면 무시하고 제거하여 자동 로그인 유발 방지 */
+const LEGACY_AUTH_STORAGE_KEYS = ['dndnAuth']
+
+/** 세션 형식 버전 bump 시 기존 자동 로그인 무력화 */
+const AUTH_STORAGE_KEY = 'dndnAuth_v2'
+
+/**
+ * 과거 형식 또는 신뢰할 수 없는 스냅샷 제거 + JWT 무효화
+ */
+function purgeLegacyAuthSnapshots() {
+  for (const k of LEGACY_AUTH_STORAGE_KEYS) {
+    if (localStorage.getItem(k) != null) {
+      localStorage.removeItem(k)
+      localStorage.removeItem('accessToken')
+    }
+  }
+}
 
 function readSavedAuth() {
+  purgeLegacyAuthSnapshots()
   try {
     const raw = localStorage.getItem(AUTH_STORAGE_KEY)
-    return raw ? JSON.parse(raw) : null
+    if (!raw) return null
+    const o = JSON.parse(raw)
+    if (!o || typeof o !== 'object') {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
+    }
+    /** v2부터 sessionKind 필수 (없으면 이전 배포 스냅샷 → 폐기) */
+    if (o.sessionKind !== 'server' && o.sessionKind !== 'demo') {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      localStorage.removeItem('accessToken')
+      return null
+    }
+    /** 서버 로그인 세션은 토큰이 있을 때만 유지 */
+    if (o.sessionKind === 'server' && !localStorage.getItem('accessToken')) {
+      localStorage.removeItem(AUTH_STORAGE_KEY)
+      return null
+    }
+    if (!o.isAuthenticated) return null
+    return o
   } catch {
     localStorage.removeItem(AUTH_STORAGE_KEY)
     return null
   }
 }
 
-function saveAuth({ role, isAuthenticated, stayOnLogin, accessScope, isUpload }) {
-  localStorage.setItem(
-    AUTH_STORAGE_KEY,
-    JSON.stringify({
-      role,
-      isAuthenticated,
-      stayOnLogin,
-      accessScope,
-      isUpload,
-    }),
-  )
+function normalizeUserRole(raw) {
+  if (!raw) return USER_ROLE.SITE_DIRECTOR
+  if (raw === LEGACY_SITE_MANAGER) return USER_ROLE.SITE_DIRECTOR
+  if (Object.values(USER_ROLE).includes(raw)) return raw
+  return USER_ROLE.SITE_DIRECTOR
 }
 
-/** @param {string} role */
-/** @param {string} fullPath */
-export function pathAllowedForRole(role, fullPath, accessScope = ACCESS_FULL) {
+function saveAuth(snapshot) {
+  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(snapshot))
+}
+
+/**
+ * @param {string} userRole {@link USER_ROLE}
+ * @param {string} fullPath
+ * @param {{ stayOnLogin?: boolean }} [opts]
+ */
+export function pathAllowedForRole(userRole, fullPath) {
   const path = fullPath.split('?')[0] || '/'
-  if (role !== ROLE_SITE_MANAGER) return false
-  if (path === '/') return false
-  if (accessScope === ACCESS_SITE_DASHBOARD_ONLY) {
+  if (path === '/' || path === '/login') return true
+
+  if (path === '/account/password') return true
+
+  const role = normalizeUserRole(userRole)
+
+  if (role === USER_ROLE.ADMIN) {
+    return (
+      path.startsWith('/site/') || path.startsWith('/hr/') || path.startsWith('/system/')
+    )
+  }
+
+  if (role === USER_ROLE.HEADQUARTOR) {
     return path === '/site/dashboard' || path === '/site/schedule'
   }
-  if (path.startsWith('/site/')) return true
-  if (path.startsWith('/hr/')) return true
-  if (path.startsWith('/system/')) return true
+
+  if (
+    role === USER_ROLE.SITE_DIRECTOR ||
+    role === USER_ROLE.SECTION_LEADER ||
+    role === USER_ROLE.SECTION_SUPERVISOR
+  ) {
+    if (path.startsWith('/hr/accounts') || path.startsWith('/hr/sites')) return false
+    if (path.startsWith('/system/')) return false
+    return path.startsWith('/site/') || path.startsWith('/hr/')
+  }
+
   return false
 }
 
+export function userRoleLabel(userRole) {
+  const role = normalizeUserRole(userRole)
+  const labels = {
+    [USER_ROLE.ADMIN]: '시스템 관리자',
+    [USER_ROLE.HEADQUARTOR]: '본사',
+    [USER_ROLE.SITE_DIRECTOR]: '현장 총 책임자',
+    [USER_ROLE.SECTION_LEADER]: '공종별 책임자',
+    [USER_ROLE.SECTION_SUPERVISOR]: '공종별 현장 관리자',
+  }
+  return labels[role] || role
+}
+
 export const useAuthStore = defineStore('auth', () => {
-  const savedAuth = readSavedAuth()
+  const saved = readSavedAuth()
 
-  const role = ref(savedAuth?.role || ROLE_SITE_MANAGER)
-  const isAuthenticated = ref(Boolean(savedAuth?.isAuthenticated))
-  const stayOnLogin = ref(Boolean(savedAuth?.stayOnLogin))
-  const accessScope = ref(savedAuth?.accessScope || ACCESS_FULL)
-  const isUpload = ref(savedAuth?.isUpload ?? true)
+  /** @type {import('vue').Ref<string>} */
+  const userRole = ref(normalizeUserRole(saved?.userRole ?? saved?.role))
 
-  const roleLabel = computed(() => '총괄책임자')
+  /** API 로그인 시 부여되는 JWT에 대응 */
+  /** @type {import('vue').Ref<string>} */
+  const loginId = ref(saved?.loginId || '')
+
+  /** @type {import('vue').Ref<string>} */
+  const userName = ref(saved?.userName || '')
+
+  /** @type {import('vue').Ref<number|string|null>} */
+  const userIdx = ref(saved?.userIdx ?? null)
+
+  const isAuthenticated = ref(Boolean(saved?.isAuthenticated))
+
+  /** 본사·대시보드만 보기(구 viewer 데모) */
+  const stayOnLogin = ref(Boolean(saved?.stayOnLogin))
+
+  /** 최초 문서 업로드 분기 등 */
+  const isUpload = ref(saved?.isUpload ?? true)
+
+  const roleLabel = computed(() => userRoleLabel(userRole.value))
+
+  const isAdminRole = computed(() => userRole.value === USER_ROLE.ADMIN)
 
   function persistAuth() {
+    const sessionKind = localStorage.getItem('accessToken') ? 'server' : 'demo'
     saveAuth({
-      role: role.value,
+      sessionKind,
+      userRole: userRole.value,
+      loginId: loginId.value,
+      userName: userName.value,
+      userIdx: userIdx.value,
       isAuthenticated: isAuthenticated.value,
       stayOnLogin: stayOnLogin.value,
-      accessScope: accessScope.value,
       isUpload: isUpload.value,
     })
   }
 
   /**
-   * @param {string} userId
-   * @param {string} password
+   * @param {object} loginRes — AuthDto.LoginRes (loginId 미포함 가능)
+   * @param {{ stayOnLogin?: boolean, loginId?: string }} [options]
    */
-  function login(userId, password) {
+  function applyLoginSuccess(loginRes, options = {}) {
+    const token = loginRes?.accessToken
+    if (token) {
+      localStorage.setItem('accessToken', token)
+    }
+    let roleRaw = loginRes?.role
+    if (roleRaw && typeof roleRaw === 'object' && roleRaw !== null && 'name' in roleRaw) {
+      roleRaw = /** @type {{ name?: string }} */ (roleRaw).name
+    }
+    userRole.value = normalizeUserRole(String(roleRaw ?? ''))
+    const lid =
+      typeof options.loginId === 'string'
+        ? options.loginId.trim()
+        : typeof loginRes?.loginId === 'string'
+          ? loginRes.loginId.trim()
+          : loginId.value
+    if (lid) loginId.value = lid
+    userName.value = loginRes?.name ?? ''
+    userIdx.value = loginRes?.userIdx ?? null
+    stayOnLogin.value = Boolean(options.stayOnLogin)
+    if (Object.prototype.hasOwnProperty.call(options, 'isUpload')) {
+      isUpload.value = Boolean(options.isUpload)
+    } else {
+      isUpload.value = true
+    }
+    isAuthenticated.value = true
+    persistAuth()
+  }
+
+  /**
+   * 로컬 데모 (API 없을 때)
+   * @returns {boolean}
+   */
+  function loginDemo(userId, password) {
     const id = (userId || '').trim()
     const pw = (password || '').trim()
     if (id === 'admin' && pw === 'admin') {
+      localStorage.removeItem('accessToken')
+      userRole.value = USER_ROLE.ADMIN
+      loginId.value = 'admin'
+      userName.value = '데모 관리자'
+      userIdx.value = null
       stayOnLogin.value = false
-      accessScope.value = ACCESS_FULL
-      role.value = ROLE_SITE_MANAGER
-      isAuthenticated.value = true
       isUpload.value = false
+      isAuthenticated.value = true
       persistAuth()
       return true
     }
     if (id === 'viewer' && pw === 'viewer') {
+      localStorage.removeItem('accessToken')
+      userRole.value = USER_ROLE.HEADQUARTOR
+      loginId.value = 'viewer'
+      userName.value = '데모 본사'
+      userIdx.value = null
       stayOnLogin.value = true
-      accessScope.value = ACCESS_SITE_DASHBOARD_ONLY
-      role.value = ROLE_SITE_MANAGER
-      isAuthenticated.value = true
       isUpload.value = false
+      isAuthenticated.value = true
       persistAuth()
       return true
     }
@@ -97,19 +231,28 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     isAuthenticated.value = false
     stayOnLogin.value = false
-    accessScope.value = ACCESS_FULL
     isUpload.value = true
+    userRole.value = USER_ROLE.SITE_DIRECTOR
+    loginId.value = ''
+    userName.value = ''
+    userIdx.value = null
+    localStorage.removeItem('accessToken')
     localStorage.removeItem(AUTH_STORAGE_KEY)
   }
 
   return {
-    role,
+    userRole,
+    loginId,
+    userName,
+    userIdx,
     roleLabel,
+    isAdminRole,
     isAuthenticated,
     stayOnLogin,
-    accessScope,
     isUpload,
-    login,
+    applyLoginSuccess,
+    loginDemo,
     logout,
+    persistAuth,
   }
 })

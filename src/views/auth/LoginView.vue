@@ -126,7 +126,9 @@
 
           <div class="divider" />
 
-          <p class="demo-hint">데모 계정: admin / admin · 화면 유지: viewer / viewer</p>
+          <p class="demo-hint">
+            서버 로그인 실패 시에만 로컬 데모 계정 적용 · admin/admin(시스템관리자) · viewer/viewer(본사·화면유지)
+          </p>
         </div>
       </section>
     </div>
@@ -137,6 +139,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { postAuthLogin } from '@/api/auth'
 import { Users, MapPin, BarChart3, CloudSun, LockKeyhole } from 'lucide-vue-next'
 import bgImage from '@/assets/hanwha-bg.png'
 import leftLogoSrc from '@/assets/dndn-logo.png'
@@ -211,17 +214,38 @@ const goToSiteSchedule = () => {
   router.push({ path: '/site/schedule', query: selectedSiteQuery() })
 }
 
-const handleLogin = () => {
-  if (authStore.login(form.userId.trim(), form.password.trim())) {
+const handleLogin = async () => {
+  errorMessage.value = ''
+  successMessage.value = ''
+  const loginIdInput = form.userId.trim()
+  const passwordInput = form.password.trim()
+
+  try {
+    const res = await postAuthLogin({ loginId: loginIdInput, password: passwordInput })
+    authStore.applyLoginSuccess(res, {
+      stayOnLogin: rememberMe.value,
+      loginId: loginIdInput,
+    })
+    if (!authStore.stayOnLogin) {
+      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
+      router.push({ path, query: { site: selectedSiteId.value } })
+    } else {
+      successMessage.value = '로그인되었습니다. 현재 화면을 유지합니다.'
+    }
+    return
+  } catch (_) {
+    // API 실패 시 로컬 데모 계정만 허용
+  }
+
+  if (authStore.loginDemo(loginIdInput, passwordInput)) {
     errorMessage.value = ''
     if (!authStore.stayOnLogin) {
       const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
       router.push({ path, query: { site: selectedSiteId.value } })
     } else {
-      successMessage.value = 'viewer 계정으로 로그인되었습니다. 현재 화면을 유지합니다.'
+      successMessage.value = 'viewer 데모(본사)로 로그인되었습니다. 현재 화면을 유지합니다.'
     }
   } else {
-    successMessage.value = ''
     errorMessage.value = '아이디 또는 비밀번호가 올바르지 않습니다.'
   }
 }
