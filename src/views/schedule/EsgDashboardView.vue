@@ -20,6 +20,10 @@ import {
   Zap,
 } from 'lucide-vue-next'
 import api from '@/api/index.js'
+<<<<<<< Updated upstream
+=======
+import { getGateEquipments } from '@/api/workOrder.js'
+>>>>>>> Stashed changes
 
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
@@ -30,6 +34,14 @@ const selectedZoneId = ref('zone-a')
 const activeEsgKey = ref('E')
 let refreshTimer = null
 
+<<<<<<< Updated upstream
+=======
+// feat: 작업지시서 연동 데이터
+const equipmentsData = ref([])  // GET /work-order/gate-equipments
+const reportsData = ref([])     // GET /report - 금일 공사일보 데이터
+const workOrdersData = ref([])  // GET /work-order
+
+>>>>>>> Stashed changes
 const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
 
 const sites = ref([
@@ -103,8 +115,8 @@ const zones = ref([
   {
     id: 'zone-a',
     siteId: 'mokdong',
-    name: 'A 게이트',
-    type: '차량 대기 동선',
+    name: '101동 3층',
+    type: '벽체 철근 작업구역',
     score: 62.0,
     level: 3,
     rank: 1,
@@ -223,7 +235,119 @@ const zones = ref([
 ])
 
 const currentSite = computed(() => sites.value.find((site) => site.id === selectedSiteId.value) ?? sites.value[0])
+<<<<<<< Updated upstream
 const siteZones = computed(() => zones.value.filter((zone) => zone.siteId === currentSite.value.id))
+=======
+
+// feat: 날씨 AI 위험 건수 (equipmentRisks + planRisks)
+const weatherRiskCount = computed(() =>
+  (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0)
+)
+
+// feat: 작업지시서 + 공사일보 기반 미션 달성률
+const realMissionRate = computed(() => {
+  // 1차: 공사일보 진행률 사용 (실제 데이터)
+  if (reportsData.value.length > 0) {
+    const totalProgress = reportsData.value.reduce((sum, r) => sum + (r.processProgress || 0), 0)
+    const avgProgress = Math.round(totalProgress / reportsData.value.length)
+    return Math.min(100, avgProgress)
+  }
+
+  // 2차: 작업 장비 상태 기반 (fallback)
+  const equips = equipmentsData.value
+  if (!equips.length) return 62
+  const working = equips.filter((e) => e.statusLabel === '작업중').length
+  return Math.round((working / equips.length) * 100)
+})
+
+// feat: 작업지시서의 작업 위치를 ESG 작업구역으로 변환
+// E = zoneScore - rain*0.05 - fineDust*0.03 + powerSaving*0.04
+// S = zoneScore + missionRate*0.12 - risk*1.4
+// G = zoneScore + (100 - risk*5)*0.1 - wind*0.8
+const realGateZones = computed(() => {
+  if (!equipmentsData.value.length) return []
+
+  const missionRate = realMissionRate.value
+  const weatherRisk = weatherRiskCount.value
+  const grouped = new Map()
+
+  equipmentsData.value.forEach((equipment) => {
+    const zoneName = equipment.workLocation || '작업구역 미지정'
+    const current = grouped.get(zoneName) || {
+      name: zoneName,
+      titles: new Set(),
+      equipments: new Map(),
+      totalCount: 0,
+      gateSet: new Set(),
+    }
+
+    if (equipment.title) current.titles.add(equipment.title)
+    if (equipment.gateIdx != null) current.gateSet.add(equipment.gateIdx)
+
+    const equipmentName = equipment.equipmentName || '중장비'
+    current.equipments.set(
+      equipmentName,
+      (current.equipments.get(equipmentName) || 0) + (equipment.equipmentCount ?? 1),
+    )
+    current.totalCount += equipment.equipmentCount ?? 1
+    grouped.set(zoneName, current)
+  })
+
+  const mapped = Array.from(grouped.values()).map((zone, index) => {
+    const equipmentCount = zone.totalCount
+    const equipmentSummary = Array.from(zone.equipments.entries())
+      .map(([name, count]) => `${name} ${count}대`)
+      .join(', ')
+    const gateSummary = Array.from(zone.gateSet)
+      .sort((a, b) => a - b)
+      .map((gateIdx) => `${gateIdx}번 게이트`)
+      .join(', ')
+    const titleSummary = Array.from(zone.titles).slice(0, 2).join(' · ')
+
+    const risk = Math.min(10, weatherRisk + Math.max(0, equipmentCount - 1))
+    const zoneScore = Math.max(35, Math.min(94, 82 - risk * 3 + missionRate * 0.08 - equipmentCount * 0.6))
+    const powerSaving = Math.max(20, Math.round(45 + equipmentCount * 8 - risk * 2))
+    const carbon = Math.max(6, Math.round(12 + equipmentCount * 2.5))
+    const status = risk >= 7 ? '위험' : risk >= 4 ? '관리' : '우수'
+
+    return {
+      id: `work-zone-${index + 1}`,
+      siteId: 'mokdong',
+      name: zone.name,
+      type: titleSummary || equipmentSummary || '작업지시서 연동 구역',
+      score: Math.round(zoneScore * 10) / 10,
+      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => zoneScore >= t) + 1),
+      rank: 0,
+      carbon,
+      powerSaving,
+      risk,
+      missionRate,
+      lead: 0,
+      status,
+      equipmentCount,
+      equipmentSummary,
+      gateSummary,
+    }
+  })
+
+  mapped.sort((a, b) => b.score - a.score)
+  mapped.forEach((zone, index) => {
+    zone.rank = index + 1
+    zone.lead = index === 0 ? 0 : Math.round((zone.score - mapped[0].score) * 10) / 10
+  })
+
+  return mapped
+})
+
+// feat: 현장 기준으로 zones 결정 — 목동(현재 현장)은 작업지시서 작업구역 실데이터 우선
+const siteZones = computed(() => {
+  if (realGateZones.value.length && currentSite.value.id === 'mokdong') {
+    return realGateZones.value
+  }
+  return zones.value.filter((zone) => zone.siteId === currentSite.value.id)
+})
+
+>>>>>>> Stashed changes
 const selectedZone = computed(() => {
   return siteZones.value.find((zone) => zone.id === selectedZoneId.value) ?? siteZones.value[0]
 })
@@ -330,7 +454,6 @@ const esgBreakdown = computed(() => {
 
 const zoneMetricCards = computed(() => {
   const zone = selectedZone.value
-  const idleMinutes = Math.max(8, 24 - zone.level * 3)
   const protectionRate = Math.max(72, zone.missionRate + 18)
 
   if (activeEsgKey.value === 'S') {
@@ -425,10 +548,10 @@ const zoneMetricCards = computed(() => {
 
   return [
     {
-      id: 'gate',
+      id: 'work-zone',
       title: zone.name,
-      subtitle: zone.type,
-      value: `대기 ${idleMinutes}분`,
+      subtitle: zone.equipmentSummary || zone.type,
+      value: `${zone.equipmentCount ?? Math.max(1, zone.level)}대`,
       badge: zone.status,
       icon: HardHat,
       iconClass: 'bg-emerald-50 text-emerald-700',
@@ -492,42 +615,35 @@ const missions = computed(() => [
 ])
 
 const siteRankingItems = computed(() => [...sites.value].sort((a, b) => b.score - a.score))
-const siteLeader = computed(() => siteRankingItems.value[0])
 const currentSiteRank = computed(() => {
   return siteRankingItems.value.findIndex((site) => site.id === selectedSiteId.value) + 1
 })
-const scoreGapToLeader = computed(() => {
-  return Math.max(0, (siteLeader.value?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
+const rankComparison = computed(() => {
+  const index = currentSiteRank.value - 1
+  if (index < 0) return '순위 계산 중입니다.'
+
+  if (index === 0) {
+    const nextSite = siteRankingItems.value[1]
+    if (!nextSite) return '단독 1위입니다.'
+    const gap = Math.max(0, currentSite.value.score - nextSite.score).toFixed(1)
+    return `${nextSite.name}보다 ${gap}점 앞섬`
+  }
+
+  const upperSite = siteRankingItems.value[index - 1]
+  const gap = Math.max(0, upperSite.score - currentSite.value.score).toFixed(1)
+  return `${upperSite.name}까지 ${gap}점 부족`
 })
 
+// feat: 누적 무사고 일수
 const riskActions = computed(() => {
-  const risks = [...equipmentRisks.value, ...planRisks.value].slice(0, 3)
-  if (risks.length) {
-    return risks.map((risk, index) => ({
-      id: `risk-${index}`,
-      title: risk.title || risk.reason || '기상 연동 위험 항목',
-      detail: risk.action || risk.subtitle || '작업 계획과 장비 운용 조건을 다시 확인하세요.',
-      level: risk.level || '주의',
-    }))
-  }
-
-  if (weatherImpact.value.score >= 2) {
-    return [
-      {
-        id: 'weather',
-        title: '기상 조건에 따른 작업 순서 조정',
-        detail: '강수·풍속·미세먼지 기준을 반영해 외부 작업 우선순위를 조정하세요.',
-        level: weatherImpact.value.score >= 4 ? '경고' : '주의',
-      },
-    ]
-  }
-
+  const safeDays = 87
+  
   return [
     {
-      id: 'stable',
-      title: '현재 기상 조건은 평시 운용 범위',
-      detail: '장비 대기시간과 세척 전력 절감 미션 중심으로 관리하면 됩니다.',
-      level: '양호',
+      id: 'safety-days',
+      title: '누적 무사고 일수',
+      detail: `${safeDays}일 누적 무재해 운영 중`,
+      level: '우수',
     },
   ]
 })
@@ -547,6 +663,61 @@ async function loadDashboard() {
   }
 }
 
+<<<<<<< Updated upstream
+=======
+// feat: 오늘 투입 장비 로드 — 작업 지시서 기준 미션 달성률 계산용
+async function loadEquipments() {
+  try {
+    const res = await getGateEquipments(reportDate.value)
+    equipmentsData.value = Array.isArray(res) ? res : []
+  } catch {
+    equipmentsData.value = []
+  }
+}
+
+// feat: 금일 공사일보 로드 — 공사 진행률 및 위험 항목 파악
+async function loadReports() {
+  try {
+    const res = await api.get('/report/', { params: { date: reportDate.value } })
+    const dbReports = Array.isArray(res) ? res : (res.data?.data || res.data || [])
+    reportsData.value = dbReports.map(db => ({
+      id: db.idx,
+      workPlanId: db.workPlanId,
+      date: db.reportDate,
+      process: db.tradeType || '공정',
+      workers: db.actualWorkerCount || 0,
+      todayWork: db.todayWork || '',
+      tomorrowPlan: db.tomorrowPlan || '',
+      progress: db.todayProgress || 0,
+      processProgress: db.actualProgress || 0,
+      notes: db.issue || '',
+      status: '제출 완료',
+    }))
+  } catch {
+    reportsData.value = []
+  }
+}
+
+// feat: 금일 작업지시 로드
+async function loadWorkOrders() {
+  try {
+    const res = await api.get('/work-order', { params: { date: reportDate.value } })
+    const dbWorkOrders = Array.isArray(res) ? res : (res.data?.data || res.data || [])
+    workOrdersData.value = dbWorkOrders
+  } catch {
+    workOrdersData.value = []
+  }
+}
+
+
+function refreshAll() {
+  loadDashboard()
+  loadEquipments()
+  loadReports()
+  loadWorkOrders()
+}
+
+>>>>>>> Stashed changes
 function getTodayDateText() {
   const now = new Date()
   return [
@@ -612,15 +783,56 @@ function levelTone(level) {
 }
 
 onMounted(() => {
+<<<<<<< Updated upstream
   loadDashboard()
   refreshTimer = setInterval(loadDashboard, 30 * 60 * 1000)
+=======
+  refreshAll()
+  refreshTimer = setInterval(() => {
+    refreshAll()
+  }, 30 * 60 * 1000)
+>>>>>>> Stashed changes
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
 })
 
+<<<<<<< Updated upstream
 watch(reportDate, loadDashboard)
+=======
+watch(reportDate, () => {
+  refreshAll()
+})
+
+// feat: 실 작업구역 zones 로드 시 selectedZoneId 초기화 + 목동 현장 점수 갱신
+watch(realGateZones, (zones) => {
+  if (!zones.length) return
+
+  // zone 선택 초기화 (첫 번째 작업구역으로)
+  if (!zones.find((z) => z.id === selectedZoneId.value)) {
+    selectedZoneId.value = zones[0].id
+  }
+
+  // 목동 현장 점수를 실데이터 평균으로 갱신
+  const avgScore = Math.round(
+    (zones.reduce((sum, z) => sum + z.score, 0) / zones.length) * 10
+  ) / 10
+
+  const mokIdx = sites.value.findIndex((s) => s.id === 'mokdong')
+  if (mokIdx >= 0) {
+    sites.value[mokIdx] = {
+      ...sites.value[mokIdx],
+      score: avgScore,
+      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => avgScore >= t) + 1),
+      powerSaving: zones.reduce((sum, z) => sum + z.powerSaving, 0),
+      carbon: zones.reduce((sum, z) => sum + z.carbon, 0),
+      riskCount: weatherRiskCount.value,
+      missionRate: realMissionRate.value,
+    }
+  }
+})
+>>>>>>> Stashed changes
 </script>
 
 <template>
@@ -659,7 +871,7 @@ watch(reportDate, loadDashboard)
               type="button"
               class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black ring-1 ring-white/15 transition hover:bg-white/15 disabled:opacity-60"
               :disabled="loading"
-              @click="loadDashboard"
+              @click="refreshAll"
             >
               <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />
               새로고침
@@ -701,7 +913,7 @@ watch(reportDate, loadDashboard)
               운영 리스크
             </p>
             <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.riskCount }}<span class="text-lg text-emerald-100">건</span></p>
-            <p class="mt-1 text-xs text-emerald-100">기상 기반 자동 검출</p>
+            <p class="mt-1 text-xs text-emerald-100">작업·장비 연동 감지</p>
           </div>
         </div>
       </div>
@@ -864,7 +1076,7 @@ watch(reportDate, loadDashboard)
             <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 순위</h2>
           </div>
           <span class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">
-            임시 데이터
+            현장 비교
           </span>
         </div>
 
@@ -877,7 +1089,7 @@ watch(reportDate, loadDashboard)
             <p class="text-3xl font-black tabular-nums">{{ currentSiteRank }}위</p>
           </div>
           <p class="mt-3 text-sm font-black">
-            {{ siteLeader.name }}까지 {{ scoreGapToLeader }}점 부족
+            {{ rankComparison }}
           </p>
         </div>
 
@@ -949,27 +1161,31 @@ watch(reportDate, loadDashboard)
         </div>
       </article>
 
-      <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
-        <div class="flex items-center justify-between">
+      <article class="relative overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-5 shadow-card ring-1 ring-emerald-100">
+        <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-200/30 blur-xl" />
+        <div class="relative flex items-center justify-between">
           <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-rose-700">Action</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">기상 기반 즉시 조치</h2>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Safety</p>
+            <h2 class="mt-1 text-xl font-black text-forena-900">누적 무사고 일수</h2>
           </div>
-          <Zap class="h-6 w-6 text-rose-500" />
+          <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg">
+            <ShieldCheck class="h-6 w-6" />
+          </span>
         </div>
 
-        <div class="mt-4 space-y-3">
+        <div class="relative mt-5 space-y-3">
           <div
             v-for="action in riskActions"
             :key="action.id"
-            class="rounded-2xl border border-forena-100 bg-forena-50/40 p-4"
+            class="rounded-2xl border border-emerald-200 bg-white/85 p-5 shadow-sm"
           >
             <div class="flex items-start justify-between gap-3">
               <div>
-                <p class="text-sm font-black text-forena-900">{{ action.title }}</p>
-                <p class="mt-1 text-xs leading-5 text-forena-500">{{ action.detail }}</p>
+                <p class="text-sm font-black text-emerald-900">{{ action.title }}</p>
+                <p class="mt-2 text-5xl font-black tracking-tight text-emerald-700 tabular-nums">87<span class="text-xl text-emerald-600">일</span></p>
+                <p class="mt-2 text-xs leading-5 text-emerald-700/80">{{ action.detail }}</p>
               </div>
-              <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold" :class="levelTone(action.level)">
+              <span class="shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="levelTone(action.level)">
                 {{ action.level }}
               </span>
             </div>
