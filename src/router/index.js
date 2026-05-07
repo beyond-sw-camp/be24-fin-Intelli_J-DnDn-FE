@@ -114,7 +114,7 @@ const router = createRouter({
     {
       path: '/site/documents/upload',
       name: 'siteDocumentUpload',
-      component: () => import('../views/misc/PlaceholderView.vue'),
+      component: () => import('../views/document/DocumentUploadView.vue'),
       meta: meta('업로드 문서'),
     },
     {

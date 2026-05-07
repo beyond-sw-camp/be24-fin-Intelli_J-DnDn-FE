@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ChevronDown,
   Search,
+  RefreshCw,
 } from 'lucide-vue-next'
 import {
   getAffiliationKind,
@@ -22,6 +23,7 @@ import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import {
   postStaffingAutoRecommend,
   postStaffingReset,
+  postStaffingDummySeedZones,
   postStaffingSave,
   getStaffingZones,
   getZoneSubDetail,
@@ -49,6 +51,7 @@ const T = {
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
   zoneByZoneTitle: '구역별 인력 현황',
+  dummySeedZones: '데모 구역 새로고침',
   zoneReset: '초기화',
   savePlacementConfirmTitle: '배치 확정 및 저장',
   savePlacementConfirmWarn:
@@ -482,6 +485,25 @@ async function resetAllZones() {
     await reloadBoard()
   } catch (e) {
     pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
+  }
+}
+
+const dummySeedLoading = ref(false)
+
+async function seedDummyZones() {
+  if (dummySeedLoading.value) return
+  dummySeedLoading.value = true
+  try {
+    const res = await postStaffingDummySeedZones({ replaceExisting: true })
+    const zm = res?.zoneMainCount ?? '—'
+    const zs = res?.zoneSubCount ?? '—'
+    const tn = res?.tradeNeedCount ?? '—'
+    pushToast(`데모 구역을 불러왔습니다. (${zm}메인 · ${zs}상세 · 직종필요 ${tn})`, 'info')
+    await reloadBoard()
+  } catch (e) {
+    pushToast(e?.message || '데모 구역을 불러오지 못했습니다.', 'danger')
+  } finally {
+    dummySeedLoading.value = false
   }
 }
 
@@ -928,13 +950,25 @@ function zoneGroupAssignedSum(group) {
     <section class="rounded-2xl border border-forena-100/90 bg-white/90 p-4 shadow-card sm:p-5">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 class="text-base font-bold text-forena-900">{{ T.zoneByZoneTitle }}</h2>
-        <button
-          type="button"
-          class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-800"
-          @click="resetAllZones"
-        >
-          {{ T.zoneReset }}
-        </button>
+        <div class="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            class="inline-flex size-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-800 disabled:pointer-events-none disabled:opacity-50"
+            :title="T.dummySeedZones"
+            :aria-label="T.dummySeedZones"
+            :disabled="dummySeedLoading"
+            @click="seedDummyZones"
+          >
+            <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': dummySeedLoading }" />
+          </button>
+          <button
+            type="button"
+            class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-800"
+            @click="resetAllZones"
+          >
+            {{ T.zoneReset }}
+          </button>
+        </div>
       </div>
 
       <div class="space-y-2">
