@@ -99,14 +99,29 @@ spec:
 
     stage('Deploy to Kubernetes') {
       steps {
-        container('kubectl'){
+        container('kubectl') {
           script {
-            // -n 옵션을 통해 TARGET_NAMESPACE에 배포하도록 수정
-            sh "kubectl set image deployment/dndn-frontend frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
-            sh "kubectl rollout restart deployment/dndn-frontend -n ${env.TARGET_NAMESPACE}"
+            def activeService = sh(
+              script: "kubectl get ingress frontend-ingress -o jsonpath='{.spec.rules[0].http.paths[0].backend.service.name}' -n ${env.TARGET_NAMESPACE}",
+              returnStdout: true
+            ).trim()
+            def activeVersion   = activeService.contains('blue') ? 'blue' : 'green'
+            def inactiveVersion = activeVersion == 'blue' ? 'green' : 'blue'
+            echo "Active: ${activeVersion} → Deploying to: ${inactiveVersion}"
+
+            sh "kubectl set image deployment/dndn-frontend-${inactiveVersion} frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl scale deployment/dndn-frontend-${inactiveVersion} --replicas=1 -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl rollout status deployment/dndn-frontend-${inactiveVersion} --timeout=180s -n ${env.TARGET_NAMESPACE}"
+
+            sh """
+              kubectl patch ingress frontend-ingress --type=json \
+                -p='[{"op":"replace","path":"/spec/rules/0/http/paths/0/backend/service/name","value":"frontend-service-${inactiveVersion}"}]' \
+                -n ${env.TARGET_NAMESPACE}
+            """
+
+            sh "kubectl scale deployment/dndn-frontend-${activeVersion} --replicas=0 -n ${env.TARGET_NAMESPACE}"
+            echo "Switched to: ${inactiveVersion}"
           }
         }
       }
     }
-  }
-}
