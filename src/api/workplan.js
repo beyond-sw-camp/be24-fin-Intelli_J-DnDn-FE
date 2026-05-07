@@ -42,6 +42,7 @@ const toPlan = (dto) => {
     start: dto.startDate,
     end: dto.endDate,
     actualStart: dto.actualStart || null,
+    effectiveEnd: dto.effectiveEnd || dto.endDate || null,
     actualPct: dto.actualPct ?? dto.actualProgress ?? null,
     progressPct: dto.progressPct ?? dto.progress ?? null,
     processProgress: dto.processProgress ?? null,
@@ -170,4 +171,9 @@ export const startWorkPlan = (planId) => {
  */
 export const deleteWorkPlan = (planId) => {
   return api.delete(`${PATH}/${planId}`)
+}
+
+export const fetchWorkPlansByProject = async (projectId) => {
+  const dtos = await api.get(`${PATH}/project/${projectId}`)
+  return Array.isArray(dtos) ? dtos.map(toPlan) : []
 }
