@@ -1,8 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'  // ← 맨 위로
+import { useGanttStore } from '@/stores/ganttStore.js'
+import { parseFromApi } from '@/utils/ganttParser.js'
+
+const ganttStore = useGanttStore()  // ← import 다 끝난 후에
 import {
   CalendarRange,
-  CalendarClock,
   AlertTriangle,
   CheckCircle2,
   ShieldCheck,
@@ -17,17 +20,11 @@ import {
   ZoomIn,
   ZoomOut,
   Locate,
-  Filter,
   Search,
-  Plus,
   History,
   GitBranch,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
-  Flag,
-  Target,
-  FileWarning,
   ArrowRight,
   ThumbsUp,
   ThumbsDown,
@@ -38,481 +35,26 @@ import {
   Users,
   Wrench,
   MapPin,
-  Trash2,
   Diamond,
   Sparkles,
   FilePlus2,
   MoveRight,
 } from 'lucide-vue-next'
+import { parseGanttJSON } from '@/utils/ganttParser.js'
 
-// ======================================================
-// MOCK DATA — 자체 완결 (별도 mockData.js 의존 없음)
-// ======================================================
-const projectInfo = ref({
-  siteName: '강남 복합개발 1공구',
-  projectName: '강남 복합개발 1공구 신축공사',
-  startDate: '2025-03-01',
-  endDate: '2026-09-30',
-  status: '검토 중', // 미등록 | AI 분석 중 | 검토 중 | 확정 | 변경 요청 중 | 변경 승인 완료
-  plannedProgress: 62,
-  actualProgress: 54,
-  totalTasks: 10,
-  cpTasks: 6,
-  weightSum: 100,
-  lastModified: '2026-04-15',
-  finalApprover: '박현수 (현장 총책임자)',
-})
+const projectInfo = ref(ganttStore.projectInfo ?? {})
+const aiTasks = ref(ganttStore.tasks ?? [])
+const milestones = ref(ganttStore.milestones ?? [])
 
-// 권한 (데모용 — 셀렉터에서 변경 가능)
-const ROLES = ['현장 총책임자', '공정 책임자', '본사 관리자', '일반 사용자']
-const currentRole = ref('현장 총책임자')
-const canConfirm = computed(() => currentRole.value === '현장 총책임자')
-const canEdit = computed(() => ['현장 총책임자', '공정 책임자'].includes(currentRole.value))
+// 스토어 데이터 변경 시 자동 반영
+watch(() => ganttStore.tasks, (val) => { aiTasks.value = val ?? [] })
+watch(() => ganttStore.milestones, (val) => { milestones.value = val ?? [] })
+watch(() => ganttStore.projectInfo, (val) => { projectInfo.value = val ?? {} })
 
-// 업로드 문서
-const uploadedDocs = ref([
-  {
-    id: 1,
-    name: '마스터 공정표_v1.0.xlsx',
-    type: '마스터 공정표',
-    uploadedAt: '2026-04-01 09:12',
-    uploadedBy: '박현수',
-    aiAnalyzed: true,
-    reflectStatus: '반영 완료',
-    desc: '전체 공정 마스터 일정',
-  },
-  {
-    id: 2,
-    name: '마일스톤_요약.pdf',
-    type: '마일스톤 공정표',
-    uploadedAt: '2026-04-02 11:40',
-    uploadedBy: '박현수',
-    aiAnalyzed: true,
-    reflectStatus: '반영 완료',
-    desc: '주요 마일스톤 일자',
-  },
-  {
-    id: 3,
-    name: '골조_시공계획서.pdf',
-    type: '공종별 시공계획서',
-    uploadedAt: '2026-04-05 14:08',
-    uploadedBy: '김지훈',
-    aiAnalyzed: false,
-    reflectStatus: '미반영',
-    desc: '골조 공종 상세 일정',
-  },
-])
-
-// AI 분석 결과 — 기준 공정표 작업 목록
-const aiTasks = ref([
-  {
-    id: 1,
-    checked: false,
-    group: '토목',
-    sub: '터파기',
-    name: '터파기 및 흙막이',
-    start: '2025-03-01',
-    end: '2025-04-15',
-    durDays: 46,
-    prev: '',
-    next: '기초 콘크리트',
-    isCritical: true,
-    weight: 8,
-    confidence: 95,
-    reviewStatus: '승인',
-    location: '전 구역',
-    responsible: '한토목',
-    requiredCount: 8,
-    equipment: ['굴삭기 2대', '덤프 4대'],
-    memo: '흙막이 H-Pile 기준',
-    sourceDocId: 1,
-  },
-  {
-    id: 2,
-    checked: false,
-    group: '토목',
-    sub: '기초',
-    name: '기초 콘크리트',
-    start: '2025-04-16',
-    end: '2025-05-31',
-    durDays: 46,
-    prev: '터파기 및 흙막이',
-    next: 'B3 ~ B1 골조',
-    isCritical: true,
-    weight: 10,
-    confidence: 92,
-    reviewStatus: '승인',
-    location: '전 구역',
-    responsible: '한토목',
-    requiredCount: 10,
-    equipment: ['펌프카 1대'],
-    memo: '',
-    sourceDocId: 1,
-  },
-  {
-    id: 3,
-    checked: false,
-    group: '골조',
-    sub: '지하 골조',
-    name: 'B3 ~ B1 골조',
-    start: '2025-06-01',
-    end: '2025-08-31',
-    durDays: 92,
-    prev: '기초 콘크리트',
-    next: '지상 1~5층 골조',
-    isCritical: true,
-    weight: 15,
-    confidence: 88,
-    reviewStatus: '승인',
-    location: 'B3~B1',
-    responsible: '오반장',
-    requiredCount: 15,
-    equipment: ['타워크레인 1대'],
-    memo: '',
-    sourceDocId: 3,
-  },
-  {
-    id: 4,
-    checked: false,
-    group: '골조',
-    sub: '지상 골조',
-    name: '지상 1~5층 골조',
-    start: '2025-09-01',
-    end: '2025-11-30',
-    durDays: 91,
-    prev: 'B3 ~ B1 골조',
-    next: '지상 6~15층 골조',
-    isCritical: true,
-    weight: 12,
-    confidence: 90,
-    reviewStatus: '수정 요청',
-    location: '1~5F',
-    responsible: '오반장',
-    requiredCount: 14,
-    equipment: ['타워크레인 1대'],
-    memo: '5층 슬라브 보강 검토',
-    sourceDocId: 3,
-  },
-  {
-    id: 5,
-    checked: false,
-    group: '전기',
-    sub: '간선',
-    name: '전기 간선 배관',
-    start: '2025-09-15',
-    end: '2025-12-31',
-    durDays: 108,
-    prev: '',
-    next: '분전반 설치',
-    isCritical: false,
-    weight: 6,
-    confidence: 82,
-    reviewStatus: '검토 중',
-    location: 'EPS',
-    responsible: '정대리',
-    requiredCount: 4,
-    equipment: [],
-    memo: '',
-    sourceDocId: 1,
-  },
-  {
-    id: 6,
-    checked: false,
-    group: '설비',
-    sub: '급배수',
-    name: '급배수 배관',
-    start: '2025-10-01',
-    end: '2026-02-28',
-    durDays: 151,
-    prev: '',
-    next: '소방 배관',
-    isCritical: false,
-    weight: 7,
-    confidence: 85,
-    reviewStatus: '검토 중',
-    location: 'PS 전층',
-    responsible: '서기술',
-    requiredCount: 4,
-    equipment: [],
-    memo: '',
-    sourceDocId: 1,
-  },
-  {
-    id: 7,
-    checked: false,
-    group: '골조',
-    sub: '지상 골조',
-    name: '지상 6~15층 골조',
-    start: '2025-12-01',
-    end: '2026-03-31',
-    durDays: 121,
-    prev: '지상 1~5층 골조',
-    next: '외벽 커튼월',
-    isCritical: true,
-    weight: 14,
-    confidence: 78,
-    reviewStatus: '미검토',
-    location: '6~15F',
-    responsible: '오반장',
-    requiredCount: 16,
-    equipment: ['타워크레인 1대'],
-    memo: '',
-    sourceDocId: 3,
-  },
-  {
-    id: 8,
-    checked: false,
-    group: '마감',
-    sub: '외장',
-    name: '외벽 커튼월',
-    start: '2026-02-01',
-    end: '2026-06-30',
-    durDays: 150,
-    prev: '지상 6~15층 골조',
-    next: '내부 마감 공사',
-    isCritical: false,
-    weight: 10,
-    confidence: 72,
-    reviewStatus: '미검토',
-    location: '전 외벽',
-    responsible: '한현장',
-    requiredCount: 8,
-    equipment: ['고소차 2대'],
-    memo: '저신뢰도 — 검토 필요',
-    sourceDocId: 1,
-  },
-  {
-    id: 9,
-    checked: false,
-    group: '마감',
-    sub: '내장',
-    name: '내부 마감 공사',
-    start: '2026-04-01',
-    end: '2026-08-31',
-    durDays: 153,
-    prev: '외벽 커튼월',
-    next: '준공 검사',
-    isCritical: false,
-    weight: 11,
-    confidence: 75,
-    reviewStatus: '미검토',
-    location: '전층 내부',
-    responsible: '한현장',
-    requiredCount: 10,
-    equipment: [],
-    memo: '',
-    sourceDocId: 1,
-  },
-  {
-    id: 10,
-    checked: false,
-    group: '준공',
-    sub: '준공 검사',
-    name: '준공 검사 및 인수',
-    start: '2026-08-01',
-    end: '2026-09-30',
-    durDays: 61,
-    prev: '내부 마감 공사',
-    next: '',
-    isCritical: true,
-    weight: 7,
-    confidence: 80,
-    reviewStatus: '미검토',
-    location: '전 구역',
-    responsible: '박현수',
-    requiredCount: 3,
-    equipment: [],
-    memo: '',
-    sourceDocId: 2,
-  },
-])
-
-// 마일스톤 (group: 어느 공정 그룹의 헤더라인에 표시할지)
-const milestones = ref([
-  {
-    id: 1,
-    name: '착공',
-    date: '2025-03-01',
-    group: '토목',
-    relatedTask: '터파기 및 흙막이',
-    status: '완료',
-    impact: '저',
-  },
-  {
-    id: 2,
-    name: '토공 완료',
-    date: '2025-05-31',
-    group: '토목',
-    relatedTask: '기초 콘크리트',
-    status: '완료',
-    impact: '중',
-  },
-  {
-    id: 3,
-    name: '골조 완료',
-    date: '2026-03-31',
-    group: '골조',
-    relatedTask: '지상 6~15층 골조',
-    status: '지연 위험',
-    impact: '고',
-  },
-  {
-    id: 4,
-    name: '외장 완료',
-    date: '2026-06-30',
-    group: '마감',
-    relatedTask: '외벽 커튼월',
-    status: '예정',
-    impact: '중',
-  },
-  {
-    id: 5,
-    name: '마감 완료',
-    date: '2026-08-31',
-    group: '마감',
-    relatedTask: '내부 마감 공사',
-    status: '예정',
-    impact: '중',
-  },
-  {
-    id: 6,
-    name: '사용승인',
-    date: '2026-09-15',
-    group: '준공',
-    relatedTask: '준공 검사 및 인수',
-    status: '예정',
-    impact: '고',
-  },
-  {
-    id: 7,
-    name: '준공',
-    date: '2026-09-30',
-    group: '준공',
-    relatedTask: '준공 검사 및 인수',
-    status: '예정',
-    impact: '고',
-  },
-])
-
-// 클릭한 마일스톤 강조용 (간트 ↔ 표 연동)
-const highlightedMilestoneId = ref(null)
-
-// 변경 요청 (확정 후 발생)
-const changeRequests = ref([
-  {
-    id: 1,
-    requestedAt: '2026-04-22',
-    taskId: 7,
-    taskName: '지상 6~15층 골조',
-    group: '골조',
-    changeType: '기간 연장',
-    oldStart: '2025-12-01',
-    oldEnd: '2026-03-31',
-    newStart: '2025-12-01',
-    newEnd: '2026-04-07',
-    oldCp: true,
-    newCp: true,
-    oldWeight: 14,
-    newWeight: 14,
-    oldPrev: '지상 1~5층 골조',
-    newPrev: '지상 1~5층 골조',
-    requester: '오반장',
-    reason: '골조 콘크리트 양생 지연 — 7일 연장 필요',
-    affectedTasks: ['외벽 커튼월', '내부 마감 공사'],
-    milestoneImpact: '골조 완료 마일스톤 7일 지연',
-    cpImpact: true,
-    expectedDelayDays: 7,
-    aiSummary:
-      '본 작업은 CP 공정으로, 7일 연장 시 후속 작업인 외벽 커튼월과 골조 완료 마일스톤이 동일 기간 지연됩니다. 외장 완료 마일스톤도 영향권에 들어갈 수 있어 현장 총책임자 승인 권장.',
-    status: '검토 중',
-    approver: '',
-    approvedAt: '',
-  },
-  {
-    id: 2,
-    requestedAt: '2026-04-25',
-    taskId: 5,
-    taskName: '전기 간선 배관',
-    group: '전기',
-    changeType: '시작일 변경',
-    oldStart: '2025-09-15',
-    oldEnd: '2025-12-31',
-    newStart: '2025-10-01',
-    newEnd: '2026-01-15',
-    oldCp: false,
-    newCp: false,
-    oldWeight: 6,
-    newWeight: 6,
-    oldPrev: '',
-    newPrev: 'B3 ~ B1 골조',
-    requester: '정대리',
-    reason: '골조 진행 일정에 맞춰 착수 시점 조정',
-    affectedTasks: ['분전반 설치'],
-    milestoneImpact: '없음',
-    cpImpact: false,
-    expectedDelayDays: 0,
-    aiSummary: 'CP 공정 아니며, 후속 작업과의 여유 기간 내에서 조정 가능. 마일스톤 영향 없음.',
-    status: '요청됨',
-    approver: '',
-    approvedAt: '',
-  },
-  {
-    id: 3,
-    requestedAt: '2026-04-18',
-    taskId: 4,
-    taskName: '지상 1~5층 골조',
-    group: '골조',
-    changeType: '보할 변경',
-    oldStart: '2025-09-01',
-    oldEnd: '2025-11-30',
-    newStart: '2025-09-01',
-    newEnd: '2025-11-30',
-    oldCp: true,
-    newCp: true,
-    oldWeight: 12,
-    newWeight: 14,
-    oldPrev: 'B3 ~ B1 골조',
-    newPrev: 'B3 ~ B1 골조',
-    requester: '오반장',
-    reason: '실 공사 물량 재산정 결과 보할 상향 조정',
-    affectedTasks: [],
-    milestoneImpact: '없음',
-    cpImpact: false,
-    expectedDelayDays: 0,
-    aiSummary: '보할 합계 변동 없음 (다른 작업에서 -2% 조정 필요). 일정 영향 없음.',
-    status: '반영 완료',
-    approver: '박현수',
-    approvedAt: '2026-04-19',
-  },
-])
-
-// 변경 이력
-const changeLog = ref([
-  {
-    id: 1,
-    at: '2026-04-19 14:22',
-    who: '박현수',
-    action: '승인',
-    target: '지상 1~5층 골조',
-    detail: '보할 12% → 14%',
-  },
-  {
-    id: 2,
-    at: '2026-04-15 09:30',
-    who: '박현수',
-    action: '확정 보류',
-    target: '기준 공정표 v1',
-    detail: '미검토 4건 잔존',
-  },
-  {
-    id: 3,
-    at: '2026-04-01 09:12',
-    who: '박현수',
-    action: '문서 등록',
-    target: '마스터 공정표 v1.0',
-    detail: 'AI 분석 시작',
-  },
-])
+// 아래는 다른 기능용 — 건드리지 않아도 됨
+const uploadedDocs  = ref([])
+const changeRequests = ref([])
+const changeLog      = ref([])
 
 // ======================================================
 // 상태/UI 토글
@@ -522,7 +64,12 @@ const ganttZoom = ref(1) // 0.6 ~ 1.6
 const onlyCp = ref(false)
 const onlyMilestone = ref(false)
 const highlightDelayed = ref(true)
-const groupOpen = ref({ 토목: true, 골조: true, 전기: true, 설비: true, 마감: true, 준공: true })
+
+const groupOpen = ref({})
+watch(aiTasks, (tasks) => {
+  const groups = [...new Set(tasks.map(t => t.group))]
+  groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
+}, { immediate: true })
 
 const filterGroup = ref('')
 const filterReview = ref('')
@@ -533,6 +80,13 @@ const selectedTaskId = ref(null)
 const selectedTask = computed(
   () => aiTasks.value.find((t) => t.id === selectedTaskId.value) ?? null,
 )
+
+// 다이아몬드 버튼 누르면 토글 한 번에 접히고 열림
+function toggleAllGroups() {
+  const allOpen = Object.values(groupOpen.value).every(v => v)
+  Object.keys(groupOpen.value).forEach(k => (groupOpen.value[k] = !allOpen))
+  onlyMilestone.value = !onlyMilestone.value
+}
 
 // 모달
 const editModalOpen = ref(false)
@@ -1158,9 +712,59 @@ function reviewChange(cr) {
 function zoomIn() {
   ganttZoom.value = Math.min(1.6, +(ganttZoom.value + 0.2).toFixed(1))
 }
+
+// 춤 아웃 설정 마지막 마일스톤까지만 축소 되도록 설정
 function zoomOut() {
-  ganttZoom.value = Math.max(0.6, +(ganttZoom.value - 0.2).toFixed(1))
+  const el = document.getElementById('gantt-scroll')
+  if (!el) return
+  // 이제 gantt-scroll이 차트 영역만 감싸므로 그대로 사용
+  const availableWidth = el.clientWidth
+  const base = ganttScale.value === 'year' ? 1.2 : ganttScale.value === 'month' ? 3 : 14
+  const minZoom = availableWidth / (projTotalDays.value * base)
+  const newZoom = Math.max(+minZoom.toFixed(2), +(ganttZoom.value - 0.2).toFixed(1))
+  ganttZoom.value = Math.min(1.6, newZoom)
 }
+
+const isLoading = ref(false)
+
+async function loadGanttFromApi() {
+  // 스토어에 이미 데이터가 있으면 API 호출 안 함 (FirstDocumentUpload에서 넘어온 경우)
+  if (ganttStore.tasks.length > 0) {
+    projectInfo.value = ganttStore.projectInfo ?? {}
+    aiTasks.value = ganttStore.tasks ?? []
+    milestones.value = ganttStore.milestones ?? []
+    const groups = [...new Set(aiTasks.value.map(t => t.group))]
+    groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
+    return
+  }
+
+  // 스토어에 데이터 없으면 API 호출
+  isLoading.value = true
+  try {
+    const res = await fetch('/work-plan?planType=연간')
+    const json = await res.json()
+    const apiList = json.data
+
+    const parsed = parseFromApi(apiList)
+    projectInfo.value = parsed.projectInfo
+    aiTasks.value = parsed.tasks
+    milestones.value = parsed.milestones
+
+    const groups = [...new Set(parsed.tasks.map(t => t.group))]
+    groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
+  } catch (err) {
+    console.error('공정표 로드 실패:', err)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// 마우스 휠로 좌우로 움직일 수 있도록 설정
+function onGanttWheel(e) {
+  const el = document.getElementById('gantt-scroll')
+  if (el) el.scrollLeft += e.deltaY
+}
+
 function scrollToToday() {
   const today = new Date().toISOString().slice(0, 10)
   if (today < projStart.value || today > projEnd.value) {
@@ -1172,6 +776,7 @@ function scrollToToday() {
 }
 
 onMounted(async () => {
+  await loadGanttFromApi()
   await nextTick()
   scrollToToday()
 })
@@ -1240,6 +845,18 @@ onMounted(async () => {
   border-radius: 999px;
 }
 .ms-row::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 간트 차트 스크롤 설정 */
+#gantt-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+#gantt-scroll::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+}
+#gantt-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 </style>
@@ -1926,7 +1543,7 @@ onMounted(async () => {
                 CP
               </button>
               <button
-                @click="onlyMilestone = !onlyMilestone"
+                @click="toggleAllGroups"
                 :title="onlyMilestone ? '마일스톤만' : '마일스톤 토글'"
                 class="border-l border-forena-200 px-2 py-1 text-[10px] font-bold transition"
                 :class="
@@ -2015,8 +1632,8 @@ onMounted(async () => {
         </div>
 
         <!-- 간트차트 본체 -->
-        <div id="gantt-scroll" class="overflow-x-auto">
-          <div class="flex">
+        <div class="flex">
+          <div class="flex min-w-full">
             <!-- 좌측: 작업명 sticky -->
             <div class="sticky left-0 z-10 w-44 shrink-0 border-r border-forena-200 bg-white">
               <div
@@ -2071,7 +1688,8 @@ onMounted(async () => {
             </div>
 
             <!-- 우측: 차트 -->
-            <div class="relative" :style="{ width: ganttPxWidth + 'px' }">
+            <div id="gantt-scroll" class="overflow-x-auto flex-1" @wheel.prevent="onGanttWheel">
+              <div class="relative" :style="{ width: ganttPxWidth + 'px', minWidth: '100%' }">
               <!-- 헤더 -->
               <div class="sticky top-0 z-[5] flex h-9 border-b border-forena-200 bg-forena-50/30">
                 <div
@@ -2141,7 +1759,7 @@ onMounted(async () => {
                     >
                       <!-- 라인: 계획 (파란) -->
                       <div
-                        v-if="barStyle(t.start, t.end) && !onlyMilestone"
+                        v-if="barStyle(t.start, t.end)"
                         class="absolute z-[2] flex items-center"
                         :style="{ ...barStyle(t.start, t.end), top: '14px', height: '4px' }"
                         :title="`계획: ${t.start} ~ ${t.end}`"
@@ -2161,12 +1779,7 @@ onMounted(async () => {
                       </div>
                       <!-- 라인: 실제/지연 (빨간) - 데모 -->
                       <div
-                        v-if="
-                          barStyle(t.start, t.end) &&
-                          !onlyMilestone &&
-                          highlightDelayed &&
-                          isDelayed(t)
-                        "
+                        v-if="barStyle(t.start, t.end) && highlightDelayed && isDelayed(t)"
                         class="absolute z-[2] flex items-center"
                         :style="{ ...barStyle(t.start, t.end), top: '28px', height: '4px' }"
                         :title="`지연 의심: ${t.name}`"
@@ -2183,6 +1796,7 @@ onMounted(async () => {
                   </template>
                 </template>
               </div>
+            </div>
             </div>
           </div>
         </div>

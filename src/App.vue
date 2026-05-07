@@ -6,12 +6,21 @@ import AppSidebar from '@/components/AppSidebar.vue'
 const route = useRoute()
 
 const isLoginRoute = computed(() => route.name === 'login' || route.path === '/login')
+const isUploadRoute = computed(() => route.path === '/site/upload')
 </script>
 
 <template>
   <template v-if="isLoginRoute">
     <div class="min-h-screen w-full flex-1 overflow-x-hidden overflow-y-auto">
       <RouterView />
+    </div>
+  </template>
+  <!-- 사이드바 없는 일반 페이지 (upload 등) -->
+  <template v-else-if="isUploadRoute">
+    <div class="min-h-screen w-full overflow-y-auto bg-mesh-page bg-forena-50 text-slate-900">
+      <main class="p-6">
+        <RouterView />
+      </main>
     </div>
   </template>
   <div

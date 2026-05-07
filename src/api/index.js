@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081'
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
 
 const api = axios.create({
   baseURL,
@@ -31,7 +31,8 @@ api.interceptors.response.use(
         return Promise.reject(new Error(body.message || '요청이 실패했습니다.'))
       }
       // data 필드 반환 (없으면 body 전체)
-      return body.data !== undefined ? body.data : body
+      if (body.data !== undefined) return body.data
+      if (body.result !== undefined) return body.result
     }
 
     return body
