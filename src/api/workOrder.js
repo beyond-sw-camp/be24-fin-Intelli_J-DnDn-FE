@@ -30,25 +30,9 @@ export const approveWorkOrder = async (workOrderId) => {
   return await api.put(`${BASE_URL}/${workOrderId}/approve`)
 }
 
-<<<<<<< HEAD
 /* 중장비 입출차 현황 페이지용 — 게이트별 투입 장비 목록 조회*/
 export const getGateEquipments = async (targetDate = null) => {
   const params = {}
   if (targetDate) params.targetDate = targetDate
   return await api.get(`${BASE_URL}/gate-equipments`, { params })
 }
-=======
-/* 중장비 입출차 현황 페이지용 — 게이트별 투입 장비 목록 조회 */
-export const getGateEquipments = async (targetDate = null) => {
-  const params = {}
-
-  if (targetDate) {
-    params.targetDate = targetDate
-  }
-
-  return await api.get(`${BASE_URL}/gate-equipments`, {
-    params,
-    timeout: 20000
-  })
-}
->>>>>>> 9d4bc1d ([Temp] feature connection 이동용 변경사항)

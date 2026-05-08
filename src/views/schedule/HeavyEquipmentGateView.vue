@@ -39,10 +39,6 @@ const isLoading = ref(false)
 // ─── 금일 투입 장비 (WorkOrderEquipment 연동) ────────────────────────────────
 const todayEquipments = ref([])
 const isEquipLoading = ref(false)
-<<<<<<< HEAD
-=======
-const equipErrorMessage = ref('')
->>>>>>> 9d4bc1d ([Temp] feature connection 이동용 변경사항)
 
 // ─── 사용자 업로드 도면 ─────────────────────────────────────────────────────────
 const BLUEPRINT_STORAGE_KEY = 'dndn-gate-blueprint'
@@ -167,10 +163,6 @@ const refreshGate = async (gateId) => {
 // feat: 금일 투입 장비 목록 로드
 const loadTodayEquipments = async () => {
   isEquipLoading.value = true
-<<<<<<< HEAD
-=======
-  equipErrorMessage.value = ''
->>>>>>> 9d4bc1d ([Temp] feature connection 이동용 변경사항)
   try {
     const today = new Date()
     const dateStr = [
@@ -183,10 +175,6 @@ const loadTodayEquipments = async () => {
     todayEquipments.value = Array.isArray(res) ? res : []
   } catch (error) {
     console.error('금일 투입 장비 조회 실패', error)
-<<<<<<< HEAD
-=======
-    equipErrorMessage.value = '작업지시서 장비 연동이 지연되고 있습니다. 백엔드 실행 상태와 /work-order/gate-equipments 응답을 확인해 주세요.'
->>>>>>> 9d4bc1d ([Temp] feature connection 이동용 변경사항)
     todayEquipments.value = []
   } finally {
     isEquipLoading.value = false
@@ -651,16 +639,6 @@ const onGateClick = (gateId, event) => {
         </button>
       </div>
 
-<<<<<<< HEAD
-=======
-      <div
-        v-if="equipErrorMessage"
-        class="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800"
-      >
-        {{ equipErrorMessage }}
-      </div>
-
->>>>>>> 9d4bc1d ([Temp] feature connection 이동용 변경사항)
       <div v-if="isEquipLoading" class="mt-6 flex items-center justify-center py-10 text-sm text-forena-500">
         장비 목록을 불러오는 중...
       </div>
