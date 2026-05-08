@@ -1,4 +1,10 @@
 pipeline {
+  // 동시 트리거 시 이전 빌드 중단 후 최신만 완료(quietPeriod 로 짧은 연속 신호 완화)
+  options {
+    disableConcurrentBuilds(abortPrevious: true)
+    quietPeriod(30)
+  }
+
   agent {
     kubernetes {
       label "node-kaniko-${UUID.randomUUID().toString()}"
@@ -54,6 +60,8 @@ spec:
           def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
           env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
           env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
+          // 프론트와 API가 같은 호스트 Ingress + nginx location /api/ 일 때 동일하게 유지
+          env.VITE_API_BASE_URL = '/api'
         }
       }
     }
@@ -76,6 +84,7 @@ spec:
             /kaniko/executor \
               --context=${WORKSPACE} \
               --dockerfile=${WORKSPACE}/Dockerfile \
+              --build-arg VITE_API_BASE_URL=${env.VITE_API_BASE_URL} \
               --destination=${env.IMAGE_NAME}:${env.IMAGE_TAG} \
               --destination=${env.IMAGE_NAME}:latest \
               --single-snapshot \
@@ -96,11 +105,28 @@ spec:
 
     stage('Deploy to Kubernetes') {
       steps {
-        container('kubectl'){
+        container('kubectl') {
           script {
-            // -n 옵션을 통해 TARGET_NAMESPACE에 배포하도록 수정
-            sh "kubectl set image deployment/dndn-frontend frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
-            sh "kubectl rollout restart deployment/dndn-frontend -n ${env.TARGET_NAMESPACE}"
+            def activeService = sh(
+              script: "kubectl get ingress frontend-ingress -o jsonpath='{.spec.rules[0].http.paths[0].backend.service.name}' -n ${env.TARGET_NAMESPACE}",
+              returnStdout: true
+            ).trim()
+            def activeVersion   = activeService.contains('blue') ? 'blue' : 'green'
+            def inactiveVersion = activeVersion == 'blue' ? 'green' : 'blue'
+            echo "Active: ${activeVersion} → Deploying to: ${inactiveVersion}"
+
+            sh "kubectl set image deployment/dndn-frontend-${inactiveVersion} frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl scale deployment/dndn-frontend-${inactiveVersion} --replicas=2 -n ${env.TARGET_NAMESPACE}"
+            sh "kubectl rollout status deployment/dndn-frontend-${inactiveVersion} --timeout=180s -n ${env.TARGET_NAMESPACE}"
+
+            sh """
+              kubectl patch ingress frontend-ingress --type=json \
+                -p='[{"op":"replace","path":"/spec/rules/0/http/paths/0/backend/service/name","value":"frontend-service-${inactiveVersion}"}]' \
+                -n ${env.TARGET_NAMESPACE}
+            """
+
+            sh "kubectl scale deployment/dndn-frontend-${activeVersion} --replicas=0 -n ${env.TARGET_NAMESPACE}"
+            echo "Switched to: ${inactiveVersion}"
           }
         }
       }
