@@ -3,6 +3,11 @@ const MANAGEMENT_ZONES = [
   { id: 'civil', name: '민원 구역', icon: '📢', type: 'fixed' },
 ]
 
+/**
+ * 작업 구역 생성 (workLocation 기준)
+ * @param {Array} workOrders 작업지시 목록
+ * @returns {Array} 작업 구역 목록
+ */
 export function generateWorkZones(workOrders) {
   const locations = new Set()
   
@@ -22,12 +27,22 @@ export function generateWorkZones(workOrders) {
     }))
 }
 
+/**
+ * 전체 구역 목록 (작업 + 상시)
+ * @param {Array} workOrders 작업지시 목록
+ * @returns {Array} 전체 구역 목록
+ */
 export function getAllZones(workOrders) {
   const workZones = generateWorkZones(workOrders)
   return [...workZones, ...MANAGEMENT_ZONES]
 }
 
-
+/**
+ * ESG 점수 계산
+ * @param {string} zoneId 구역 ID
+ * @param {Object} data ESG 데이터
+ * @returns {number} ESG 점수
+ */
 export function calculateEsgScore(zoneId, data) {
   if (!data) return 0
   
@@ -38,21 +53,33 @@ export function calculateEsgScore(zoneId, data) {
   return Math.round((e * 0.4 + s * 0.35 + g * 0.25) * 100) / 100
 }
 
-
+/**
+ * ESG 점수 색상
+ * @param {number} score ESG 점수
+ * @returns {string} Tailwind 클래스
+ */
 export function getScoreBadgeClass(score) {
   if (score >= 85) return 'text-emerald-700 bg-emerald-100 border-emerald-200'
   if (score >= 70) return 'text-amber-700 bg-amber-100 border-amber-200'
   return 'text-rose-700 bg-rose-100 border-rose-200'
 }
 
-
+/**
+ * ESG 빌딩 성장 레벨
+ * @param {number} score ESG 점수
+ * @returns {string} 성장 레벨
+ */
 export function getBuildingGrowthLevel(score) {
   if (score >= 85) return '최고 성과'
   if (score >= 70) return '성장 중'
   return '기초 단계'
 }
 
-
+/**
+ * 구역별 미션
+ * @param {string} zoneId 구역 ID
+ * @returns {Array} 미션 목록
+ */
 export function getDefaultMissions(zoneId) {
   const missionsByZone = {
     wash: [
@@ -80,6 +107,10 @@ export function getDefaultMissions(zoneId) {
   return missionsByZone[zoneId] || []
 }
 
+/**
+ * 공사현장 ESG 순위
+ * @returns {Array} 순위 데이터
+ */
 export function getRankingData() {
   return [
     { rank: 1, site: '목동 프로젝트', score: 87, trend: 'up' },
