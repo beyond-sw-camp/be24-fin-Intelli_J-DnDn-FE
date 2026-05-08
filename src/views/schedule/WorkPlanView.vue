@@ -808,7 +808,6 @@ watch([filterTrade, filterStatus], () => {
 onMounted(() => {
   loadPlans()
 })
-onBeforeUnmount(() => document.removeEventListener('mousedown', handleClickOutside))
 
 function importAi() {
   alert('AI로 작업계획을 불러옵니다. (데모)')
@@ -1550,7 +1549,7 @@ function onClickWorkPlan(wp) {
           class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
           @click="openWeeklyForm"
         >
-          <ClipboardList class="h-3.5 w-3.5 text-forena-400" /> 주간계획서 작성
+          <ClipboardList class="h-3.5 w-3.5 text-forena-400" /> 세부 계획서 작성
         </button>
       </div>
     </div>
