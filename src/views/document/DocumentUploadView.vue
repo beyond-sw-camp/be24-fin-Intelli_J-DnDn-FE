@@ -817,7 +817,7 @@ const docTypeBadgeClass = (type) => {
             <Eye class="h-5 w-5" />
           </button>
           <button v-if="item.doc" type="button"
-                  class="rounded-lg p-2.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700" title="다운로드"
+                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700" title="다운로드"
                   @click="downloadFile(item.doc.id, item.doc.fileName)">
             <Download class="h-5 w-5" />
           </button>
@@ -1096,14 +1096,14 @@ const docTypeBadgeClass = (type) => {
               <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
                 <button
                     type="button"
-                    class="rounded-lg p-2.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
+                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
                     title="미리보기"
                 >
                   <Eye class="h-5 w-5" />
                 </button>
                 <button
                     type="button"
-                    class="rounded-lg p-2.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
+                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
                     title="다운로드"
                     @click="downloadFile(doc.id, doc.fileName)"
                 >
@@ -1117,7 +1117,7 @@ const docTypeBadgeClass = (type) => {
       </div>
 
       <!-- 페이지네이션 -->
-      <div class="flex flex-col items-center justify-between gap-3 border-t border-forena-50 px-6 py-4 sm:flex-row">
+      <div class="flex flex-col items-center justify-between gap-3 border-t border-forena-50 px-6 py-2 sm:flex-row">
         <p class="text-xs text-slate-500">
           {{
             L.pageInfo
@@ -1129,7 +1129,7 @@ const docTypeBadgeClass = (type) => {
         <div class="flex items-center gap-1">
           <button
               type="button"
-              class="rounded-lg border border-forena-200 p-2 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
               :disabled="currentPage <= 1"
               @click="currentPage--"
           >
@@ -1138,7 +1138,7 @@ const docTypeBadgeClass = (type) => {
           <template v-for="p in totalPages" :key="p">
             <button
                 type="button"
-                class="h-8 w-8 rounded-lg text-xs font-bold transition"
+                class="h-6 w-6 rounded-lg text-xs font-bold transition"
                 :class="
                 p === currentPage
                   ? 'bg-forena-500 text-white shadow-sm'
@@ -1151,7 +1151,7 @@ const docTypeBadgeClass = (type) => {
           </template>
           <button
               type="button"
-              class="rounded-lg border border-forena-200 p-2 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
               :disabled="currentPage >= totalPages"
               @click="currentPage++"
           >
