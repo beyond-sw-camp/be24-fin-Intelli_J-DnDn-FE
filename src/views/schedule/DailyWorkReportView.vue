@@ -400,7 +400,7 @@ async function selectTaskForReport(order) {
     startDate: '',
     endDate: '',
     tradeStartDate: '',
-    tradeEndDate: '', // 🌟 진척률 계산용 '전체 공종 기간' 변수 추가
+    tradeEndDate: '', // 🌟 진척률 계산용 '전체 월간 세부계획 기간' 변수 추가
     progress: 0,
     processProgress: 0,
     prevProgress: 0,
@@ -410,6 +410,9 @@ async function selectTaskForReport(order) {
     files: [],
     status: '작성 전',
     workPlanId: order.workPlanId || null,
+    monthlyWorkPlanId: null,
+    monthlyWorkPlanName: '',
+    todayMonthlyOrderCount: 1,
     tomorrowWorkPlanId: null,
     tomorrowLocation: order.location || '',
     tomorrowWorkers: 0,
@@ -420,66 +423,100 @@ async function selectTaskForReport(order) {
   }
 
   try {
-    // 1. 전체 공종 기간(철근 전체)을 구하기 위해 모든 계획을 불러옵니다.
+    // 1. 전체 월간 세부계획 기간(철근 전체)을 구하기 위해 모든 계획을 불러옵니다.
     const [weekRes, monthRes, yearRes] = await Promise.all([
       api.get('/work-plan', { params: { planType: '주간' } }).catch(() => ({ data: [] })),
       api.get('/work-plan', { params: { planType: '월간' } }).catch(() => ({ data: [] })),
       api.get('/work-plan', { params: { planType: '연간' } }).catch(() => ({ data: [] })),
     ])
 
-    const allPlans = [
-      ...(Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []),
-      ...(Array.isArray(monthRes) ? monthRes : monthRes.data?.data || monthRes.data || []),
-      ...(Array.isArray(yearRes) ? yearRes : yearRes.data?.data || yearRes.data || []),
-    ]
+    const weeklyPlans = Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []
+
+    const monthlyPlans = Array.isArray(monthRes)
+      ? monthRes
+      : monthRes.data?.data || monthRes.data || []
+
+    const yearlyPlans = Array.isArray(yearRes) ? yearRes : yearRes.data?.data || yearRes.data || []
+
+    const allPlans = [...weeklyPlans, ...monthlyPlans, ...yearlyPlans]
+
+    function findMonthlyPlanByWeeklyPlanId(weeklyPlanId) {
+      if (!weeklyPlanId) return null
+
+      const weeklyPlan = weeklyPlans.find((p) => Number(p.idx ?? p.id) === Number(weeklyPlanId))
+
+      if (!weeklyPlan?.parentWorkPlanId) return null
+
+      return (
+        monthlyPlans.find((p) => Number(p.idx ?? p.id) === Number(weeklyPlan.parentWorkPlanId)) ||
+        null
+      )
+    }
 
     const toDateString = (d) =>
       Array.isArray(d)
         ? `${d[0]}-${String(d[1]).padStart(2, '0')}-${String(d[2]).padStart(2, '0')}`
         : d
 
-    let tradeMinStart = '9999-12-31'
-    let tradeMaxEnd = '0000-01-01'
+    // let tradeMinStart = '9999-12-31'
+    // let tradeMaxEnd = '0000-01-01'
 
-    // 🌟 2. 내 공종(철근)의 모든 계획을 뒤져서 '진짜 시작일'과 '진짜 종료일'을 찾습니다.
-    allPlans.forEach((p) => {
-      if (getTradeNameFromRecord(p) === myProcess.value) {
-        const s = toDateString(p.startDate)
-        const e = toDateString(p.endDate)
-        if (s && s < tradeMinStart) tradeMinStart = s
-        if (e && e > tradeMaxEnd) tradeMaxEnd = e
-      }
-    })
+    // // 🌟 2. 내 공종(철근)의 모든 계획을 뒤져서 '진짜 시작일'과 '진짜 종료일'을 찾습니다.
+    // allPlans.forEach((p) => {
+    //   if (getTradeNameFromRecord(p) === myProcess.value) {
+    //     const s = toDateString(p.startDate)
+    //     const e = toDateString(p.endDate)
+    //     if (s && s < tradeMinStart) tradeMinStart = s
+    //     if (e && e > tradeMaxEnd) tradeMaxEnd = e
+    //   }
+    // })
 
-    // 찾은 전체 공종 기간을 숨겨진 변수에 저장합니다.
-    if (tradeMinStart !== '9999-12-31') editingReport.value.tradeStartDate = tradeMinStart
-    if (tradeMaxEnd !== '0000-01-01') editingReport.value.tradeEndDate = tradeMaxEnd
+    // // 찾은 전체 월간 세부계획 기간을 숨겨진 변수에 저장합니다.
+    // if (tradeMinStart !== '9999-12-31') editingReport.value.tradeStartDate = tradeMinStart
+    // if (tradeMaxEnd !== '0000-01-01') editingReport.value.tradeEndDate = tradeMaxEnd
 
-    // 3. 화면의 input 박스에는 '세부 일정(101동)'의 기간만 예쁘게 보여줍니다.
-    if (order.workPlanId) {
-      const currentPlan = allPlans.find(
-        (p) => p.idx === order.workPlanId || p.id === order.workPlanId,
+    const monthlyPlan = findMonthlyPlanByWeeklyPlanId(order.workPlanId)
+
+    if (monthlyPlan) {
+      editingReport.value.startDate = toDateString(monthlyPlan.startDate) || ''
+      editingReport.value.endDate = toDateString(monthlyPlan.endDate) || ''
+      editingReport.value.monthlyWorkPlanId = monthlyPlan.idx ?? monthlyPlan.id
+      editingReport.value.monthlyWorkPlanName = monthlyPlan.name || ''
+    } else if (order.workPlanId) {
+      const currentPlan = weeklyPlans.find(
+        (p) => Number(p.idx ?? p.id) === Number(order.workPlanId),
       )
+
       if (currentPlan) {
         editingReport.value.startDate = toDateString(currentPlan.startDate) || ''
         editingReport.value.endDate = toDateString(currentPlan.endDate) || ''
       }
     }
 
-    for (let i = 1; i <= 3; i++) {
-      try {
-        const pDate = addDays(selectedDate.value, -i)
-        const pRes = await api.get('/report/', { params: { date: pDate } })
-        const pArr = Array.isArray(pRes) ? pRes : pRes.data?.data || pRes.data || []
-        const pTarget = pArr.find(
-          (r) => getTradeNameFromRecord(r) === myProcess.value && r.workPlanId === order.workPlanId,
+    // 3. 진척률 계산 기준은 주간/일일 계획이 아니라 부모 월간 세부계획 기간입니다.
+    //    위에서 monthlyPlan을 찾은 경우 startDate/endDate를 다시 주간 계획 날짜로 덮어쓰지 않습니다.
+    if (monthlyPlan) {
+      const monthlyPlanId = Number(monthlyPlan.idx ?? monthlyPlan.id)
+      const sameMonthlyOrdersCount = availableTodayOrders.value.filter((todayOrder) => {
+        const weeklyPlan = weeklyPlans.find(
+          (p) => Number(p.idx ?? p.id) === Number(todayOrder.workPlanId),
         )
-        if (pTarget && pTarget.actualProgress) {
-          editingReport.value.prevProgress = pTarget.actualProgress
-          editingReport.value.processProgress = pTarget.actualProgress
-          break
-        }
-      } catch (e) {}
+        return Number(weeklyPlan?.parentWorkPlanId) === monthlyPlanId
+      }).length
+
+      editingReport.value.todayMonthlyOrderCount = Math.max(1, sameMonthlyOrdersCount)
+    }
+
+    // 이전 누적 진척률은 공사일보가 연결된 부모 월간 세부계획의 actualProgressPct를 사용합니다.
+    // 기존처럼 같은 주간 계획의 이전 공사일보를 찾으면, 월간 세부계획 전체 누적률을 이어받지 못합니다.
+    if (monthlyPlan) {
+      const monthlyActualProgress = Number(
+        monthlyPlan.actualProgressPct ?? monthlyPlan.actualProgress ?? 0,
+      )
+      editingReport.value.prevProgress = Number.isFinite(monthlyActualProgress)
+        ? monthlyActualProgress
+        : 0
+      editingReport.value.processProgress = editingReport.value.prevProgress
     }
 
     const tmrwStr = tomorrowDate.value
@@ -529,7 +566,10 @@ async function openEditor(report) {
     equipmentList: [...(report.equipmentList || [])],
     equipmentInput: { name: '', count: 1 },
     tradeStartDate: '',
-    tradeEndDate: '', // 🌟 추가
+    tradeEndDate: '',
+    monthlyWorkPlanId: report.monthlyWorkPlanId || null,
+    monthlyWorkPlanName: report.monthlyWorkPlanName || '',
+    todayMonthlyOrderCount: report.todayMonthlyOrderCount || 1,
     tomorrowWorkPlanId: null,
     tomorrowLocation: report.location || '',
     tomorrowWorkers: 0,
@@ -548,39 +588,48 @@ async function openEditor(report) {
       api.get('/work-plan', { params: { planType: '연간' } }).catch(() => ({ data: [] })),
     ])
 
-    const allPlans = [
-      ...(Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []),
-      ...(Array.isArray(monthRes) ? monthRes : monthRes.data?.data || monthRes.data || []),
-      ...(Array.isArray(yearRes) ? yearRes : yearRes.data?.data || yearRes.data || []),
-    ]
+    const weeklyPlans = Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []
+    const monthlyPlans = Array.isArray(monthRes)
+      ? monthRes
+      : monthRes.data?.data || monthRes.data || []
+    const yearlyPlans = Array.isArray(yearRes) ? yearRes : yearRes.data?.data || yearRes.data || []
+
+    const allPlans = [...weeklyPlans, ...monthlyPlans, ...yearlyPlans]
 
     const toDateString = (d) =>
       Array.isArray(d)
         ? `${d[0]}-${String(d[1]).padStart(2, '0')}-${String(d[2]).padStart(2, '0')}`
         : d
 
-    let tradeMinStart = '9999-12-31'
-    let tradeMaxEnd = '0000-01-01'
-
-    allPlans.forEach((p) => {
-      if (getTradeNameFromRecord(p) === myProcess.value) {
-        const s = toDateString(p.startDate)
-        const e = toDateString(p.endDate)
-        if (s && s < tradeMinStart) tradeMinStart = s
-        if (e && e > tradeMaxEnd) tradeMaxEnd = e
-      }
-    })
-
-    if (tradeMinStart !== '9999-12-31') editingReport.value.tradeStartDate = tradeMinStart
-    if (tradeMaxEnd !== '0000-01-01') editingReport.value.tradeEndDate = tradeMaxEnd
-
-    if (report.workPlanId && (!editingReport.value.startDate || !editingReport.value.endDate)) {
-      const currentPlan = allPlans.find(
-        (p) => p.idx === report.workPlanId || p.id === report.workPlanId,
+    if (report.workPlanId) {
+      const weeklyPlan = weeklyPlans.find(
+        (p) => Number(p.idx ?? p.id) === Number(report.workPlanId),
       )
-      if (currentPlan) {
-        editingReport.value.startDate = toDateString(currentPlan.startDate) || ''
-        editingReport.value.endDate = toDateString(currentPlan.endDate) || ''
+      const monthlyPlan = weeklyPlan?.parentWorkPlanId
+        ? monthlyPlans.find((p) => Number(p.idx ?? p.id) === Number(weeklyPlan.parentWorkPlanId))
+        : null
+
+      if (monthlyPlan) {
+        editingReport.value.startDate = toDateString(monthlyPlan.startDate) || ''
+        editingReport.value.endDate = toDateString(monthlyPlan.endDate) || ''
+        editingReport.value.monthlyWorkPlanId = monthlyPlan.idx ?? monthlyPlan.id
+        editingReport.value.monthlyWorkPlanName = monthlyPlan.name || ''
+
+        const monthlyActualProgress = Number(
+          monthlyPlan.actualProgressPct ?? monthlyPlan.actualProgress ?? 0,
+        )
+        editingReport.value.prevProgress = Number.isFinite(monthlyActualProgress)
+          ? monthlyActualProgress
+          : 0
+        editingReport.value.processProgress = editingReport.value.prevProgress
+      } else if (!editingReport.value.startDate || !editingReport.value.endDate) {
+        const currentPlan = allPlans.find(
+          (p) => Number(p.idx ?? p.id) === Number(report.workPlanId),
+        )
+        if (currentPlan) {
+          editingReport.value.startDate = toDateString(currentPlan.startDate) || ''
+          editingReport.value.endDate = toDateString(currentPlan.endDate) || ''
+        }
       }
     }
 
@@ -604,26 +653,26 @@ function closeEditor() {
   modalTab.value = 'today'
 }
 
-// feat : 공종 전체 기간 비례 금일 증가분(%) 자동 계산 로직
+// feat : 월간 세부계획 기간 비례 금일 증가분(%) 자동 계산 로직
 const calcInfo = computed(() => {
   const r = editingReport.value
   if (!r) return null
 
-  // 🌟 핵심: 진척률 계산은 입력칸의 '세부 일정'이 아니라 숨겨둔 '전체 공종 기간'을 기준으로 합니다!
-  const start = new Date(r.tradeStartDate || r.startDate)
-  const end = new Date(r.tradeEndDate || r.endDate)
+  // 핵심: 진척률 계산은 선택한 주간/일일 계획이 아니라 부모 월간 세부계획 기간을 기준으로 합니다.
+  const start = new Date(r.startDate)
+  const end = new Date(r.endDate)
   if (isNaN(start.getTime()) || isNaN(end.getTime())) return null
 
-  // 1. 전체 공사 기간 (예: 30일)
+  // 1. 월간 세부계획 기간 (예: 15일)
   const duration = Math.max(1, Math.round((end - start) / 86400000) + 1)
 
-  // 2. 하루 목표 전체 진척률 (예: 100% / 30일 = 3.33%)
+  // 2. 하루 목표 진척률 (예: 100% / 15일 = 6.67%)
   const dailyAllocation = 100 / duration
 
-  // 3. 금일 발급된 세부 작업(지시서) 총 개수 (예: 101~104동 = 4개)
-  const tasksTodayCount = Math.max(1, availableTodayOrders.value.length)
+  // 3. 금일 발급된 같은 월간 세부계획의 작업 지시서 개수
+  const tasksTodayCount = Math.max(1, r.todayMonthlyOrderCount || availableTodayOrders.value.length)
 
-  // 4. 세부 작업 1개당 배분된 진짜 가중치 (예: 3.33% / 4개 = 0.83%)
+  // 4. 세부 작업 1개당 배분된 가중치
   const weightPerTask = dailyAllocation / tasksTodayCount
 
   // 5. 사용자가 당긴 해당 세부 작업 완료율에 가중치를 곱함
@@ -644,6 +693,7 @@ watch(
     editingReport.value?.startDate,
     editingReport.value?.endDate,
     editingReport.value?.prevProgress,
+    editingReport.value?.todayMonthlyOrderCount,
   ],
   () => {
     const r = editingReport.value
@@ -759,6 +809,9 @@ async function submitReport() {
     workPlanId: r.workPlanId,
     todayProgress: parseFloat(r.progress || 0),
     actualProgress: parseFloat(r.processProgress || 0),
+    monthlyWorkPlanId: r.monthlyWorkPlanId || null,
+    progressIncrementPct: calcInfo.value?.increment ?? 0,
+    monthlyProgressPct: parseFloat(r.processProgress || 0),
     actualWorkerCount: r.workers || 0,
     issue: r.notes || '특이사항 없음',
     reportDate: r.date,
@@ -1396,7 +1449,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div>
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >공종 기간</label
+                  >월간 세부계획 기간</label
                 >
                 <div class="grid grid-cols-2 gap-2">
                   <div>
@@ -1476,7 +1529,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div class="rounded-lg border border-flare-100 bg-flare-50/40 p-3">
                 <div class="mb-2 flex items-center justify-between">
                   <label class="text-[10px] font-bold uppercase tracking-wide text-flare-600">
-                    공종 전체 진척률
+                    월간 세부계획 진척률
                     <span class="font-normal text-flare-400">(공기 비례 자동 계산)</span>
                   </label>
                   <span class="text-sm font-bold tabular-nums text-flare-700"
@@ -1503,7 +1556,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                   <span class="font-bold text-flare-700">{{ editingReport.processProgress }}%</span>
                 </p>
                 <p v-else class="mt-1.5 text-[10px] text-amber-600">
-                  ⚠ 공종 기간(시작일·종료일)을 입력하면 자동 계산됩니다.
+                  ⚠ 월간 세부계획 기간(시작일·종료일)을 입력하면 자동 계산됩니다.
                 </p>
               </div>
 
@@ -1893,7 +1946,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div class="rounded-xl border border-forena-100 p-3.5">
                 <div class="mb-1 flex items-center justify-between">
                   <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                    공종 전체 진척률
+                    월간 세부계획 진척률
                   </p>
                   <span class="text-xs font-bold tabular-nums text-flare-700"
                     >{{ viewingReport.processProgress }}%</span
