@@ -28,6 +28,9 @@ import {
   Pin,
   RefreshCw,
 } from 'lucide-vue-next'
+import jsPDF from 'jspdf'
+import html2canvas from 'html2canvas'
+import api from '@/api/index'
 
 /* ───── 한국어 라벨 ───── */
 const L = {
@@ -615,8 +618,136 @@ const jumpToTab = (type) => {
   currentPage.value = 1
 }
 
+/* ───── 종합 공사일보 PDF 다운로드 ───── */
+const showPdfModal = ref(false)
+const pdfTargetDate = ref(new Date().toISOString().slice(0, 10))
+const isGeneratingPdf = ref(false)
+const pdfRef = ref(null)
+const pdfReports = ref([])
+
+// 공사 정보 (실제 환경에선 API/스토어에서 받아오기)
+const projectInfo = ref({
+  name: '체육공원 진입도로(대3-42호) 개설공사',
+  startDate: '2026-02-28',
+  endDate: '2027-02-27',
+})
+
+// 진척률 평균/합계 계산
+const pdfStats = computed(() => {
+  const list = pdfReports.value
+  const total = list.length
+  const totalWorkers = list.reduce((s, r) => s + (r.workers || 0), 0)
+  const totalEquip = list.reduce((s, r) => s + (r.equipmentCount || 0), 0)
+  const avgProgress = total
+      ? Math.round(list.reduce((s, r) => s + (r.processProgress || 0), 0) / total)
+      : 0
+  return { total, totalWorkers, totalEquip, avgProgress }
+})
+
+// 한국어 날짜 포맷
+const fmtKor = (dateStr) => {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()]
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${dow})`
+}
+
+// 점 구분자 날짜 포맷 (예: 2026. 02. 28)
+const fmtDot = (dateStr) => {
+  if (!dateStr) return '-'
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return dateStr
+  return `${d.getFullYear()}. ${String(d.getMonth() + 1).padStart(2, '0')}. ${String(d.getDate()).padStart(2, '0')}`
+}
+
+// 버튼 클릭: PDF 다운로드 모달 열기
 const downloadExcel = () => {
-  alert('문서 목록 엑셀 다운로드를 시작합니다.')
+  pdfTargetDate.value = new Date().toISOString().slice(0, 10)
+  pdfReports.value = []
+  showPdfModal.value = true
+}
+
+// 데이터 불러오기 + PDF 생성
+const generatePdf = async () => {
+  if (!pdfTargetDate.value) {
+    alert('날짜를 선택해주세요.')
+    return
+  }
+  isGeneratingPdf.value = true
+
+  try {
+    // 1. 해당 날짜의 공사일보 조회
+    const res = await api.get('/report/', { params: { date: pdfTargetDate.value } })
+    const dbReports = Array.isArray(res) ? res : (res.data?.data || res.data || [])
+
+    if (dbReports.length === 0) {
+      alert('해당 날짜에 작성된 공사일보가 없습니다.')
+      isGeneratingPdf.value = false
+      return
+    }
+
+    const toDateString = (d) =>
+        Array.isArray(d)
+            ? `${d[0]}-${String(d[1]).padStart(2, '0')}-${String(d[2]).padStart(2, '0')}`
+            : d
+
+    pdfReports.value = dbReports.map((db) => ({
+      id: db.idx,
+      date: toDateString(db.reportDate),
+      process: db.tradeType || db.process || '공정',
+      workers: db.actualWorkerCount || 0,
+      location: db.location || '',
+      equipmentCount: 0,
+      todayWork: db.todayWork || '',
+      tomorrowPlan: db.tomorrowPlan || '',
+      progress: db.todayProgress || 0,
+      processProgress: db.actualProgress || 0,
+      notes: db.issue || '',
+    }))
+
+    // 2. DOM 렌더링 대기
+    await new Promise((r) => setTimeout(r, 300))
+
+    if (!pdfRef.value) {
+      alert('PDF 영역을 찾을 수 없습니다.')
+      isGeneratingPdf.value = false
+      return
+    }
+
+    // 3. html2canvas로 캡처
+    const canvas = await html2canvas(pdfRef.value, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+    })
+
+    // 4. jsPDF로 PDF 생성 (A4, 페이지 자동 분할)
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdfWidth = pdf.internal.pageSize.getWidth()
+    const pdfHeight = pdf.internal.pageSize.getHeight()
+    const imgWidth = pdfWidth
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
+    const imgData = canvas.toDataURL('image/png')
+
+    let heightLeft = imgHeight
+    let position = 0
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pdfHeight
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight
+      pdf.addPage()
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pdfHeight
+    }
+
+    pdf.save(`공사일보_${pdfTargetDate.value}.pdf`)
+    showPdfModal.value = false
+  } catch (e) {
+    console.error('PDF 생성 실패:', e)
+    alert('PDF 생성 중 오류가 발생했습니다.')
+  } finally {
+    isGeneratingPdf.value = false
+  }
 }
 
 /* ───── 유틸 ───── */
@@ -1160,6 +1291,205 @@ const docTypeBadgeClass = (type) => {
         </div>
       </div>
     </div>
+
+    <!-- ═══ 종합 공사일보 PDF 모달 ═══ -->
+    <Teleport to="body">
+      <div
+          v-if="showPdfModal"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-forena-900/30 backdrop-blur-[2px] p-4"
+          @click.self="showPdfModal = false"
+      >
+        <div class="flex w-full max-w-md flex-col rounded-2xl border border-forena-100 bg-white shadow-2xl">
+
+          <!-- 헤더 -->
+          <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-4">
+            <div class="flex items-center gap-2.5">
+              <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-flare-50">
+                <FileText class="h-4 w-4 text-flare-600" />
+              </div>
+              <div>
+                <h2 class="text-base font-bold text-forena-900">종합 공사일보 PDF 다운로드</h2>
+                <p class="text-[11px] text-forena-500">조회할 일자를 선택하세요</p>
+              </div>
+            </div>
+            <button
+                type="button"
+                class="rounded-lg border border-forena-200 bg-white p-1.5 text-forena-400 transition hover:text-forena-700"
+                @click="showPdfModal = false"
+            >
+              <X class="h-4 w-4" />
+            </button>
+          </div>
+
+          <!-- 본문 -->
+          <div class="space-y-4 p-6">
+            <div>
+              <label class="mb-1.5 block text-xs font-bold text-forena-700">
+                <CalendarDays class="mr-1 inline h-3.5 w-3.5 text-flare-600" />
+                조회 일자
+              </label>
+              <input
+                  type="date"
+                  v-model="pdfTargetDate"
+                  class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-800 outline-none focus:border-flare-400"
+              />
+              <p class="mt-1.5 text-[11px] text-forena-500">
+                선택된 일자: <span class="font-semibold text-forena-700">{{ fmtKor(pdfTargetDate) }}</span>
+              </p>
+            </div>
+
+            <div class="rounded-lg border border-flare-100 bg-flare-50/40 p-3 text-[11px] text-forena-600">
+              <p class="font-bold text-flare-700">📋 안내</p>
+              <p class="mt-1 leading-relaxed">선택한 일자에 작성된 모든 공정의 공사일보가 1개의 PDF 파일로 합쳐서 다운로드됩니다.</p>
+            </div>
+          </div>
+
+          <!-- 푸터 -->
+          <div class="flex items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/40 px-5 py-3">
+            <button
+                type="button"
+                class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50 disabled:opacity-50"
+                @click="showPdfModal = false"
+                :disabled="isGeneratingPdf"
+            >
+              취소
+            </button>
+            <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600 disabled:opacity-50"
+                @click="generatePdf"
+                :disabled="isGeneratingPdf"
+            >
+              <Loader2 v-if="isGeneratingPdf" class="h-3.5 w-3.5 animate-spin" />
+              <Download v-else class="h-3.5 w-3.5" />
+              {{ isGeneratingPdf ? 'PDF 생성 중...' : 'PDF 다운로드' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 화면 밖 PDF 렌더링 영역 -->
+        <div
+            style="position: fixed; left: -9999px; top: 0; width: 794px; background: white;"
+            aria-hidden="true"
+        >
+          <div
+              ref="pdfRef"
+              v-if="pdfReports.length > 0"
+              style="font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; padding: 30px 36px; background: white; color: #000; font-size: 11px; min-height: 1093px; display: flex; flex-direction: column; box-sizing: border-box;"
+          >
+            <!-- ═══ 상단 헤더 (제목 + 결재란) ═══ -->
+            <div style="position:relative; height:90px; margin-bottom:10px;">
+              <!-- 제목 (가운데) -->
+              <h1 style="text-align:center; font-size:26px; font-weight:800; letter-spacing:12px; margin:0; padding-top:30px; color:#000;">
+                공 사 일 보
+              </h1>
+              <!-- 결재란 (우측 상단 절대위치) -->
+              <table style="position:absolute; top:0; right:0; border:1.5px solid #000; border-collapse:collapse;">
+                <tr>
+                  <td rowspan="2" style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:22px; padding:16px 4px; text-align:center; font-size:10px; line-height:1.4;">
+                    결<br><br>재
+                  </td>
+                  <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">담당</td>
+                  <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">검토</td>
+                  <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">승인</td>
+                </tr>
+                <tr>
+                  <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                  <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                  <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- ═══ 공사 정보 헤더 ═══ -->
+            <div style="display:table; width:100%; margin-bottom:14px; font-size:11px; clear:both;">
+              <div style="display:table-cell;">
+                <span style="font-weight:700; padding-right:6px;">■ 공사명 :</span>
+                <span style="font-weight:600;">{{ projectInfo.name }}</span>
+              </div>
+              <div style="display:table-cell; text-align:right; white-space:nowrap;">
+                <span style="font-weight:700; padding-right:6px;">■ 일자 :</span>
+                <span style="font-weight:600;">{{ fmtKor(pdfTargetDate) }}</span>
+              </div>
+            </div>
+
+            <!-- ═══ 공사 개요 ═══ -->
+            <table style="width:100%; border-collapse:collapse; border:1.5px solid #000;">
+              <tr>
+                <th colspan="8" style="border:1px solid #555; background:#d9d9d9; font-weight:700; text-align:center; font-size:12px; letter-spacing:6px; padding:7px;">
+                  공 사 개 요
+                </th>
+              </tr>
+              <tr>
+                <td rowspan="2" style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; width:80px; padding:6px 8px;">공사기간</td>
+                <td colspan="3" style="border:1px solid #555; padding:6px 8px; text-align:center;">착공 : {{ fmtDot(projectInfo.startDate) }}</td>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">평균 진척률</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ pdfStats.avgProgress }}%</td>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">총 인력</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ pdfStats.totalWorkers }} 명</td>
+              </tr>
+              <tr>
+                <td colspan="3" style="border:1px solid #555; padding:6px 8px; text-align:center;">준공 : {{ fmtDot(projectInfo.endDate) }}</td>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">진행 공정</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ pdfStats.total }} 건</td>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">총 장비</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ pdfStats.totalEquip }} 대</td>
+              </tr>
+            </table>
+
+            <!-- ═══ 공정별 상세 ═══ -->
+            <table v-for="(r, idx) in pdfReports" :key="r.id" style="width:100%; border-collapse:collapse; border:1.5px solid #000; margin-top:14px;">
+              <!-- 공정 헤더 (검정 띠) -->
+              <tr>
+                <th colspan="6" style="background:#2a2a2a; color:white; text-align:left; font-weight:700; font-size:12px; letter-spacing:2px; padding:7px 12px; border:1px solid #2a2a2a;">
+                  [{{ idx + 1 }}] {{ r.process }} 공사 / 위치 : {{ r.location || '위치 미지정' }}
+                </th>
+              </tr>
+
+              <!-- 인력/장비/진척률 -->
+              <tr>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">공종</th>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:24%;">작업 위치</th>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">금일 인력</th>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">투입 장비</th>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:17%;">금일 진척률</th>
+                <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:17%;">전체 진척률</th>
+              </tr>
+              <tr>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ r.process }}</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ r.location || '-' }}</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ r.workers }} 명</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ r.equipmentCount }} 대</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700; font-size:13px;">{{ r.progress }}%</td>
+                <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700; font-size:13px;">{{ r.processProgress }}%</td>
+              </tr>
+
+              <!-- 금일 작업 헤더 -->
+              <tr>
+                <th colspan="6" style="border:1px solid #555; background:#d9d9d9; font-weight:700; text-align:center; font-size:12px; letter-spacing:8px; padding:7px;">
+                  금 일 작 업 내 용
+                </th>
+              </tr>
+              <!-- 금일 작업 내용 -->
+              <tr>
+                <td colspan="6" style="border:1px solid #555; padding:10px 12px; vertical-align:top; line-height:1.7; white-space:pre-wrap; height:80px; min-width:1px;">{{ r.todayWork || '-' }}</td>
+              </tr>
+
+              <!-- 특기사항 -->
+              <tr>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">특기사항</td>
+                <td colspan="5" style="border:1px solid #555; background:#fffaf0; padding:8px 12px; vertical-align:top; line-height:1.6; white-space:pre-wrap;">{{ r.notes || '특이사항 없음' }}</td>
+              </tr>
+            </table>
+
+            <!-- 푸터 (문서 하단에 고정) -->
+            <div style="margin-top:auto; padding-top:18px; border-top:1px solid #999; font-size:10px; color:#666; text-align:right;">
+              출력일시 : {{ new Date().toLocaleString('ko-KR') }}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- ═══ 업로드 Drawer ═══ -->
     <Teleport to="body">
