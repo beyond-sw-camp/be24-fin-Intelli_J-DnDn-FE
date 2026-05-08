@@ -31,6 +31,7 @@ import {
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import api from '@/api/index'
+import { getWorkOrderList } from '@/api/workOrder'
 
 /* ───── 한국어 라벨 ───── */
 const L = {
@@ -51,7 +52,7 @@ const L = {
 
   tabAll: '전체',
   tabWorkInstruction: '작업지시서',
-  tabDailyReport: '작업 일보',
+  tabDailyReport: '공사 일보',
   tabMasterSchedule: '마스터 공정표',
   tabSubSchedule: '보할 공정표',
   tabMilestone: '마일스톤 공정표',
@@ -125,6 +126,10 @@ const partnerList = [
 const documents = ref([])
 const pinnedDocuments = ref([])   // 고정 영역 데이터
 
+/* ───── 작업지시서 / 공사 일보 (별도 API에서 로드) ───── */
+const workOrderDocs = ref([])     // /work-order → '작업지시서' 탭
+const reportDocs = ref([])        // /report/ → '공사 일보' 탭
+
 /* ═══════════════════════════════════════════════════════════════
  * 백엔드 → 프론트 필드 매핑
  * ──────────────────────────────────────────────────────────────
@@ -176,6 +181,91 @@ function mapApiToFront(apiDoc) {
 /* ── 백엔드 응답 배열 → 프론트 배열 변환 ── */
 function mapApiListToFront(apiList) {
   return (apiList || []).map(mapApiToFront)
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * 작업지시서 (WorkOrder) → 프론트 문서 객체
+ * ──────────────────────────────────────────────────────────────
+ * /work-order 응답을 documents 배열에서 사용하는 형식으로 변환
+ * ═══════════════════════════════════════════════════════════════ */
+function mapWorkOrderToDoc(wo) {
+  // createdAt: ISO 또는 배열 형태일 수 있어 안전하게 처리
+  const toDateStr = (v) => {
+    if (!v) return ''
+    if (Array.isArray(v)) {
+      const [y, m, d] = v
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+    return String(v).substring(0, 10)
+  }
+
+  const uploadDate = toDateStr(wo.createdAt) || toDateStr(wo.createAt) || toDateStr(wo.dueDate)
+  const docDate = toDateStr(wo.dueDate) || uploadDate
+
+  // 상태 코드 한글화
+  const statusMap = {
+    APPROVED: '승인',
+    REJECTED: '반려',
+    OPEN: '임시저장',
+    DRAFT: '임시저장',
+  }
+
+  return {
+    id:          `WO-${wo.idx}`,
+    docCode:     `WO-${String(wo.idx).padStart(4, '0')}`,
+    docType:     L.tabWorkInstruction,
+    fileName:    wo.title || `[${wo.tradeType || '작업'}] 작업지시서`,
+    fileExt:     '',           // 첨부 파일 없음 — 시스템 생성 문서
+    fileUrl:     '',
+    origin:      'hq',          // 작업지시서는 본사가 작성
+    partnerName: null,
+    uploadDate:  uploadDate,
+    docDate:     docDate,        // 날짜 필터용 (마감일 기준)
+    uploader:    '현장 관리자',
+    version:     'v1.0',
+    fileSize:    '',
+    status:      statusMap[wo.statusCode] || '임시저장',
+    // 원본 데이터 보존 (미리보기 등에서 활용)
+    _raw:        wo,
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * 공사 일보 (Report) → 프론트 문서 객체
+ * ──────────────────────────────────────────────────────────────
+ * /report/ 응답을 documents 배열에서 사용하는 형식으로 변환
+ * ═══════════════════════════════════════════════════════════════ */
+function mapReportToDoc(rp) {
+  const toDateStr = (v) => {
+    if (!v) return ''
+    if (Array.isArray(v)) {
+      const [y, m, d] = v
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+    return String(v).substring(0, 10)
+  }
+
+  const reportDate = toDateStr(rp.reportDate)
+  const uploadDate = toDateStr(rp.createdAt) || toDateStr(rp.createAt) || reportDate
+
+  return {
+    id:          `RP-${rp.idx}`,
+    docCode:     `RP-${String(rp.idx).padStart(4, '0')}`,
+    docType:     L.tabDailyReport,
+    // ReportDto.Res의 필드명은 'process' (workPlan.trade.label)
+    fileName:    `[${rp.process || rp.tradeType || '공정'}] ${reportDate} 공사 일보`,
+    fileExt:     '',
+    fileUrl:     '',
+    origin:      'hq',
+    partnerName: null,
+    uploadDate:  uploadDate,
+    docDate:     reportDate,     // 날짜 필터용 (작업일 기준)
+    uploader:    rp.author || '현장 담당자',
+    version:     'v1.0',
+    fileSize:    '',
+    status:      '승인',
+    _raw:        rp,
+  }
 }
 
 /* ── API 호출 (마운트 시 + 수동 새로고침) ── */
@@ -236,9 +326,73 @@ async function fetchPinnedSchedules() {
   }
 }
 
+/* ── 작업지시서 목록 가져오기 (/work-order) ── */
+async function fetchWorkOrders() {
+  try {
+    const res = await getWorkOrderList()
+    // BaseResponse 인터셉터에서 data를 풀어주므로 res가 곧 배열
+    const list = Array.isArray(res) ? res : (res?.data?.data || res?.data || [])
+    workOrderDocs.value = list.map(mapWorkOrderToDoc)
+  } catch (e) {
+    console.warn('[WorkOrder] fetch failed:', e)
+    workOrderDocs.value = []
+  }
+}
+
+/* ── 공사 일보 목록 가져오기 (/report/?date=YYYY-MM-DD) ──
+ * 백엔드 GET /report/는 date 파라미터를 필수로 요구함 (@RequestParam("date") LocalDate).
+ * → 최근 N일치를 날짜별로 호출해서 합쳐 사용한다.
+ * → 페이지 첫 진입 시 1회만 실행되며, 30일치 정도면 일반적인 일보 운영 범위 내.
+ */
+const REPORT_FETCH_DAYS = 60   // 조회 범위 (필요 시 조정)
+
+async function fetchReports() {
+  try {
+    const today = new Date()
+    const dates = []
+    for (let i = 0; i < REPORT_FETCH_DAYS; i++) {
+      const d = new Date(today)
+      d.setDate(today.getDate() - i)
+      dates.push(d.toISOString().slice(0, 10))
+    }
+
+    // 날짜별 병렬 호출 (BaseResponse 인터셉터가 data를 풀어줌 → 곧장 List<Res>)
+    const results = await Promise.allSettled(
+        dates.map((date) => api.get('/report/', { params: { date } }))
+    )
+
+    const merged = []
+    results.forEach((r) => {
+      if (r.status === 'fulfilled') {
+        const list = Array.isArray(r.value)
+            ? r.value
+            : (r.value?.data?.data || r.value?.data || r.value?.content || [])
+        if (Array.isArray(list)) merged.push(...list)
+      }
+    })
+
+    // idx 기준 중복 제거 (혹시 모를 중복 응답 방어)
+    const seen = new Set()
+    const unique = merged.filter((rp) => {
+      if (rp == null || rp.idx == null) return false
+      if (seen.has(rp.idx)) return false
+      seen.add(rp.idx)
+      return true
+    })
+
+    reportDocs.value = unique.map(mapReportToDoc)
+    console.log(`[Report] loaded ${reportDocs.value.length} reports (last ${REPORT_FETCH_DAYS} days)`)
+  } catch (e) {
+    console.warn('[Report] fetch failed:', e)
+    reportDocs.value = []
+  }
+}
+
 onMounted(() => {
   fetchDocuments()
   fetchPinnedSchedules()
+  fetchWorkOrders()
+  fetchReports()
 })
 
 /* ───── 상태 관리 ───── */
@@ -257,14 +411,12 @@ const totalPagesFromServer = ref(0)
 
 
 // 페이지 또는 페이지당 개수 변경 시 다시 불러오기
-watch([currentPage, rowsPerPage], () => {
-  fetchDocuments()
-})
+// (watcher는 useClientPagination computed 정의 이후에 배치됨 — 아래 참조)
 
 
 // 공정표 3종: 위쪽 고정 섹션에만 표시, 아래 테이블 탭에서는 제외
 const SCHEDULE_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
-// 아래 테이블 탭: 공정표 3종 제외 (작업지시서·작업일보·공종별 시공계획서)
+// 아래 테이블 탭: 공정표 3종 제외 (작업지시서·공사일보·공종별 시공계획서)
 const TABLE_DOC_TYPES = [L.tabWorkInstruction, L.tabDailyReport, L.tabConstructionPlan]
 const tabs = [L.tabAll, ...TABLE_DOC_TYPES]
 
@@ -286,10 +438,36 @@ const summary = computed(() => ({
   partner: documents.value.filter((d) => d.origin === 'partner').length,
 }))
 
-/* ───── 아래 테이블 전용: 공정표 3종 제외 ───── */
-const tableDocuments = computed(() =>
-    documents.value.filter((d) => !SCHEDULE_TYPES.includes(d.docType))
+/* ───── 아래 테이블 전용: 공정표 3종 제외 ─────
+ * documents (서버 페이징): 공종별 시공계획서 등
+ * workOrderDocs / reportDocs: 별도 API에서 일괄 로드 (전체)
+ *
+ * 탭별 데이터 소스 분리:
+ *   - 공종별 시공계획서: 서버 페이징 (documents 그대로 사용)
+ *   - 작업지시서 / 공사 일보: 클라이언트 페이징 (workOrderDocs / reportDocs)
+ *   - 전체: 모두 합쳐서 클라이언트 페이징
+ */
+const tableDocuments = computed(() => {
+  const docs = documents.value.filter((d) => !SCHEDULE_TYPES.includes(d.docType))
+  return [...docs, ...workOrderDocs.value, ...reportDocs.value]
+})
+
+/* ── 클라이언트 페이징을 사용하는 탭 여부 ──
+ * 작업지시서·공사 일보·전체 탭에서는 별도 API 데이터를 머지하므로
+ * 서버 페이징 대신 클라이언트 페이징 사용
+ */
+const useClientPagination = computed(() =>
+    currentTab.value === L.tabAll ||
+    currentTab.value === L.tabWorkInstruction ||
+    currentTab.value === L.tabDailyReport
 )
+
+// 페이지/페이지당 개수 변경 시 서버 재조회 (서버 페이징 탭에서만)
+watch([currentPage, rowsPerPage], () => {
+  if (!useClientPagination.value) {
+    fetchDocuments()
+  }
+})
 
 /* ───── 필터링 + 정렬 (공정표 3종 제외된 tableDocuments 기준) ───── */
 const filteredDocuments = computed(() => {
@@ -310,7 +488,7 @@ const filteredDocuments = computed(() => {
     )
   }
 
-  // 날짜 범위 필터 (작업지시서·작업일보 탭에서만)
+  // 날짜 범위 필터 (작업지시서·공사일보 탭에서만)
   if (showDateFilter.value && (dateFilterStart.value || dateFilterEnd.value)) {
     result = result.filter((d) => {
       if (dateFilterStart.value && d.docDate < dateFilterStart.value) return false
@@ -334,16 +512,36 @@ const filteredDocuments = computed(() => {
   return result
 })
 
-/* ───── 페이지네이션 (서버 페이징 기준) ───── */
-const totalPages = computed(() => totalPagesFromServer.value)
-const paginatedDocuments = computed(() => filteredDocuments.value)  // 그대로 사용 (서버에서 이미 잘라옴)
+/* ───── 페이지네이션 (탭에 따라 서버/클라이언트 페이징 분기) ───── */
+const totalPages = computed(() => {
+  if (useClientPagination.value) {
+    return Math.max(1, Math.ceil(filteredDocuments.value.length / rowsPerPage.value))
+  }
+  return totalPagesFromServer.value
+})
+
+const paginatedDocuments = computed(() => {
+  if (useClientPagination.value) {
+    const start = (currentPage.value - 1) * rowsPerPage.value
+    return filteredDocuments.value.slice(start, start + rowsPerPage.value)
+  }
+  // 서버 페이징: 이미 잘려서 옴
+  return filteredDocuments.value
+})
+
+const totalElements = computed(() =>
+    useClientPagination.value
+        ? filteredDocuments.value.length
+        : totalElementsFromServer.value
+)
+
 const pageStart = computed(() =>
-    totalElementsFromServer.value === 0
+    totalElements.value === 0
         ? 0
         : (currentPage.value - 1) * rowsPerPage.value + 1
 )
 const pageEnd = computed(() =>
-    Math.min(currentPage.value * rowsPerPage.value, totalElementsFromServer.value)
+    Math.min(currentPage.value * rowsPerPage.value, totalElements.value)
 )
 
 /* ───── 핸들러 ───── */
@@ -517,7 +715,7 @@ const downloadFile = async (id, fileName) => {
   }
 }
 
-/* ───── 날짜 필터 (작업지시서·작업일보 탭 전용) ───── */
+/* ───── 날짜 필터 (작업지시서·공사일보 탭 전용) ───── */
 const dateFilterStart = ref('')
 const dateFilterEnd = ref('')
 
@@ -788,7 +986,7 @@ const formatDate = (dateStr) => {
 const docTypeBadgeClass = (type) => {
   const map = {
     '작업지시서':        'bg-forena-50 text-forena-700 ring-forena-200/70',
-    '작업 일보':         'bg-flare-50 text-flare-600 ring-flare-200/70',
+    '공사 일보':         'bg-flare-50 text-flare-600 ring-flare-200/70',
     '마스터 공정표':     'bg-violet-50 text-violet-700 ring-violet-200/70',
     '마일스톤 공정표':   'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200/70',
     '보할 공정표':       'bg-indigo-50 text-indigo-700 ring-indigo-200/70',
@@ -1021,7 +1219,7 @@ const docTypeBadgeClass = (type) => {
         </button>
       </div>
 
-      <!-- 날짜 빠른 선택 (작업지시서·작업일보 탭 전용) -->
+      <!-- 날짜 빠른 선택 (작업지시서·공사일보 탭 전용) -->
       <div
           v-if="showDateFilter"
           class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
@@ -1252,7 +1450,7 @@ const docTypeBadgeClass = (type) => {
         <p class="text-xs text-slate-500">
           {{
             L.pageInfo
-                .replace('{total}', totalElementsFromServer)
+                .replace('{total}', totalElements)
                 .replace('{start}', pageStart)
                 .replace('{end}', pageEnd)
           }}
@@ -1475,9 +1673,9 @@ const docTypeBadgeClass = (type) => {
                 <td colspan="6" style="border:1px solid #555; padding:10px 12px; vertical-align:top; line-height:1.7; white-space:pre-wrap; height:80px; min-width:1px;">{{ r.todayWork || '-' }}</td>
               </tr>
 
-              <!-- 특기사항 -->
+              <!-- 특이사항 -->
               <tr>
-                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">특기사항</td>
+                <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">특이사항</td>
                 <td colspan="5" style="border:1px solid #555; background:#fffaf0; padding:8px 12px; vertical-align:top; line-height:1.6; white-space:pre-wrap;">{{ r.notes || '특이사항 없음' }}</td>
               </tr>
             </table>
