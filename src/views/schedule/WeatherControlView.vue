@@ -19,9 +19,8 @@ import {
   CheckCircle2,
   Clock,
 } from 'lucide-vue-next'
-
-// ─── 환경 ─────────────────────────────────────────────────────────────────────
-const API_BASE_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8081').replace(/\/$/, '')
+import api from '@/api/index.js'
+import { getGateEquipments } from '@/api/workOrder'
 
 const T = {
   title: '기상 관제',
@@ -59,14 +58,15 @@ const loading = ref(false)
 const dashboard = ref(null)
 const forecastTab = ref('week')
 const selectedMonthWeekId = ref(null)
+const workOrderEquipments = ref([])
 
 // ─── 데이터 로드 ──────────────────────────────────────────────────────────────
 async function loadDashboard() {
   loading.value = true
   try {
-    const response = await fetch(`${API_BASE_URL}/weather/dashboard?reportDate=${reportDate.value}`)
-    if (!response.ok) throw new Error('기상 관제 조회 실패')
-    dashboard.value = await response.json()
+    dashboard.value = await api.get('/weather/dashboard', {
+      params: { reportDate: reportDate.value },
+    })
   } catch (error) {
     console.error(error)
     dashboard.value = null
@@ -75,8 +75,25 @@ async function loadDashboard() {
   }
 }
 
-onMounted(loadDashboard)
-watch(reportDate, loadDashboard)
+async function loadWorkOrders() {
+  try {
+    const data = await getGateEquipments(reportDate.value)
+    workOrderEquipments.value = Array.isArray(data) ? data : []
+  } catch (error) {
+    console.error('작업지시 장비 조회 실패:', error)
+    workOrderEquipments.value = []
+  }
+}
+
+onMounted(() => {
+  loadDashboard()
+  loadWorkOrders()
+})
+
+watch(reportDate, () => {
+  loadDashboard()
+  loadWorkOrders()
+})
 
 // ─── 파생값 (백엔드 응답 그대로 사용) ──────────────────────────────────────────
 const today = computed(() => dashboard.value?.today ?? null)
@@ -84,8 +101,16 @@ const week = computed(() => dashboard.value?.week ?? null)
 const rain = computed(() => dashboard.value?.rain ?? null)
 const airQuality = computed(() => dashboard.value?.airQuality ?? null)
 const analysis = computed(() => dashboard.value?.analysis ?? null)
-const equipmentRisks = computed(() => dashboard.value?.equipmentRisks ?? [])
-const planRisks = computed(() => dashboard.value?.planRisks ?? [])
+const baseEquipmentRisks = computed(() => dashboard.value?.equipmentRisks ?? [])
+const basePlanRisks = computed(() => dashboard.value?.planRisks ?? [])
+const equipmentRisks = computed(() => {
+  const actualRisks = buildEquipmentRisksFromWorkOrders()
+  return actualRisks.length > 0 ? actualRisks : baseEquipmentRisks.value
+})
+const planRisks = computed(() => {
+  const actualRisks = buildPlanRisksFromWorkOrders()
+  return actualRisks.length > 0 ? actualRisks : basePlanRisks.value
+})
 const forecastDays = computed(() => dashboard.value?.forecastDays ?? [])
 const locationLabel = computed(() => dashboard.value?.locationLabel || '현장')
 
@@ -112,10 +137,122 @@ const fineDustValue = computed(() => {
   return analysis.value?.fineDustValue ?? airQuality.value?.value ?? null
 })
 
-const fineDustLabel = computed(() => {
-  if (fineDustValue.value == null) return airQuality.value?.label || 'API 미연동'
-  return airQuality.value?.label || airQuality.value?.grade || '측정값'
+// feat: 기상영향도 - 연보라 계열로 풍속 단계 표시
+const windSpeedValue = computed(() => Number(analysis.value?.maxWindSpeed ?? 0))
+
+const windColor = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return 'border-slate-100 bg-slate-50'
+  if (w < 4) return 'border-violet-100 bg-gradient-to-br from-violet-50 via-white to-purple-50'
+  if (w < 8) return 'border-violet-200 bg-gradient-to-br from-violet-50 to-purple-100'
+  if (w < 12) return 'border-violet-300 bg-gradient-to-br from-violet-100 to-fuchsia-100'
+  return 'border-rose-200 bg-gradient-to-br from-rose-50 to-violet-100'
 })
+
+const windIconColor = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return 'text-slate-400'
+  if (w < 4) return 'text-violet-400'
+  if (w < 8) return 'text-violet-500'
+  if (w < 12) return 'text-violet-700'
+  return 'text-rose-600'
+})
+
+const windTextColor = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return 'text-slate-700'
+  if (w < 4) return 'text-violet-700'
+  if (w < 8) return 'text-violet-800'
+  if (w < 12) return 'text-violet-900'
+  return 'text-rose-800'
+})
+
+const windLabelColor = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return 'text-slate-600'
+  if (w < 4) return 'text-violet-500'
+  if (w < 8) return 'text-violet-600'
+  if (w < 12) return 'text-violet-700'
+  return 'text-rose-700'
+})
+
+const windStatusLabel = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return '정보 없음'
+  if (w < 4) return '바람 약함'
+  if (w < 8) return '작업 가능 풍속'
+  if (w < 12) return '양중 작업 주의'
+  return '강풍 통제 검토'
+})
+
+const windDescriptionColor = computed(() => {
+  const w = windSpeedValue.value
+  if (!analysis.value) return 'text-slate-600'
+  if (w < 4) return 'text-violet-600/80'
+  if (w < 8) return 'text-violet-700/80'
+  if (w < 12) return 'text-violet-900/80'
+  return 'text-rose-800/85'
+})
+
+// feat: 미세먼지 색상 - 등급에 맞춘 초록/황사/붉은색 계열
+const fineDustTone = computed(() => {
+  const v = fineDustValue.value
+  if (v == null) {
+    return {
+      card: 'border-slate-100 bg-slate-50',
+      icon: 'text-slate-400',
+      value: 'text-slate-700',
+      title: 'text-slate-700',
+      desc: 'text-slate-600/80',
+      label: airQuality.value?.label || 'API 미연동',
+    }
+  }
+  if (v <= 30) {
+    return {
+      card: 'border-emerald-100 bg-gradient-to-br from-emerald-50 to-green-50',
+      icon: 'text-emerald-500',
+      value: 'text-emerald-800',
+      title: 'text-emerald-800',
+      desc: 'text-emerald-700/80',
+      label: '좋음',
+    }
+  }
+  if (v <= 80) {
+    return {
+      card: 'border-amber-100 bg-gradient-to-br from-amber-50 to-yellow-50',
+      icon: 'text-amber-500',
+      value: 'text-amber-800',
+      title: 'text-amber-800',
+      desc: 'text-amber-700/85',
+      label: '보통',
+    }
+  }
+  if (v <= 150) {
+    return {
+      card: 'border-orange-200 bg-gradient-to-br from-orange-50 to-red-50',
+      icon: 'text-orange-600',
+      value: 'text-orange-800',
+      title: 'text-orange-800',
+      desc: 'text-orange-700/85',
+      label: '나쁨',
+    }
+  }
+  return {
+    card: 'border-rose-200 bg-gradient-to-br from-rose-50 to-red-100',
+    icon: 'text-rose-600',
+    value: 'text-rose-800',
+    title: 'text-rose-800',
+    desc: 'text-rose-700/85',
+    label: '매우 나쁨',
+  }
+})
+
+const fineDustColor = computed(() => fineDustTone.value.card)
+const fineDustValueColor = computed(() => fineDustTone.value.value)
+const fineDustIconColor = computed(() => fineDustTone.value.icon)
+const fineDustTitleColor = computed(() => fineDustTone.value.title)
+const fineDustDescriptionColor = computed(() => fineDustTone.value.desc)
+const fineDustLevelLabel = computed(() => fineDustTone.value.label)
 
 // 종합 위험도 (analysis 플래그 카운트)
 const riskLevel = computed(() => {
@@ -135,12 +272,154 @@ const riskLevel = computed(() => {
   return { label: '낮음', tone: 'text-emerald-700 bg-emerald-100 border-emerald-200' }
 })
 
-// 대표 위험 (백엔드 RiskItem 리스트에서 첫 번째)
-const equipmentPrimary = computed(() => equipmentRisks.value[0] ?? null)
-const planPrimary = computed(() => planRisks.value[0] ?? null)
+function normalizeText(value) {
+  return String(value || '').toLowerCase()
+}
+
+function includesAny(text, keywords) {
+  const normalized = normalizeText(text)
+  return keywords.some((keyword) => normalized.includes(normalizeText(keyword)))
+}
+
+function buildEquipmentRiskReason(equipment, cause) {
+  const name = equipment.equipmentName || '중장비'
+  const count = equipment.equipmentCount ?? 1
+  const gateText = equipment.gateIdx != null ? `${equipment.gateIdx}번 게이트` : '게이트 미배정'
+  return `${name} ${count}대가 ${gateText}로 투입 예정입니다. ${cause}`
+}
+
+function buildEquipmentRisksFromWorkOrders() {
+  const a = analysis.value
+  const equipments = workOrderEquipments.value
+  if (!a || !equipments.length) return []
+
+  const rain = a.precipitationProbability ?? 0
+  const wind = a.maxWindSpeed ?? 0
+  const fineDust = a.fineDustValue ?? 0
+  const result = []
+  const pushed = new Set()
+
+  equipments.forEach((equipment, index) => {
+    const name = equipment.equipmentName || ''
+    const key = `${equipment.workOrderIdx}-${equipment.gateIdx}-${name}-${index}`
+
+    if (wind >= 8 && includesAny(name, ['크레인', '양중', '리프트', '고소', '붐', '타워'])) {
+      pushed.add(key)
+      result.push({
+        badge: 'AI',
+        title: `${name} 풍속 통제`,
+        subtitle: equipment.workLocation || '작업구역 미지정',
+        level: wind >= 10 ? '경고' : '주의',
+        reason: buildEquipmentRiskReason(equipment, `현재 최대 풍속 ${Number(wind).toFixed(1)}m/s 기준으로 양중·고소 장비 흔들림 위험이 있습니다.`),
+        action: '풍속 확인 후 투입, 신호수 추가 배치 또는 양중 순연 검토',
+      })
+    }
+
+    if ((a.hasRain || rain >= 60 || a.hasSnow) && includesAny(name, ['굴착', '덤프', '트럭', '펌프', '지게차', '카고', '로더'])) {
+      pushed.add(key)
+      result.push({
+        badge: 'AI',
+        title: `${name} 진입 동선 점검`,
+        subtitle: equipment.workLocation || '작업구역 미지정',
+        level: a.hasSnow || rain >= 70 ? '경고' : '주의',
+        reason: buildEquipmentRiskReason(equipment, '강수·젖은 노면 조건에서는 장비 제동거리와 진입 동선 위험이 커집니다.'),
+        action: '입차 전 노면·배수 확인, 경사 구간 통제 후 운행',
+      })
+    }
+
+    if (fineDust >= 80 && includesAny(name, ['굴착', '절단', '연마', '덤프', '트럭', '천공'])) {
+      pushed.add(key)
+      result.push({
+        badge: 'AI',
+        title: `${name} 분진 저감 운용`,
+        subtitle: equipment.workLocation || '작업구역 미지정',
+        level: fineDust >= 150 ? '경고' : '주의',
+        reason: buildEquipmentRiskReason(equipment, `PM10 ${fineDust}㎍/㎥ 조건에서 분진 발생 장비 운용 시 체감 농도가 높아질 수 있습니다.`),
+        action: '살수 빈도 강화, 방진마스크 지급, 작업 시간 분산',
+      })
+    }
+  })
+
+  if (!result.length && equipments.length && (wind >= 10 || rain >= 70 || a.hasSnow)) {
+    const first = equipments[0]
+    result.push({
+      badge: 'AI',
+      title: '금일 장비 투입 전 안전 확인',
+      subtitle: first.workLocation || '작업구역 미지정',
+      level: '주의',
+      reason: `금일 작업지시서에 ${equipments.length}건의 장비 투입이 있고, 기상 조건이 평시보다 불안정합니다.`,
+      action: '게이트 입차 전 작업구역 노면·풍속·시야 상태 재확인',
+    })
+  }
+
+  return result.slice(0, 5)
+}
+
+function buildPlanRisksFromWorkOrders() {
+  const a = analysis.value
+  const equipments = workOrderEquipments.value
+  if (!a || !equipments.length) return []
+
+  const rain = a.precipitationProbability ?? 0
+  const wind = a.maxWindSpeed ?? 0
+  const fineDust = a.fineDustValue ?? 0
+  const grouped = new Map()
+
+  equipments.forEach((equipment) => {
+    const key = equipment.workOrderIdx ?? `${equipment.workLocation}-${equipment.workDetail}`
+    const previous = grouped.get(key) || {
+      title: equipment.title || '작업 지시서',
+      workLocation: equipment.workLocation || '작업구역 미지정',
+      workDetail: equipment.workDetail || '',
+      equipments: [],
+    }
+    previous.equipments.push(equipment.equipmentName)
+    grouped.set(key, previous)
+  })
+
+  const result = []
+  grouped.forEach((order) => {
+    const targetText = `${order.title} ${order.workLocation} ${order.workDetail} ${order.equipments.join(' ')}`
+    const equipmentText = order.equipments.filter(Boolean).join(', ') || '장비 미지정'
+
+    if ((a.hasRain || rain >= 60) && includesAny(targetText, ['콘크리트', '타설', '도장', '방수', '외부', '굴착', '철근', '벽체'])) {
+      result.push({
+        badge: 'AI',
+        title: `${order.workLocation} 우천 작업 재검토`,
+        subtitle: order.title,
+        level: rain >= 70 ? '경고' : '주의',
+        reason: `작업상세내역 기준 ${equipmentText} 투입 예정이며, 강수확률 ${rain}%로 품질 저하와 미끄럼 위험이 있습니다.`,
+        action: '실내 공정 전환, 타설·도장·방수 작업 시간 재조정',
+      })
+    }
+
+    if (wind >= 8 && includesAny(targetText, ['양중', '철골', '패널', '유리', '외부', '고소', '비계', '크레인'])) {
+      result.push({
+        badge: 'AI',
+        title: `${order.workLocation} 강풍 작업 통제`,
+        subtitle: order.title,
+        level: wind >= 10 ? '경고' : '주의',
+        reason: `작업상세내역과 장비 목록에 강풍 영향 가능 작업이 포함되어 있고 최대 풍속은 ${Number(wind).toFixed(1)}m/s입니다.`,
+        action: '양중·고소 작업 전 풍속 재측정, 신호수 추가 배치',
+      })
+    }
+
+    if (fineDust >= 80 && includesAny(targetText, ['도장', '용접', '절단', '굴착', '외부', '연마'])) {
+      result.push({
+        badge: 'AI',
+        title: `${order.workLocation} 분진 노출 관리`,
+        subtitle: order.title,
+        level: fineDust >= 150 ? '경고' : '주의',
+        reason: `PM10 ${fineDust}㎍/㎥ 조건에서 옥외·분진 발생 작업이 예정되어 있습니다.`,
+        action: '살수·차폐 강화, 보호구 지급, 작업 시간 분산',
+      })
+    }
+  })
+
+  return result.slice(0, 5)
+}
 
 // 실시간 위험 통제 — '지금 현장에서 즉시 해야 하는 액션' 체크리스트
-// (AI 위험 통제 추천이 '분석/판단'이라면, 여기는 '액션/타임라인' 관점)
 const liveRiskActions = computed(() => {
   const a = analysis.value
   if (!a) return []
@@ -260,7 +539,7 @@ const liveRiskActions = computed(() => {
 
 const liveRiskCount = computed(() => liveRiskActions.value.length)
 
-// 3일 예보 (forecastDays 의 오늘부터 3개)
+// 3일 예보
 const threeDayForecast = computed(() => {
   const todayText = getTodayDateText()
   return forecastDays.value
@@ -276,10 +555,10 @@ const weeklyForecast = computed(() => {
     .slice(0, 7)
 })
 
-// 월간 — 현재 주차(오늘 ~ 이번 주 토요일)부터 4주 표시. 지난 일자는 제외.
+// 월간 예보
 function getWeekStart(date) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-  d.setDate(d.getDate() - d.getDay()) // 그 주 일요일로 정렬
+  d.setDate(d.getDate() - d.getDay())
   return d
 }
 
@@ -314,7 +593,6 @@ const monthlyForecast = computed(() => {
     const weekEnd = new Date(weekStart)
     weekEnd.setDate(weekEnd.getDate() + 6)
 
-    // 첫 주차는 오늘부터 시작 (지난 일자 제외)
     const effectiveStart = w === 0 && weekStart < today ? today : weekStart
 
     const days = []
@@ -328,6 +606,7 @@ const monthlyForecast = computed(() => {
         date: key,
         shortDate: formatMD(cursor),
         weekday: KOREAN_WEEKDAYS[cursor.getDay()],
+        dayLabel: w === 0 && cursor.getDate() === today.getDate() ? '오늘' : KOREAN_WEEKDAYS[cursor.getDay()],
         weatherLabel: source?.weatherLabel || '예보 범위 외',
         maxTemp: source?.maxTemp ?? null,
         minTemp: source?.minTemp ?? null,
@@ -414,10 +693,35 @@ function levelBadgeClass(level) {
   return 'bg-emerald-100 text-emerald-900'
 }
 
-function rainBarClass(rainPercent) {
-  if (rainPercent >= 70) return 'bg-rose-500'
-  if (rainPercent >= 40) return 'bg-amber-400'
-  return 'bg-sky-400'
+// feat: 강수확률 색상 진하기 (gradient + shadow)
+const rainBarClass = computed(() => {
+  const r = rainPercent.value
+  if (r >= 80) return 'bg-gradient-to-r from-sky-500 to-blue-700 shadow-lg'
+  if (r >= 70) return 'bg-gradient-to-r from-sky-450 to-blue-600 shadow-md'
+  if (r >= 60) return 'bg-gradient-to-r from-sky-400 to-blue-600 shadow-md'
+  if (r >= 40) return 'bg-gradient-to-r from-sky-300 to-blue-500 shadow-sm'
+  if (r >= 20) return 'bg-gradient-to-r from-cyan-300 to-sky-400'
+  return 'bg-gradient-to-r from-cyan-200 to-sky-300'
+})
+
+// feat: 강수확률 자세한 설명 (6단계)
+const rainNoteDetailed = computed(() => {
+  const v = rainPercent.value
+  if (v >= 80) return '외부 공정 중단 및 배수 체계 가동'
+  if (v >= 70) return '외부 공정 순연 검토 필요 · 배수 사전 점검'
+  if (v >= 60) return '외부 작업 일정 재검토 · 용배수 준비'
+  if (v >= 40) return '외부 작업면 상태 사전 점검 권장'
+  if (v >= 20) return '기본 우천 대비 수준 유지'
+  return '맑은 날씨로 정상 운영'
+})
+
+function rainBarClassStatic(rainPercent) {
+  if (rainPercent >= 80) return 'bg-gradient-to-r from-sky-500 to-blue-700 shadow-lg'
+  if (rainPercent >= 70) return 'bg-gradient-to-r from-sky-450 to-blue-600 shadow-md'
+  if (rainPercent >= 60) return 'bg-gradient-to-r from-sky-400 to-blue-600 shadow-md'
+  if (rainPercent >= 40) return 'bg-gradient-to-r from-sky-300 to-blue-500 shadow-sm'
+  if (rainPercent >= 20) return 'bg-gradient-to-r from-cyan-300 to-sky-400'
+  return 'bg-gradient-to-r from-cyan-200 to-sky-300'
 }
 
 function weatherEmoji(label, rainPercent) {
@@ -438,9 +742,11 @@ function formatWindSpeed(value) {
 
 function rainNote(value) {
   const v = Number(value || 0)
-  if (v >= 70) return '외부 공정 순연 검토 필요'
-  if (v >= 40) return '외부 작업면 상태 사전 점검 권장'
-  return '기본 우천 대비 수준 유지'
+  if (v >= 80) return '외부 공정 중단 필요'
+  if (v >= 60) return '외부 작업 재검토 필요'
+  if (v >= 40) return '작업면 사전 점검 권장'
+  if (v >= 20) return '우천 대비 수준 유지'
+  return '정상 운영'
 }
 </script>
 
@@ -496,6 +802,7 @@ function rainNote(value) {
     <div class="grid gap-4 xl:grid-cols-[540px_minmax(0,1fr)] xl:items-stretch">
       <div class="flex h-full flex-col gap-4">
         <div class="grid auto-rows-fr gap-4 sm:grid-cols-2">
+          <!-- 오늘 현장 요약 -->
           <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
             <div class="flex items-start justify-between gap-3">
               <div class="flex items-center gap-2">
@@ -514,19 +821,26 @@ function rainNote(value) {
             </p>
           </article>
 
-          <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
+          <!-- feat: 기상영향도 - 풍속/풍향 강조 -->
+          <article :class="`flex h-full min-h-[160px] flex-col rounded-2xl p-5 shadow-card transition-colors duration-500 ${windColor}`">
             <div class="flex items-center gap-2">
-              <Wind class="h-4 w-4 shrink-0 text-forena-400" />
-              <p class="text-[11px] font-bold text-forena-500">{{ T.demoWeek }}</p>
+              <Wind :class="`h-4 w-4 ${windIconColor}`" />
+              <p :class="`text-[11px] font-bold tracking-wide ${windLabelColor}`">{{ T.demoWeek }}</p>
             </div>
-            <p class="mt-3 text-base font-bold text-amber-800">
-              {{ week?.summary || '기상 영향 분석 준비 중' }}
-            </p>
-            <p class="mt-2 text-sm leading-relaxed text-slate-500">
-              {{ week?.subSummary || '-' }}
+            <div class="mt-3">
+              <p :class="`text-4xl font-extrabold tracking-tight ${windTextColor} tabular-nums`">
+                {{ analysis?.maxWindSpeed ?? '--' }}<span class="text-lg font-bold">m/s</span>
+              </p>
+              <p :class="`mt-1 text-xs font-semibold ${windDescriptionColor}`">
+                {{ windStatusLabel }}
+              </p>
+            </div>
+            <p :class="`mt-2 text-[11px] leading-relaxed ${windDescriptionColor}`">
+              {{ week?.summary || '풍속 데이터 분석 중' }}
             </p>
           </article>
 
+          <!-- 강수 확률 -->
           <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50 to-cyan-50 p-5 shadow-card">
             <div class="flex items-center gap-2">
               <Droplets class="h-4 w-4 text-sky-500" />
@@ -535,36 +849,42 @@ function rainNote(value) {
             <p class="mt-3 text-3xl font-extrabold tracking-tight text-sky-900 tabular-nums">
               {{ rainPercent }}%
             </p>
-            <div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-sky-100">
+            <!-- feat: 강수확률 색상 진하기 (3번 수정) -->
+            <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
               <div
                 class="h-full rounded-full transition-all duration-500"
-                :class="rainBarClass(rainPercent)"
+                :class="rainBarClass"
                 :style="{ width: `${Math.min(100, rainPercent)}%` }"
               />
             </div>
+            <!-- feat: 자세한 강수 설명 (6단계) -->
             <p class="mt-2 text-xs leading-relaxed text-sky-800/80">
-              {{ rainNote(rainPercent) }}
+              {{ rainNoteDetailed }}
             </p>
           </article>
 
-          <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-violet-100/90 bg-gradient-to-br from-violet-50 to-fuchsia-50 p-5 shadow-card">
+          <!-- feat: 미세먼지 - 색깔 변화 (2번 수정) -->
+          <article :class="`flex h-full min-h-[160px] flex-col rounded-2xl p-5 shadow-card transition-colors duration-500 border ${fineDustColor}`">
             <div class="flex items-center gap-2">
-              <Eye class="h-4 w-4 text-violet-500" />
-              <p class="text-[11px] font-bold tracking-wide text-violet-800">{{ T.fineDustTitle }}</p>
+              <Eye :class="`h-4 w-4 ${fineDustIconColor}`" />
+              <p :class="`text-[11px] font-bold tracking-wide ${fineDustTitleColor}`">
+                {{ T.fineDustTitle }}
+              </p>
             </div>
-            <p class="mt-3 text-3xl font-extrabold tracking-tight text-violet-900 tabular-nums">
-              <template v-if="fineDustValue != null">{{ fineDustValue }}<span class="text-base font-bold">㎍/㎥</span></template>
-              <template v-else>—</template>
+            <p :class="`mt-3 text-3xl font-extrabold tracking-tight tabular-nums transition-colors duration-500 ${fineDustValueColor}`">
+              {{ fineDustValue != null ? fineDustValue : '—' }}<span v-if="fineDustValue != null" class="text-base font-bold">㎍/㎥</span>
             </p>
-            <p class="mt-2 text-sm leading-relaxed text-violet-800/80">
-              {{ fineDustLabel }}
+            <p :class="`mt-2 text-sm leading-relaxed transition-colors duration-500 ${fineDustDescriptionColor}`">
+              {{ fineDustLevelLabel }}
             </p>
           </article>
         </div>
 
-        <article class="flex flex-1 flex-col rounded-2xl border border-rose-100/90 bg-gradient-to-br from-rose-50/85 via-white to-rose-50/40 p-4 shadow-card">
+        <!-- 실시간 위험 통제 -->
+        <article class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-rose-200/90 bg-gradient-to-br from-rose-50/90 via-white to-orange-50/40 p-4 shadow-card ring-1 ring-rose-100/70">
+          <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-orange-400" />
           <div class="flex items-start justify-between gap-2.5">
-            <div class="flex items-start gap-2.5 min-w-0 flex-1">
+            <div class="flex items-start gap-2.5 min-w-0 flex-1 pl-2">
               <AlertTriangle class="mt-0.5 h-5 w-5 shrink-0 text-rose-600" />
               <div class="min-w-0 flex-1">
                 <h3 class="text-[18px] font-extrabold tracking-tight text-rose-900">{{ T.liveRisk }}</h3>
@@ -586,7 +906,7 @@ function rainNote(value) {
             <li
               v-for="action in liveRiskActions"
               :key="action.id"
-              class="flex items-start gap-3 rounded-xl border border-rose-200/70 bg-white p-3 shadow-sm"
+              class="flex items-start gap-3 rounded-xl border border-rose-200/80 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
             >
               <div
                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
@@ -632,6 +952,7 @@ function rainNote(value) {
         </article>
       </div>
 
+      <!-- 우측: AI 위험 통제 추천 -->
       <div class="flex h-full flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
         <div class="border-b border-forena-100 bg-gradient-to-r from-violet-50/70 via-white to-rose-50/60 px-5 py-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
@@ -655,35 +976,37 @@ function rainNote(value) {
             class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/50 p-6 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-rose-600" />
-            <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-4">
-              <div class="flex min-w-[86px] items-center gap-3 md:pt-1">
-                <span class="rounded-lg bg-rose-100 px-3.5 py-2 text-sm font-extrabold text-rose-800">AI</span>
-                <AlertTriangle class="h-5 w-5 text-rose-600" />
-              </div>
+            <div class="flex items-center gap-3 mb-4">
+              <span class="rounded-lg bg-rose-100 px-3.5 py-2 text-sm font-extrabold text-rose-800">AI</span>
+              <AlertTriangle class="h-5 w-5 text-rose-600" />
+              <h3 class="text-[18px] font-extrabold tracking-tight text-forena-900">{{ T.row3Title }}</h3>
+              <span class="ml-auto rounded-full border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-bold text-rose-700">
+                {{ planRisks.length }}건
+              </span>
+            </div>
 
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="flex flex-wrap items-center gap-2.5">
-                  <h3 class="text-[20px] font-extrabold tracking-tight text-forena-900">{{ T.row3Title }}</h3>
-                  <span
-                    v-if="planPrimary"
-                    class="rounded-md px-3 py-1 text-[12px] font-extrabold uppercase tracking-wider"
-                    :class="levelBadgeClass(planPrimary.level)"
-                  >
-                    {{ planPrimary.level }}
+            <div v-if="planRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+              <div
+                v-for="(risk, index) in planRisks"
+                :key="`plan-${index}-${risk.title}`"
+                class="rounded-xl border border-rose-100 bg-white/70 px-4 py-3"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <p class="text-[14px] font-extrabold text-forena-900 leading-5">{{ risk.title }}</p>
+                  <span class="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(risk.level)">
+                    {{ risk.level }}
                   </span>
                 </div>
-
-                <p v-if="planPrimary" class="text-[16px] font-semibold leading-8 text-slate-800">
-                  {{ planPrimary.reason }}
-                </p>
-                <p v-if="planPrimary?.action" class="rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm leading-7 text-rose-900">
-                  <span class="font-bold">권장 조치 </span>· {{ planPrimary.action }}
-                </p>
-                <p v-if="!planPrimary" class="text-sm font-medium text-slate-600">
-                  현재 계획 연동 위험은 감지되지 않았습니다.
+                <p class="text-[13px] leading-6 text-slate-700">{{ risk.reason }}</p>
+                <p v-if="risk.action" class="mt-1.5 text-[12px] leading-5 text-rose-800 font-semibold">
+                  권장 조치 · {{ risk.action }}
                 </p>
               </div>
             </div>
+
+            <p v-else class="text-sm font-medium text-slate-600">
+              현재 계획 연동 위험은 감지되지 않았습니다.
+            </p>
           </div>
 
           <!-- 장비 통제 -->
@@ -691,35 +1014,37 @@ function rainNote(value) {
             class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-violet-200/80 bg-gradient-to-br from-violet-50/80 via-white to-violet-50/40 p-6 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-violet-400 to-violet-600" />
-            <div class="flex flex-col gap-4 md:flex-row md:items-start md:gap-4">
-              <div class="flex min-w-[86px] items-center gap-3 md:pt-1">
-                <span class="rounded-lg bg-violet-100 px-3.5 py-2 text-sm font-extrabold text-violet-800">AI</span>
-                <Sparkles class="h-5 w-5 text-violet-600" />
-              </div>
+            <div class="flex items-center gap-3 mb-4">
+              <span class="rounded-lg bg-violet-100 px-3.5 py-2 text-sm font-extrabold text-violet-800">AI</span>
+              <Sparkles class="h-5 w-5 text-violet-600" />
+              <h3 class="text-[18px] font-extrabold tracking-tight text-forena-900">{{ T.row2Title }}</h3>
+              <span class="ml-auto rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-bold text-violet-700">
+                {{ equipmentRisks.length }}건
+              </span>
+            </div>
 
-              <div class="min-w-0 flex-1 space-y-3">
-                <div class="flex flex-wrap items-center gap-2.5">
-                  <h3 class="text-[20px] font-extrabold tracking-tight text-forena-900">{{ T.row2Title }}</h3>
-                  <span
-                    v-if="equipmentPrimary"
-                    class="rounded-md px-3 py-1 text-[12px] font-extrabold uppercase tracking-wider"
-                    :class="levelBadgeClass(equipmentPrimary.level)"
-                  >
-                    {{ equipmentPrimary.level }}
+            <div v-if="equipmentRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+              <div
+                v-for="(risk, index) in equipmentRisks"
+                :key="`equip-${index}-${risk.title}`"
+                class="rounded-xl border border-violet-100 bg-white/70 px-4 py-3"
+              >
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <p class="text-[14px] font-extrabold text-forena-900 leading-5">{{ risk.title }}</p>
+                  <span class="shrink-0 rounded-md px-2 py-0.5 text-[10px] font-bold" :class="levelBadgeClass(risk.level)">
+                    {{ risk.level }}
                   </span>
                 </div>
-
-                <p v-if="equipmentPrimary" class="text-[16px] font-semibold leading-8 text-slate-800">
-                  {{ equipmentPrimary.reason }}
-                </p>
-                <p v-if="equipmentPrimary?.action" class="rounded-lg border border-violet-100 bg-white/60 px-3 py-2 text-sm leading-7 text-violet-900">
-                  <span class="font-bold">권장 조치 </span>· {{ equipmentPrimary.action }}
-                </p>
-                <p v-if="!equipmentPrimary" class="text-sm font-medium text-slate-600">
-                  현재 장비 통제 위험은 감지되지 않았습니다.
+                <p class="text-[13px] leading-6 text-slate-700">{{ risk.reason }}</p>
+                <p v-if="risk.action" class="mt-1.5 text-[12px] leading-5 text-violet-800 font-semibold">
+                  권장 조치 · {{ risk.action }}
                 </p>
               </div>
             </div>
+
+            <p v-else class="text-sm font-medium text-slate-600">
+              현재 장비 통제 위험은 감지되지 않았습니다.
+            </p>
           </div>
         </div>
       </div>
@@ -771,8 +1096,8 @@ function rainNote(value) {
 
             <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-100">
               <div
-                class="h-full rounded-full"
-                :class="rainBarClass(day.precipitationProbability ?? 0)"
+                class="h-full rounded-full transition-all duration-500"
+                :class="rainBarClassStatic(day.precipitationProbability ?? 0)"
                 :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
               />
             </div>
@@ -848,8 +1173,8 @@ function rainNote(value) {
                     <span class="text-xs font-medium tabular-nums text-slate-700">{{ day.precipitationProbability ?? 0 }}%</span>
                     <div class="h-1 w-16 overflow-hidden rounded-full bg-slate-100">
                       <div
-                        class="h-full rounded-full"
-                        :class="rainBarClass(day.precipitationProbability ?? 0)"
+                        class="h-full rounded-full transition-all duration-500"
+                        :class="rainBarClassStatic(day.precipitationProbability ?? 0)"
                         :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
                       />
                     </div>
@@ -930,8 +1255,8 @@ function rainNote(value) {
                   <span class="text-[10px] font-bold text-slate-500">강수</span>
                   <div class="h-1.5 w-20 overflow-hidden rounded-full bg-slate-100">
                     <div
-                      class="h-full rounded-full"
-                      :class="rainBarClass(weekItem.precipitationProbability ?? 0)"
+                      class="h-full rounded-full transition-all duration-500"
+                      :class="rainBarClassStatic(weekItem.precipitationProbability ?? 0)"
                       :style="{ width: `${Math.min(100, weekItem.precipitationProbability ?? 0)}%` }"
                     />
                   </div>
@@ -991,8 +1316,8 @@ function rainNote(value) {
 
                     <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-slate-100">
                       <div
-                        class="h-full rounded-full"
-                        :class="rainBarClass(day.precipitationProbability ?? 0)"
+                        class="h-full rounded-full transition-all duration-500"
+                        :class="rainBarClassStatic(day.precipitationProbability ?? 0)"
                         :style="{ width: `${Math.min(100, day.precipitationProbability ?? 0)}%` }"
                       />
                     </div>
