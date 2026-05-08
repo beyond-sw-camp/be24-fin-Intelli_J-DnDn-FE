@@ -20,10 +20,20 @@ import {
   Zap,
 } from 'lucide-vue-next'
 import api from '@/api/index.js'
-<<<<<<< Updated upstream
-=======
 import { getGateEquipments } from '@/api/workOrder.js'
->>>>>>> Stashed changes
+import {
+  BASE_SITES,
+  EMPTY_WORK_ZONE,
+  LEVEL_THRESHOLDS,
+  buildDashboardZones,
+  buildRankingItems,
+  buildZoneMissions,
+  calculateOperatingRiskCount,
+  getZoneFocusMetric,
+  getZoneGrowthTitle,
+  getZoneStage,
+  resolveLevel,
+} from '@/utils/esgDashboardMapper.js'
 
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
@@ -34,210 +44,14 @@ const selectedZoneId = ref('zone-a')
 const activeEsgKey = ref('E')
 let refreshTimer = null
 
-<<<<<<< Updated upstream
-=======
 // feat: 작업지시서 연동 데이터
 const equipmentsData = ref([])  // GET /work-order/gate-equipments
 const reportsData = ref([])     // GET /report - 금일 공사일보 데이터
 const workOrdersData = ref([])  // GET /work-order
 
->>>>>>> Stashed changes
-const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
-
-const sites = ref([
-  {
-    id: 'mokdong',
-    name: '목동 복합개발 2공구',
-    shortName: '목동',
-    address: '서울 양천구 목동',
-    contractor: '한화건설',
-    manager: '현장 총괄자',
-    score: 62.0,
-    level: 3,
-    carbon: 24.8,
-    powerSaving: 86,
-    riskCount: 0,
-    missionRate: 62,
-    trend: 3.0,
-    accent: 'emerald',
-  },
-  {
-    id: 'deungchon',
-    name: '등촌동 현장',
-    shortName: '등촌동',
-    address: '서울 강서구 등촌동',
-    contractor: '한화건설',
-    manager: '안전관리자',
-    score: 88.1,
-    level: 6,
-    carbon: 42.5,
-    powerSaving: 146,
-    riskCount: 2,
-    missionRate: 88,
-    trend: 4.6,
-    accent: 'sky',
-  },
-  {
-    id: 'singil',
-    name: '신길동 현장',
-    shortName: '신길동',
-    address: '서울 영등포구 신길동',
-    contractor: '한화건설',
-    manager: '품질관리자',
-    score: 76.2,
-    level: 4,
-    carbon: 31.2,
-    powerSaving: 104,
-    riskCount: 5,
-    missionRate: 76,
-    trend: 2.2,
-    accent: 'violet',
-  },
-  {
-    id: 'sindaebang',
-    name: '신대방 현장',
-    shortName: '신대방',
-    address: '서울 동작구 신대방동',
-    contractor: '한화건설',
-    manager: '품질관리자',
-    score: 72.5,
-    level: 4,
-    carbon: 28.4,
-    powerSaving: 92,
-    riskCount: 7,
-    missionRate: 72,
-    trend: 1.9,
-    accent: 'amber',
-  },
-])
-
-const zones = ref([
-  {
-    id: 'zone-a',
-    siteId: 'mokdong',
-    name: '101동 3층',
-    type: '벽체 철근 작업구역',
-    score: 62.0,
-    level: 3,
-    rank: 1,
-    carbon: 18,
-    powerSaving: 74,
-    risk: 3,
-    missionRate: 62,
-    lead: 0,
-    status: '시공',
-  },
-  {
-    id: 'zone-b',
-    siteId: 'mokdong',
-    name: '골조 구역',
-    type: '양중 작업 가능',
-    score: 58.5,
-    level: 3,
-    rank: 2,
-    carbon: 14,
-    powerSaving: 61,
-    risk: 5,
-    missionRate: 58,
-    lead: -3.5,
-    status: '관리',
-  },
-  {
-    id: 'zone-c',
-    siteId: 'mokdong',
-    name: '세척장',
-    type: '전력 절감 강화',
-    score: 66.3,
-    level: 3,
-    rank: 3,
-    carbon: 22,
-    powerSaving: 86,
-    risk: 4,
-    missionRate: 66,
-    lead: 4.3,
-    status: '우수',
-  },
-  {
-    id: 'zone-d',
-    siteId: 'mokdong',
-    name: '민원 구역',
-    type: '소음/먼지 감시',
-    score: 55.8,
-    level: 2,
-    rank: 4,
-    carbon: 11,
-    powerSaving: 45,
-    risk: 8,
-    missionRate: 52,
-    lead: -6.2,
-    status: '위험',
-  },
-  {
-    id: 'deungchon-a',
-    siteId: 'deungchon',
-    name: 'A 동 골조',
-    type: '양중 작업 집중',
-    score: 78.2,
-    level: 3,
-    rank: 1,
-    carbon: 34,
-    powerSaving: 98,
-    risk: 5,
-    missionRate: 70,
-    lead: 2.4,
-    status: '관리',
-  },
-  {
-    id: 'deungchon-b',
-    siteId: 'deungchon',
-    name: 'B 동 외부',
-    type: '비산먼지 관리',
-    score: 72.6,
-    level: 3,
-    rank: 2,
-    carbon: 24,
-    powerSaving: 73,
-    risk: 8,
-    missionRate: 59,
-    lead: -1.2,
-    status: '주의',
-  },
-  {
-    id: 'sindaebang-a',
-    siteId: 'sindaebang',
-    name: '업무동 코어',
-    type: '전력 사용 집중',
-    score: 74.9,
-    level: 3,
-    rank: 1,
-    carbon: 30,
-    powerSaving: 76,
-    risk: 6,
-    missionRate: 64,
-    lead: 1.9,
-    status: '관리',
-  },
-  {
-    id: 'sindaebang-b',
-    siteId: 'sindaebang',
-    name: '지하 굴착',
-    type: '배수·안전 통제',
-    score: 68.4,
-    level: 2,
-    rank: 2,
-    carbon: 21,
-    powerSaving: 58,
-    risk: 9,
-    missionRate: 55,
-    lead: -2.8,
-    status: '위험',
-  },
-])
+const sites = ref(BASE_SITES.map((site) => ({ ...site })))
 
 const currentSite = computed(() => sites.value.find((site) => site.id === selectedSiteId.value) ?? sites.value[0])
-<<<<<<< Updated upstream
-const siteZones = computed(() => zones.value.filter((zone) => zone.siteId === currentSite.value.id))
-=======
 
 // feat: 날씨 AI 위험 건수 (equipmentRisks + planRisks)
 const weatherRiskCount = computed(() =>
@@ -260,94 +74,28 @@ const realMissionRate = computed(() => {
   return Math.round((working / equips.length) * 100)
 })
 
-// feat: 작업지시서의 작업 위치를 ESG 작업구역으로 변환
-// E = zoneScore - rain*0.05 - fineDust*0.03 + powerSaving*0.04
-// S = zoneScore + missionRate*0.12 - risk*1.4
-// G = zoneScore + (100 - risk*5)*0.1 - wind*0.8
-const realGateZones = computed(() => {
-  if (!equipmentsData.value.length) return []
-
-  const missionRate = realMissionRate.value
-  const weatherRisk = weatherRiskCount.value
-  const grouped = new Map()
-
-  equipmentsData.value.forEach((equipment) => {
-    const zoneName = equipment.workLocation || '작업구역 미지정'
-    const current = grouped.get(zoneName) || {
-      name: zoneName,
-      titles: new Set(),
-      equipments: new Map(),
-      totalCount: 0,
-      gateSet: new Set(),
-    }
-
-    if (equipment.title) current.titles.add(equipment.title)
-    if (equipment.gateIdx != null) current.gateSet.add(equipment.gateIdx)
-
-    const equipmentName = equipment.equipmentName || '중장비'
-    current.equipments.set(
-      equipmentName,
-      (current.equipments.get(equipmentName) || 0) + (equipment.equipmentCount ?? 1),
-    )
-    current.totalCount += equipment.equipmentCount ?? 1
-    grouped.set(zoneName, current)
+// feat: 세척장/민원 구역 + 작업지시서의 작업 위치를 ESG 관리구역으로 변환
+const realDashboardZones = computed(() =>
+  buildDashboardZones(equipmentsData.value, {
+    missionRate: realMissionRate.value,
+    weatherRiskCount: weatherRiskCount.value,
+    weatherAnalysis: weatherAnalysis.value,
+    airQuality: airQuality.value,
   })
+)
 
-  const mapped = Array.from(grouped.values()).map((zone, index) => {
-    const equipmentCount = zone.totalCount
-    const equipmentSummary = Array.from(zone.equipments.entries())
-      .map(([name, count]) => `${name} ${count}대`)
-      .join(', ')
-    const gateSummary = Array.from(zone.gateSet)
-      .sort((a, b) => a - b)
-      .map((gateIdx) => `${gateIdx}번 게이트`)
-      .join(', ')
-    const titleSummary = Array.from(zone.titles).slice(0, 2).join(' · ')
+const operatingRiskCount = computed(() =>
+  calculateOperatingRiskCount(equipmentsData.value, weatherRiskCount.value)
+)
 
-    const risk = Math.min(10, weatherRisk + Math.max(0, equipmentCount - 1))
-    const zoneScore = Math.max(35, Math.min(94, 82 - risk * 3 + missionRate * 0.08 - equipmentCount * 0.6))
-    const powerSaving = Math.max(20, Math.round(45 + equipmentCount * 8 - risk * 2))
-    const carbon = Math.max(6, Math.round(12 + equipmentCount * 2.5))
-    const status = risk >= 7 ? '위험' : risk >= 4 ? '관리' : '우수'
-
-    return {
-      id: `work-zone-${index + 1}`,
-      siteId: 'mokdong',
-      name: zone.name,
-      type: titleSummary || equipmentSummary || '작업지시서 연동 구역',
-      score: Math.round(zoneScore * 10) / 10,
-      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => zoneScore >= t) + 1),
-      rank: 0,
-      carbon,
-      powerSaving,
-      risk,
-      missionRate,
-      lead: 0,
-      status,
-      equipmentCount,
-      equipmentSummary,
-      gateSummary,
-    }
-  })
-
-  mapped.sort((a, b) => b.score - a.score)
-  mapped.forEach((zone, index) => {
-    zone.rank = index + 1
-    zone.lead = index === 0 ? 0 : Math.round((zone.score - mapped[0].score) * 10) / 10
-  })
-
-  return mapped
-})
-
-// feat: 현장 기준으로 zones 결정 — 목동(현재 현장)은 작업지시서 작업구역 실데이터 우선
+// feat: 현장 기준으로 zones 결정 — 목동(현재 현장)은 세척장/민원 구역 + 작업지시서 작업구역을 함께 표시
 const siteZones = computed(() => {
-  if (realGateZones.value.length && currentSite.value.id === 'mokdong') {
-    return realGateZones.value
+  if (realDashboardZones.value.length && currentSite.value.id === 'mokdong') {
+    return realDashboardZones.value
   }
-  return zones.value.filter((zone) => zone.siteId === currentSite.value.id)
+  return [{ ...EMPTY_WORK_ZONE, siteId: currentSite.value.id }]
 })
 
->>>>>>> Stashed changes
 const selectedZone = computed(() => {
   return siteZones.value.find((zone) => zone.id === selectedZoneId.value) ?? siteZones.value[0]
 })
@@ -360,8 +108,7 @@ const planRisks = computed(() => normalizeArray(dashboard.value?.planRisks))
 
 const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
 const activeLevel = computed(() => {
-  const index = LEVEL_THRESHOLDS.findLastIndex((score) => activeScore.value >= score)
-  return Math.max(1, Math.min(7, index + 1))
+  return resolveLevel(activeScore.value)
 })
 const levelProgress = computed(() => {
   const current = LEVEL_THRESHOLDS[activeLevel.value - 1] ?? 0
@@ -373,6 +120,14 @@ const nextLevelPoint = computed(() => {
   return Math.max(0, next - activeScore.value).toFixed(1)
 })
 const buildingFloors = computed(() => Array.from({ length: 8 }, (_, index) => index + 1))
+const zoneGrowthTitle = computed(() => getZoneGrowthTitle(selectedZone.value))
+const zoneStage = computed(() => getZoneStage(selectedZone.value))
+const zoneFocusMetric = computed(() =>
+  getZoneFocusMetric(selectedZone.value, {
+    weatherAnalysis: weatherAnalysis.value,
+    airQuality: airQuality.value,
+  })
+)
 
 const weatherImpact = computed(() => {
   const analysis = weatherAnalysis.value
@@ -551,21 +306,21 @@ const zoneMetricCards = computed(() => {
       id: 'work-zone',
       title: zone.name,
       subtitle: zone.equipmentSummary || zone.type,
-      value: `${zone.equipmentCount ?? Math.max(1, zone.level)}대`,
+      value: `${zone.equipmentCount ?? 0}대`,
       badge: zone.status,
       icon: HardHat,
       iconClass: 'bg-emerald-50 text-emerald-700',
       valueClass: 'text-emerald-800',
     },
     {
-      id: 'wash',
-      title: '세척장',
-      subtitle: '전력 절감 강화',
-      value: `-${currentSite.value.powerSaving}kWh`,
-      badge: '우수',
+      id: 'idle',
+      title: '장비 공회전 영향',
+      subtitle: zone.gateSummary || '게이트 배정 장비 기준',
+      value: zone.equipmentCount ? `${zone.equipmentCount}대` : '연동 대기',
+      badge: zone.risk >= 7 ? '위험' : zone.risk >= 4 ? '관리' : '정상',
       icon: Droplets,
-      iconClass: 'bg-emerald-50 text-emerald-700',
-      valueClass: 'text-emerald-800',
+      iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700',
+      valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-emerald-800',
     },
     {
       id: 'process-risk',
@@ -590,49 +345,12 @@ const zoneMetricCards = computed(() => {
   ]
 })
 
-const missions = computed(() => [
-  {
-    id: 'idle',
-    title: '장비 대기시간 20% 줄이기',
-    description: '입출차 대기 흐름 개선',
-    progress: selectedZone.value.missionRate,
-    color: 'emerald',
-  },
-  {
-    id: 'power',
-    title: '세척장 전력 절감 25% 달성',
-    description: '세척 설비 가동 최적화',
-    progress: Math.min(100, Math.round(currentSite.value.powerSaving / 1.55)),
-    color: 'lime',
-  },
-  {
-    id: 'complaint',
-    title: '민원 경고 이하 유지',
-    description: '소음·먼지 기준 관리',
-    progress: Math.max(40, 100 - selectedZone.value.risk * 8),
-    color: 'sky',
-  },
-])
+const missions = computed(() => buildZoneMissions(selectedZone.value, currentSite.value))
 
-const siteRankingItems = computed(() => [...sites.value].sort((a, b) => b.score - a.score))
-const currentSiteRank = computed(() => {
-  return siteRankingItems.value.findIndex((site) => site.id === selectedSiteId.value) + 1
-})
-const rankComparison = computed(() => {
-  const index = currentSiteRank.value - 1
-  if (index < 0) return '순위 계산 중입니다.'
-
-  if (index === 0) {
-    const nextSite = siteRankingItems.value[1]
-    if (!nextSite) return '단독 1위입니다.'
-    const gap = Math.max(0, currentSite.value.score - nextSite.score).toFixed(1)
-    return `${nextSite.name}보다 ${gap}점 앞섬`
-  }
-
-  const upperSite = siteRankingItems.value[index - 1]
-  const gap = Math.max(0, upperSite.score - currentSite.value.score).toFixed(1)
-  return `${upperSite.name}까지 ${gap}점 부족`
-})
+const rankingSummary = computed(() => buildRankingItems(sites.value, selectedSiteId.value))
+const siteRankingItems = computed(() => rankingSummary.value.items)
+const currentSiteRank = computed(() => rankingSummary.value.currentRank)
+const rankComparison = computed(() => rankingSummary.value.comparison)
 
 // feat: 누적 무사고 일수
 const riskActions = computed(() => {
@@ -663,8 +381,6 @@ async function loadDashboard() {
   }
 }
 
-<<<<<<< Updated upstream
-=======
 // feat: 오늘 투입 장비 로드 — 작업 지시서 기준 미션 달성률 계산용
 async function loadEquipments() {
   try {
@@ -717,7 +433,6 @@ function refreshAll() {
   loadWorkOrders()
 }
 
->>>>>>> Stashed changes
 function getTodayDateText() {
   const now = new Date()
   return [
@@ -783,38 +498,33 @@ function levelTone(level) {
 }
 
 onMounted(() => {
-<<<<<<< Updated upstream
-  loadDashboard()
-  refreshTimer = setInterval(loadDashboard, 30 * 60 * 1000)
-=======
   refreshAll()
   refreshTimer = setInterval(() => {
     refreshAll()
   }, 30 * 60 * 1000)
->>>>>>> Stashed changes
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
 })
 
-<<<<<<< Updated upstream
-watch(reportDate, loadDashboard)
-=======
 watch(reportDate, () => {
   refreshAll()
 })
 
 // feat: 실 작업구역 zones 로드 시 selectedZoneId 초기화 + 목동 현장 점수 갱신
-watch(realGateZones, (zones) => {
+watch(siteZones, (zones) => {
   if (!zones.length) return
 
-  // zone 선택 초기화 (첫 번째 작업구역으로)
-  if (!zones.find((z) => z.id === selectedZoneId.value)) {
+  if (!zones.find((zone) => zone.id === selectedZoneId.value)) {
     selectedZoneId.value = zones[0].id
   }
+}, { immediate: true })
 
-  // 목동 현장 점수를 실데이터 평균으로 갱신
+watch(realDashboardZones, (zones) => {
+  if (!zones.length) return
+
+  // 목동 현장 점수를 관리구역 실데이터 평균으로 갱신
   const avgScore = Math.round(
     (zones.reduce((sum, z) => sum + z.score, 0) / zones.length) * 10
   ) / 10
@@ -824,15 +534,14 @@ watch(realGateZones, (zones) => {
     sites.value[mokIdx] = {
       ...sites.value[mokIdx],
       score: avgScore,
-      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => avgScore >= t) + 1),
+      level: resolveLevel(avgScore),
       powerSaving: zones.reduce((sum, z) => sum + z.powerSaving, 0),
       carbon: zones.reduce((sum, z) => sum + z.carbon, 0),
-      riskCount: weatherRiskCount.value,
+      riskCount: operatingRiskCount.value,
       missionRate: realMissionRate.value,
     }
   }
 })
->>>>>>> Stashed changes
 </script>
 
 <template>
@@ -910,10 +619,10 @@ watch(realGateZones, (zones) => {
           <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
             <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
               <AlertTriangle class="h-3.5 w-3.5 text-amber-200" />
-              운영 리스크
+              {{ zoneFocusMetric.title }}
             </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.riskCount }}<span class="text-lg text-emerald-100">건</span></p>
-            <p class="mt-1 text-xs text-emerald-100">작업·장비 연동 감지</p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ zoneFocusMetric.value }}<span class="text-lg text-emerald-100">{{ zoneFocusMetric.unit }}</span></p>
+            <p class="mt-1 text-xs text-emerald-100">{{ zoneFocusMetric.caption }}</p>
           </div>
         </div>
       </div>
@@ -924,7 +633,7 @@ watch(realGateZones, (zones) => {
         <div class="flex items-start justify-between gap-3 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4">
           <div>
             <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Field Level · 현장 빌딩</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">ESG 빌딩 성장</h2>
+            <h2 class="mt-1 text-xl font-black text-forena-900">{{ zoneGrowthTitle }}</h2>
           </div>
           <span class="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-black text-emerald-700">
             Lv.{{ activeLevel }}
@@ -971,7 +680,7 @@ watch(realGateZones, (zones) => {
           </div>
 
           <div class="mt-5 text-center">
-            <h3 class="text-xl font-black text-forena-900">시공 단계</h3>
+            <h3 class="text-xl font-black text-forena-900">{{ zoneStage.title }}</h3>
             <p class="mt-2 text-sm font-medium text-forena-600">
               현재 점수 <span class="font-black text-emerald-700">{{ activeScore }}</span>점 · 다음 레벨까지
               <span class="font-black text-emerald-700">{{ nextLevelPoint }}</span>점 남음
@@ -988,7 +697,7 @@ watch(realGateZones, (zones) => {
               레벨업 가이드
             </p>
             <p class="mt-1 text-xs leading-6 text-emerald-700">
-              중장비 공회전을 낮추고 탄소 배출을 줄이면 다음 층이 올라갑니다.
+              {{ zoneStage.guide }}
             </p>
           </div>
         </div>
@@ -1003,10 +712,10 @@ watch(realGateZones, (zones) => {
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <span class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">
-              작업구역 기준
+              관리구역 기준
             </span>
             <div class="relative min-w-[170px]">
-              <label class="sr-only" for="zone-select">작업구역 선택</label>
+              <label class="sr-only" for="zone-select">관리구역 선택</label>
               <select
                 id="zone-select"
                 v-model="selectedZoneId"
@@ -1019,6 +728,13 @@ watch(realGateZones, (zones) => {
               <ChevronDown class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-forena-500" />
             </div>
           </div>
+        </div>
+
+        <div
+          v-if="selectedZone?.isEmpty"
+          class="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800"
+        >
+          금일 작업지시서 장비·게이트 데이터가 아직 연결되지 않았습니다. work_order와 work_order_equipment가 연결되면 작업위치 기준으로 자동 전환됩니다.
         </div>
 
         <div class="mt-5 grid gap-3 lg:grid-cols-3">
@@ -1073,10 +789,10 @@ watch(realGateZones, (zones) => {
         <div class="flex items-center justify-between">
           <div>
             <p class="text-[11px] font-bold uppercase tracking-wide text-amber-600">Rival · 현장 대결</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 순위</h2>
+            <h2 class="mt-1 text-xl font-black text-forena-900">공사현장 ESG 순위</h2>
           </div>
           <span class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">
-            현장 비교
+            공사현장 비교
           </span>
         </div>
 
@@ -1135,9 +851,16 @@ watch(realGateZones, (zones) => {
         <div class="flex items-center justify-between">
           <div>
             <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Mission</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
+            <h2 class="mt-1 text-xl font-black text-forena-900">{{ selectedZone.name }} ESG 미션</h2>
           </div>
           <Target class="h-6 w-6 text-emerald-600" />
+        </div>
+
+        <div
+          v-if="selectedZone?.isEmpty"
+          class="mt-4 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs font-semibold leading-5 text-amber-800"
+        >
+          금일 작업지시서 장비·게이트 데이터가 아직 연결되지 않았습니다. work_order와 work_order_equipment가 연결되면 작업위치 기준으로 자동 전환됩니다.
         </div>
 
         <div class="mt-5 grid gap-3 lg:grid-cols-3">
