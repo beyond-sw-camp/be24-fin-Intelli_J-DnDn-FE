@@ -4,7 +4,21 @@ import { ref, computed } from 'vue'
 import router from '@/router/index.js'
 import { parseGanttJSON } from '@/utils/ganttParser.js'
 import { useGanttStore } from '@/stores/ganttStore.js'
+import { uploadAndExtractSchedule, updateTradeProcess } from '@/api/masterSchedule.js'
+import { buildGanttData, isTaskDirty, taskToReqBody } from '@/utils/scheduleMapper.js'
 const ganttStore = useGanttStore()
+
+// =====================================================
+// Props
+// =====================================================
+// 상위 라우트/페이지에서 현재 프로젝트(현장) ID를 내려줌.
+// 추후 실제 라우팅과 연결하면 fallback 값(1)은 제거 예정.
+const props = defineProps({
+  projectId: {
+    type: [Number, String],
+    default: 1,
+  },
+})
 
 import {
   Upload,
@@ -37,6 +51,7 @@ import {
   ZoomOut,
   Locate,
   Diamond,
+  Pencil,
 } from 'lucide-vue-next'
 
 // =====================================================
@@ -73,6 +88,16 @@ const DOC_TYPES = [
     color: 'teal',
     aiCapabilities: ['공종별 세부 일정', '인원/장비 계획', '위험 요소 식별'],
   },
+  {
+    key: 'bohal',
+    label: '보할 공정표',
+    desc: '월/주차별 보할율(가중치)을 담은 공정표입니다. AI가 보할 분포로 각 공정의 시작/종료 시점을 자동으로 추정합니다.',
+    icon: 'spreadsheet',
+    required: false,
+    acceptedFormats: ['.xlsx', '.xls', '.pdf'],
+    color: 'violet',
+    aiCapabilities: ['보할율 추출', '월/주차별 분포 분석', '공정 시작·종료일 추정'],
+  },
 ]
 
 // =====================================================
@@ -82,6 +107,7 @@ const uploads = ref({
   master: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
   milestone: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
   trade: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
+  bohal: { file: null, fileName: '', status: 'idle', progress: 0, result: null, error: '' },
 })
 
 const projectMeta = ref({
@@ -133,6 +159,15 @@ const colorMap = {
     badge: 'bg-emerald-100 text-emerald-700',
     icon: 'text-emerald-600',
     dragBorder: 'border-emerald-400 bg-emerald-50/40',
+  },
+  violet: {
+    bg: 'bg-violet-50',
+    text: 'text-violet-700',
+    ring: 'ring-violet-200',
+    dot: 'bg-violet-500',
+    badge: 'bg-violet-100 text-violet-700',
+    icon: 'text-violet-600',
+    dragBorder: 'border-violet-400 bg-violet-50/40',
   },
 }
 
@@ -207,39 +242,88 @@ function removeFile(typeKey) {
   }
 }
 
-// AI 분석 실행 (mock)
-function runAnalysis(typeKey) {
+// AI 분석 실행 — 백엔드 업로드 + OpenAI 추출 호출
+async function runAnalysis(typeKey) {
   const u = uploads.value[typeKey]
-  if (!u.fileName) return
+  if (!u.file) return
+
+  // DOC_TYPES에서 한글 라벨을 가져와 백엔드 DocType.fromLabel()에 매칭
+  const docType = DOC_TYPES.find((dt) => dt.key === typeKey)
+  if (!docType) {
+    u.status = 'error'
+    u.error = '알 수 없는 문서 유형입니다.'
+    return
+  }
+
   u.status = 'uploading'
   u.progress = 0
+  u.error = ''
+  u.result = null
 
-  const progressInterval = setInterval(() => {
-    u.progress = Math.min(u.progress + Math.random() * 18, 90)
-  }, 180)
+  try {
+    const tradeProcesses = await uploadAndExtractSchedule({
+      projectId: props.projectId,
+      docType: docType.label, // 한글 라벨 그대로 전달
+      file: u.file,
+      onUploadProgress: (percent) => {
+        // 100%에 도달하면 서버에서 OpenAI 분석이 시작됨 → analyzing 상태로 전환
+        if (percent >= 100) {
+          u.status = 'analyzing'
+          u.progress = 100
+        } else {
+          u.progress = percent
+        }
+      },
+    })
 
-  setTimeout(() => {
-    clearInterval(progressInterval)
-    u.status = 'analyzing'
-    u.progress = 95
-    setTimeout(() => {
-      u.status = 'done'
-      u.progress = 100
-      u.result = getMockResult(typeKey)
-      if (
-        Object.values(uploads.value)
-          .filter((x) => x.fileName)
-          .every((x) => x.status === 'done')
-      ) {
-        currentStep.value = 3
-      }
-    }, 1200)
-  }, 1800)
+    // 응답: TradeProcessDto.Res[] (axios 인터셉터가 BaseResponse.data 까서 반환)
+    // ─── 진단 로그 (보할 단위, 마일스톤 group 확인용) ─────────────
+    console.group(`[분석 결과 ${typeKey}]`)
+    console.log('총 행 수:', tradeProcesses.length)
+    console.log('첫 3건 샘플:', tradeProcesses.slice(0, 3))
+    console.log(
+      '마일스톤(isMilestone=true):',
+      tradeProcesses
+        .filter((r) => r.isMilestone)
+        .map((r) => ({
+          idx: r.idx,
+          tradeName: r.tradeName,
+          processName: r.processName,
+          plannedStart: r.plannedStart,
+          plannedEnd: r.plannedEnd,
+        })),
+    )
+    console.log(
+      'weightPct 분포:',
+      tradeProcesses.map((r) => r.weightPct).filter((v) => v != null),
+    )
+    console.log('tradeName 종류:', [...new Set(tradeProcesses.map((r) => r.tradeName))])
+    console.groupEnd()
+    // ────────────────────────────────────────────────────────────
+
+    u.status = 'done'
+    u.progress = 100
+    u.result = summarizeResult(typeKey, tradeProcesses)
+
+    // 모든 업로드된 파일이 분석 완료면 단계 진행
+    if (
+      Object.values(uploads.value)
+        .filter((x) => x.fileName)
+        .every((x) => x.status === 'done')
+    ) {
+      currentStep.value = 3
+    }
+  } catch (e) {
+    u.status = 'error'
+    u.progress = 0
+    u.error = e?.message || '분석 중 오류가 발생했습니다.'
+  }
 }
 
 function runAllAnalysis() {
   analyzeAll.value = true
   currentStep.value = 2
+  // 각 파일을 독립적으로 호출 (병렬). 한 파일 실패가 다른 파일에 영향 없음.
   DOC_TYPES.forEach((dt) => {
     if (uploads.value[dt.key].fileName && uploads.value[dt.key].status === 'idle') {
       runAnalysis(dt.key)
@@ -247,12 +331,60 @@ function runAllAnalysis() {
   })
 }
 
-function getMockResult(typeKey) {
-  return {
-    master: { tasks: 10, cpTasks: 6, dateRange: '2025-03-01 ~ 2026-09-30', confidence: 91 },
-    milestone: { milestones: 7, firstDate: '2025-03-01', lastDate: '2026-09-30', confidence: 88 },
-    trade: { trades: 3, tasks: 18, lowestConf: 72, confidence: 82 },
-  }[typeKey]
+/**
+ * 백엔드 응답(TradeProcessDto.Res[])을 카드별 요약 데이터로 변환.
+ * - tasks: 추출 작업 수
+ * - cpTasks: 마일스톤 표기된 작업 수 (간이 추정. CP 공정 정식 산출은 후속 작업에서)
+ * - milestones: isMilestone=true 작업 수
+ * - trades: 고유 공종 수
+ * - dateRange: 가장 빠른 시작일 ~ 가장 늦은 종료일
+ * - confidence: 임시값 (서버 응답에 신뢰도 필드가 추가되면 교체)
+ * - rows: 원본 응답 배열 그대로 보관 (다음 단계 — 간트차트 생성에서 사용)
+ */
+function summarizeResult(typeKey, rows) {
+  const list = Array.isArray(rows) ? rows : []
+  const milestones = list.filter((r) => r.isMilestone).length
+  const trades = new Set(list.map((r) => r.tradeName).filter(Boolean)).size
+
+  const startDates = list
+    .map((r) => r.plannedStart)
+    .filter(Boolean)
+    .sort()
+  const endDates = list
+    .map((r) => r.plannedEnd)
+    .filter(Boolean)
+    .sort()
+  const firstDate = startDates[0] ?? null
+  const lastDate = endDates[endDates.length - 1] ?? null
+  const dateRange = firstDate && lastDate ? `${firstDate} ~ ${lastDate}` : ''
+
+  // 신뢰도 — 서버 응답에 아직 필드 없음. 임시 placeholder.
+  const confidence = list.length > 0 ? 90 : 0
+
+  const base = {
+    tasks: list.length,
+    milestones,
+    trades,
+    dateRange,
+    firstDate,
+    lastDate,
+    confidence,
+    rows, // 다음 단계(간트차트)에서 그대로 사용
+  }
+
+  if (typeKey === 'master') {
+    return { ...base, cpTasks: milestones }
+  }
+  if (typeKey === 'milestone') {
+    return base
+  }
+  if (typeKey === 'trade') {
+    return base
+  }
+  if (typeKey === 'bohal') {
+    return base
+  }
+  return base
 }
 
 // =====================================================
@@ -283,12 +415,10 @@ function handleReviewClick() {
   }
 
   // 파일 업로드 검사
+  // ※ 테스트 단계: 마스터 공정표만 등록되어 있으면 미리보기 진행 가능.
+  //   다른 3종(마일스톤/공종별/보할)은 본 운영 시 필수로 전환 예정.
   if (!uploads.value.master.fileName)
     errors.push({ field: '마스터 공정표', msg: '마스터 공정표 파일을 업로드해주세요.' })
-  if (!uploads.value.milestone.fileName)
-    errors.push({ field: '마일스톤 공정표', msg: '마일스톤 공정표 파일을 업로드해주세요.' })
-  if (!uploads.value.trade.fileName)
-    errors.push({ field: '공종별 시공계획서', msg: '공종별 시공계획서 파일을 업로드해주세요.' })
 
   if (errors.length > 0) {
     validationErrors.value = errors
@@ -309,6 +439,7 @@ function handleReviewClick() {
       )
       if (allComplete) {
         clearInterval(checkDone)
+        rebuildGanttFromResults()
         ganttPreviewModal.value = true
       }
     }, 500)
@@ -316,121 +447,42 @@ function handleReviewClick() {
   }
 
   // 이미 분석 완료된 경우 바로 모달 오픈
+  rebuildGanttFromResults()
   ganttPreviewModal.value = true
 }
 
 // =====================================================
-// 간트차트 미리보기 모달 - Mock 데이터
+// 간트차트 미리보기 모달 - 분석 결과 기반 데이터
 // =====================================================
-const mockGanttTasks = [
-  {
-    id: 1,
-    group: '토목',
-    name: '터파기 및 흙막이',
-    start: '2025-03-01',
-    end: '2025-04-15',
-    isCritical: true,
-    weight: 8,
-    confidence: 95,
-  },
-  {
-    id: 2,
-    group: '토목',
-    name: '기초 콘크리트',
-    start: '2025-04-16',
-    end: '2025-05-31',
-    isCritical: true,
-    weight: 10,
-    confidence: 92,
-  },
-  {
-    id: 3,
-    group: '골조',
-    name: 'B3 ~ B1 골조',
-    start: '2025-06-01',
-    end: '2025-08-31',
-    isCritical: true,
-    weight: 15,
-    confidence: 88,
-  },
-  {
-    id: 4,
-    group: '골조',
-    name: '지상 1~5층 골조',
-    start: '2025-09-01',
-    end: '2025-11-30',
-    isCritical: true,
-    weight: 12,
-    confidence: 90,
-  },
-  {
-    id: 5,
-    group: '전기',
-    name: '전기 간선 배관',
-    start: '2025-09-15',
-    end: '2025-12-31',
-    isCritical: false,
-    weight: 6,
-    confidence: 82,
-  },
-  {
-    id: 6,
-    group: '설비',
-    name: '급배수 배관',
-    start: '2025-10-01',
-    end: '2026-02-28',
-    isCritical: false,
-    weight: 7,
-    confidence: 85,
-  },
-  {
-    id: 7,
-    group: '골조',
-    name: '지상 6~15층 골조',
-    start: '2025-12-01',
-    end: '2026-03-31',
-    isCritical: true,
-    weight: 14,
-    confidence: 78,
-  },
-  {
-    id: 8,
-    group: '마감',
-    name: '외벽 커튼월',
-    start: '2026-02-01',
-    end: '2026-06-30',
-    isCritical: false,
-    weight: 10,
-    confidence: 72,
-  },
-  {
-    id: 9,
-    group: '마감',
-    name: '내부 마감 공사',
-    start: '2026-04-01',
-    end: '2026-08-31',
-    isCritical: false,
-    weight: 11,
-    confidence: 75,
-  },
-  {
-    id: 10,
-    group: '준공',
-    name: '준공 검사 및 인수',
-    start: '2026-08-01',
-    end: '2026-09-30',
-    isCritical: true,
-    weight: 7,
-    confidence: 80,
-  },
-]
+// 분석 결과(uploads.value.{key}.result.rows)를 모아서 변환.
+// 미리보기 모달이 열릴 때 한 번 로드한 뒤,
+// 사용자가 모달 안에서 수정한 내용은 ganttTasks/ganttMilestones에 직접 반영된다.
+const ganttTasks = ref([])
+const ganttMilestones = ref([])
+const ganttProjectInfo = ref(null)
 
-const mockMilestones = [
-  { id: 1, name: '착공', date: '2025-03-01', status: '완료' },
-  { id: 2, name: '골조 완료', date: '2026-03-31', status: '지연 위험' },
-  { id: 3, name: '외장 완료', date: '2026-06-30', status: '예정' },
-  { id: 4, name: '준공', date: '2026-09-30', status: '예정' },
-]
+// 인라인 편집 상태
+const editingTaskId = ref(null)
+const editDraft = ref(null)
+// 확정 시 일괄 저장 진행 중 플래그
+const savingChanges = ref(false)
+const saveError = ref('')
+
+/**
+ * 미리보기 모달 열기 직전에 호출.
+ * 각 분석 결과의 rows 를 모아 간트 데이터로 매핑한다.
+ */
+function rebuildGanttFromResults() {
+  const buckets = {}
+  for (const dt of DOC_TYPES) {
+    const rows = uploads.value[dt.key]?.result?.rows
+    if (Array.isArray(rows)) buckets[dt.key] = rows
+  }
+  const { tasks, milestones, projectInfo } = buildGanttData(buckets)
+  ganttTasks.value = tasks
+  ganttMilestones.value = milestones
+  ganttProjectInfo.value = projectInfo
+}
 
 const projStart = computed(() => projectMeta.value.startDate || '2025-03-01')
 const projEnd = computed(() => projectMeta.value.endDate || '2026-09-30')
@@ -501,60 +553,122 @@ const confidenceClass = (n) =>
 // 그룹별 태스크 묶기
 const groupedGanttTasks = computed(() => {
   const map = new Map()
-  for (const t of mockGanttTasks) {
+  for (const t of ganttTasks.value) {
     if (!map.has(t.group)) map.set(t.group, [])
     map.get(t.group).push(t)
   }
   return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
 })
 
-// 확인 후 대시보드 이동
-function confirmAndNavigate() {
-  // mockMilestones에 group 필드 추가
-  const milestonesWithGroup = [
-    {
-      id: 1,
-      name: '착공',
-      date: '2025-03-01',
-      status: '완료',
-      group: '토목',
-      relatedTask: '터파기 및 흙막이',
-      impact: '고',
-    },
-    {
-      id: 2,
-      name: '골조 완료',
-      date: '2026-03-31',
-      status: '지연 위험',
-      group: '골조',
-      relatedTask: '지상 6~15층 골조',
-      impact: '고',
-    },
-    {
-      id: 3,
-      name: '외장 완료',
-      date: '2026-06-30',
-      status: '예정',
-      group: '마감',
-      relatedTask: '외벽 커튼월',
-      impact: '중',
-    },
-    {
-      id: 4,
-      name: '준공',
-      date: '2026-09-30',
-      status: '예정',
-      group: '준공',
-      relatedTask: '준공 검사 및 인수',
-      impact: '고',
-    },
-  ]
+// 변경된 항목 수 (확정 버튼 옆 표시용)
+const dirtyCount = computed(() => ganttTasks.value.filter(isTaskDirty).length)
 
-  ganttStore.setData(mockGanttTasks, milestonesWithGroup, {
-    projectName: '강남 복합개발 1공구 신축공사',
-    startDate: '2025-03-01',
-    endDate: '2026-09-30',
-  })
+// =====================================================
+// 인라인 편집 (미리보기 모달 안에서)
+// =====================================================
+function startEdit(task) {
+  editingTaskId.value = task.id
+  editDraft.value = {
+    name: task.name,
+    group: task.group,
+    start: task.start,
+    end: task.end,
+    weight: task.weight,
+  }
+}
+
+function cancelEdit() {
+  editingTaskId.value = null
+  editDraft.value = null
+}
+
+function commitEdit(task) {
+  if (!editDraft.value) return
+  // 날짜 역전 방지
+  if (editDraft.value.start && editDraft.value.end && editDraft.value.start > editDraft.value.end) {
+    alert('종료일은 시작일보다 같거나 늦어야 합니다.')
+    return
+  }
+  task.name = editDraft.value.name?.trim() || task.name
+  task.group = editDraft.value.group?.trim() || task.group
+  task.start = editDraft.value.start
+  task.end = editDraft.value.end
+  // 보할 소수점 둘째자리 반올림 (mapper 정책과 일치)
+  const w = Number(editDraft.value.weight)
+  task.weight = Number.isFinite(w) ? Math.round(w * 100) / 100 : 0
+  task.reviewStatus = '검토 중'
+
+  cancelEdit()
+}
+
+// =====================================================
+// 확정 → 변경분 일괄 PUT → store 저장 → 라우팅
+// =====================================================
+async function confirmAndNavigate() {
+  saveError.value = ''
+
+  // 1) 변경된 항목만 추출
+  const dirty = ganttTasks.value.filter(isTaskDirty)
+
+  if (dirty.length > 0) {
+    savingChanges.value = true
+    try {
+      // 백엔드 단건 PUT을 병렬로 호출.
+      // 일부 실패해도 나머지는 저장 — Promise.allSettled 사용.
+      const results = await Promise.allSettled(
+        dirty.map((t) => updateTradeProcess(t.id, taskToReqBody(t))),
+      )
+      const failed = results
+        .map((r, i) => ({ r, t: dirty[i] }))
+        .filter(({ r }) => r.status === 'rejected')
+
+      if (failed.length > 0) {
+        const names = failed
+          .map(({ t }) => t.name)
+          .slice(0, 3)
+          .join(', ')
+        saveError.value =
+          `${failed.length}건 저장에 실패했습니다 (${names}${failed.length > 3 ? ' 외' : ''}). ` +
+          `다시 시도해주세요.`
+        savingChanges.value = false
+        return
+      }
+
+      // 저장 성공한 항목들은 _src를 현재 값으로 갱신 → dirty 상태 해제
+      for (const t of dirty) {
+        if (t._src) {
+          t._src.tradeName = t.group
+          t._src.processName = t.name
+          t._src.plannedStart = t.start
+          t._src.plannedEnd = t.end
+          t._src.weightPct = t.weight
+          // isMilestone 은 task 가 마일스톤이 아님이 보장되므로 그대로 두거나 false 유지
+        }
+      }
+    } catch (e) {
+      saveError.value = e?.message || '변경 사항 저장 중 오류가 발생했습니다.'
+      savingChanges.value = false
+      return
+    }
+    savingChanges.value = false
+  }
+
+  // 2) store에 데이터 저장
+  //    mapper 가 만든 projectInfo 베이스 위에 사용자 입력 값을 얹는다.
+  const projectInfoForStore = {
+    ...(ganttProjectInfo.value ?? {}),
+    siteName: projectMeta.value.siteName,
+    projectName: projectMeta.value.projectName || ganttProjectInfo.value?.projectName || '공정표',
+    finalApprover: projectMeta.value.manager,
+    // 사용자가 입력한 공사 기간이 있으면 우선 사용
+    startDate: projectMeta.value.startDate || ganttProjectInfo.value?.startDate,
+    endDate: projectMeta.value.endDate || ganttProjectInfo.value?.endDate,
+    status: '확정',
+    lastModified: new Date().toISOString().slice(0, 10),
+  }
+  ganttStore.setData(ganttTasks.value, ganttMilestones.value, projectInfoForStore)
+
+  // 3) 라우팅
   ganttPreviewModal.value = false
   router.push('/site/schedule')
 }
@@ -632,8 +746,8 @@ function zoomOut() {
               입력해주세요.
             </p>
             <p>
-              ② <strong>마스터 공정표 · 마일스톤 공정표 · 공종별 시공계획서</strong> 3가지 파일을
-              모두 업로드해주세요.
+              ② <strong>마스터 공정표 · 마일스톤 공정표 · 공종별 시공계획서 · 보할 공정표</strong>
+              4가지 파일을 모두 업로드해주세요.
             </p>
             <p>
               ③ <strong>AI 공정표 생성하기</strong> 버튼을 클릭하면 AI가 분석 후 간트차트를
@@ -825,9 +939,9 @@ function zoomOut() {
                     />
                     <Layers v-else class="h-3.5 w-3.5" :class="colorMap[dt.color].icon" />
                     <span class="font-semibold text-forena-800">{{ dt.label }}</span>
-                    <!-- 미업로드 경고 표시 -->
+                    <!-- 미업로드 경고 표시 (필수 항목만) -->
                     <span
-                      v-if="!uploads[dt.key].fileName"
+                      v-if="dt.required && !uploads[dt.key].fileName"
                       class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
                       >필수</span
                     >
@@ -923,9 +1037,9 @@ function zoomOut() {
     </div>
 
     <!-- ============================================================ -->
-    <!-- 문서 업로드 카드 3종                                            -->
+    <!-- 문서 업로드 카드 4종                                            -->
     <!-- ============================================================ -->
-    <div class="grid gap-4 lg:grid-cols-3">
+    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <div
         v-for="dt in DOC_TYPES"
         :key="dt.key"
@@ -944,7 +1058,9 @@ function zoomOut() {
                 ? 'bg-sky-100'
                 : dt.color === 'amber'
                   ? 'bg-amber-100'
-                  : 'bg-emerald-100'
+                  : dt.color === 'violet'
+                    ? 'bg-violet-100'
+                    : 'bg-emerald-100'
             "
           >
             <FileSpreadsheet
@@ -958,8 +1074,15 @@ function zoomOut() {
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-1.5">
               <p class="text-sm font-bold text-forena-900">{{ dt.label }}</p>
-              <span class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
+              <span
+                v-if="dt.required"
+                class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
                 >필수</span
+              >
+              <span
+                v-else
+                class="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500"
+                >선택</span
               >
             </div>
           </div>
@@ -991,7 +1114,9 @@ function zoomOut() {
                   ? 'bg-sky-600 hover:bg-sky-700'
                   : dt.color === 'amber'
                     ? 'bg-amber-600 hover:bg-amber-700'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
+                    : dt.color === 'violet'
+                      ? 'bg-violet-600 hover:bg-violet-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
               "
             >
               파일 선택
@@ -1038,7 +1163,9 @@ function zoomOut() {
                       ? 'bg-sky-500'
                       : dt.color === 'amber'
                         ? 'bg-amber-500'
-                        : 'bg-emerald-500'
+                        : dt.color === 'violet'
+                          ? 'bg-violet-500'
+                          : 'bg-emerald-500'
                   "
                   :style="{ width: uploads[dt.key].progress + '%' }"
                 />
@@ -1085,7 +1212,7 @@ function zoomOut() {
                   <p class="font-bold text-emerald-600">{{ uploads[dt.key].result.confidence }}%</p>
                 </div>
               </template>
-              <template v-else>
+              <template v-else-if="dt.key === 'trade'">
                 <div class="rounded bg-white px-2 py-1 text-center">
                   <p class="text-forena-400">공종 수</p>
                   <p class="font-bold text-forena-800">{{ uploads[dt.key].result.trades }}종</p>
@@ -1101,6 +1228,24 @@ function zoomOut() {
                   <span class="font-bold text-amber-600"
                     >{{ uploads[dt.key].result.confidence }}%</span
                   >
+                </div>
+              </template>
+              <template v-else-if="dt.key === 'bohal'">
+                <div class="rounded bg-white px-2 py-1 text-center">
+                  <p class="text-forena-400">추출 작업</p>
+                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.tasks }}건</p>
+                </div>
+                <div class="rounded bg-white px-2 py-1 text-center">
+                  <p class="text-forena-400">공종 수</p>
+                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.trades }}종</p>
+                </div>
+                <div
+                  class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between"
+                >
+                  <span class="text-forena-400">기간 추정</span>
+                  <span class="font-bold text-violet-700 text-[10px] tabular-nums">
+                    {{ uploads[dt.key].result.dateRange || '—' }}
+                  </span>
                 </div>
               </template>
             </div>
@@ -1124,7 +1269,9 @@ function zoomOut() {
                     ? 'bg-sky-600 hover:bg-sky-700'
                     : dt.color === 'amber'
                       ? 'bg-amber-600 hover:bg-amber-700'
-                      : 'bg-emerald-600 hover:bg-emerald-700'
+                      : dt.color === 'violet'
+                        ? 'bg-violet-600 hover:bg-violet-700'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
                 "
               >
                 <BrainCircuit class="h-3 w-3" /> AI 분석 실행
@@ -1268,17 +1415,19 @@ function zoomOut() {
             <span
               class="rounded-lg bg-forena-100 px-2.5 py-1 text-[11px] font-bold text-forena-700"
             >
-              전체 {{ mockGanttTasks.length }}개 공정
-            </span>
-            <span
-              class="rounded-lg bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 ring-1 ring-rose-200"
-            >
-              CP {{ mockGanttTasks.filter((t) => t.isCritical).length }}개
+              전체 {{ ganttTasks.length }}개 공정
             </span>
             <span
               class="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-200"
             >
-              마일스톤 {{ mockMilestones.length }}개
+              마일스톤 {{ ganttMilestones.length }}개
+            </span>
+            <span
+              v-if="ganttProjectInfo"
+              class="rounded-lg bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 ring-1 ring-flare-200"
+              :title="'100% 권장'"
+            >
+              보할 합계 {{ ganttProjectInfo.weightSum }}%
             </span>
           </div>
 
@@ -1291,9 +1440,10 @@ function zoomOut() {
         <div class="flex items-start gap-2 border-b border-forena-100 bg-flare-50/50 px-6 py-3">
           <BrainCircuit class="h-4 w-4 shrink-0 text-flare-600 mt-0.5" />
           <p class="text-[11px] leading-relaxed text-flare-800">
-            AI가 업로드하신 3가지 문서를 분석하여 공정표를 생성했습니다. 내용을 검토 후 이상이
-            없으면 <strong>공정표 확정하기</strong>를 눌러주세요. 확정 이후에도 변경 요청을 통해
-            수정할 수 있습니다.
+            AI가 업로드된 문서를 분석하여 공정표를 생성했습니다. 좌측 공정명에
+            <Pencil class="inline h-3 w-3 mx-0.5" />아이콘을 눌러 직접 수정할 수 있으며,
+            <strong>공정표 확정하기</strong>를 누르면 변경 사항이 일괄 저장됩니다. 확정 이후에도
+            변경 요청을 통해 수정이 가능합니다.
           </p>
         </div>
 
@@ -1303,7 +1453,7 @@ function zoomOut() {
           <span class="text-[11px] font-bold text-forena-700 mr-2">마일스톤</span>
           <div class="flex gap-1.5 mr-4">
             <span
-              v-for="m in mockMilestones"
+              v-for="m in ganttMilestones"
               :key="m.id"
               class="flex items-center gap-1 rounded-md border border-forena-100 bg-white px-2 py-0.5 text-[10px] font-bold text-forena-700"
             >
@@ -1361,20 +1511,79 @@ function zoomOut() {
                 <div
                   v-for="t in grp.items"
                   :key="t.id"
-                  class="flex h-12 flex-col justify-center border-b border-forena-50 px-4 hover:bg-forena-50/60"
+                  class="group/task relative flex h-12 flex-col justify-center border-b border-forena-50 px-4 hover:bg-forena-50/60"
                 >
-                  <div class="flex items-center gap-1">
-                    <span
-                      v-if="t.isCritical"
-                      class="rounded bg-rose-100 px-1 py-0.5 text-[8px] font-bold text-rose-700"
-                      >CP</span
-                    >
-                    <p class="truncate text-xs font-semibold text-forena-800">{{ t.name }}</p>
-                  </div>
-                  <p class="truncate text-[10px] text-slate-400">
-                    보할 {{ t.weight }}% · 신뢰도
-                    <span :class="confidenceClass(t.confidence)">{{ t.confidence }}%</span>
-                  </p>
+                  <!-- 보기 모드 -->
+                  <template v-if="editingTaskId !== t.id">
+                    <div class="flex items-center gap-1">
+                      <span
+                        v-if="t.isCritical"
+                        class="rounded bg-rose-100 px-1 py-0.5 text-[8px] font-bold text-rose-700"
+                        >CP</span
+                      >
+                      <p class="truncate text-xs font-semibold text-forena-800">{{ t.name }}</p>
+                      <span
+                        v-if="isTaskDirty(t)"
+                        class="ml-auto rounded bg-flare-100 px-1 py-0.5 text-[8px] font-bold text-flare-700"
+                        title="변경됨"
+                        >수정</span
+                      >
+                      <button
+                        @click.stop="startEdit(t)"
+                        class="opacity-0 group-hover/task:opacity-100 ml-1 rounded p-0.5 text-forena-400 hover:bg-forena-100 hover:text-forena-700 transition"
+                        title="편집"
+                      >
+                        <Pencil class="h-3 w-3" />
+                      </button>
+                    </div>
+                    <p class="truncate text-[10px] text-slate-400">
+                      보할 {{ t.weight }}% · 신뢰도
+                      <span :class="confidenceClass(t.confidence)">{{ t.confidence }}%</span>
+                    </p>
+                  </template>
+
+                  <!-- 편집 모드 -->
+                  <template v-else>
+                    <input
+                      v-model="editDraft.name"
+                      class="rounded border border-flare-300 px-1.5 py-0.5 text-[11px] font-semibold text-forena-800 outline-none focus:border-flare-500"
+                      placeholder="공정명"
+                    />
+                    <div class="mt-0.5 flex items-center gap-1">
+                      <input
+                        v-model="editDraft.start"
+                        type="date"
+                        class="w-[88px] rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
+                      />
+                      <span class="text-[9px] text-forena-400">~</span>
+                      <input
+                        v-model="editDraft.end"
+                        type="date"
+                        class="w-[88px] rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
+                      />
+                      <input
+                        v-model.number="editDraft.weight"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        class="w-12 rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
+                        title="보할율"
+                      />
+                      <span class="text-[9px] text-forena-400">%</span>
+                      <button
+                        @click.stop="commitEdit(t)"
+                        class="ml-auto rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] font-bold text-white hover:bg-emerald-700"
+                      >
+                        저장
+                      </button>
+                      <button
+                        @click.stop="cancelEdit"
+                        class="rounded border border-forena-200 px-1.5 py-0.5 text-[9px] font-bold text-forena-600 hover:bg-forena-50"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </template>
                 </div>
               </template>
             </div>
@@ -1414,8 +1623,8 @@ function zoomOut() {
                     class="relative h-9 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50"
                   >
                     <div
-                      v-for="m in mockMilestones.filter((ms) =>
-                        mockGanttTasks.find((t) => t.group === grp.group && t.isCritical),
+                      v-for="m in ganttMilestones.filter((ms) =>
+                        ganttTasks.find((t) => t.group === grp.group && t.isCritical),
                       )"
                       :key="`ms-${m.id}-${grp.group}`"
                       class="pointer-events-auto absolute top-1/2 z-[4] -translate-y-1/2"
@@ -1475,24 +1684,36 @@ function zoomOut() {
         <div
           class="flex items-center justify-between border-t border-forena-200 bg-white px-6 py-4"
         >
-          <div class="text-[11px] text-forena-500">
-            <CheckCircle2 class="inline h-3.5 w-3.5 text-emerald-500 mr-1" />
-            공정표 확정 후에도 변경 요청을 통해 수정이 가능합니다.
+          <div class="flex flex-col gap-1 text-[11px] text-forena-500">
+            <div>
+              <CheckCircle2 class="inline h-3.5 w-3.5 text-emerald-500 mr-1" />
+              공정표 확정 후에도 변경 요청을 통해 수정이 가능합니다.
+            </div>
+            <div v-if="dirtyCount > 0" class="text-flare-700 font-bold">
+              수정된 공정 {{ dirtyCount }}건이 확정 시 저장됩니다.
+            </div>
+            <div v-if="saveError" class="text-rose-700 font-bold">
+              <AlertCircle class="inline h-3.5 w-3.5 mr-1" />
+              {{ saveError }}
+            </div>
           </div>
           <div class="flex gap-2">
             <button
               @click="ganttPreviewModal = false"
-              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
+              :disabled="savingChanges"
+              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               다시 검토하기
             </button>
             <button
               @click="confirmAndNavigate"
-              class="inline-flex items-center gap-2 rounded-lg bg-forena-800 px-5 py-2 text-xs font-bold text-white hover:bg-forena-900 shadow-sm"
+              :disabled="savingChanges"
+              class="inline-flex items-center gap-2 rounded-lg bg-forena-800 px-5 py-2 text-xs font-bold text-white hover:bg-forena-900 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              <ShieldCheck class="h-3.5 w-3.5" />
-              공정표 확정하기
-              <ArrowRight class="h-3.5 w-3.5" />
+              <Loader2 v-if="savingChanges" class="h-3.5 w-3.5 animate-spin" />
+              <ShieldCheck v-else class="h-3.5 w-3.5" />
+              {{ savingChanges ? '저장 중...' : '공정표 확정하기' }}
+              <ArrowRight v-if="!savingChanges" class="h-3.5 w-3.5" />
             </button>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import api from './index' // localAxios 대신 기본 api 인스턴스를 가져옵니다.
+import api from './index'
 
 const BASE_URL = '/work-order'
 
@@ -28,4 +28,18 @@ export const deleteWorkOrder = async (workOrderId) => {
 
 export const approveWorkOrder = async (workOrderId) => {
   return await api.put(`${BASE_URL}/${workOrderId}/approve`)
+}
+
+/* 중장비 입출차 현황 페이지용 — 게이트별 투입 장비 목록 조회 */
+export const getGateEquipments = async (targetDate = null) => {
+  const params = {}
+
+  if (targetDate) {
+    params.targetDate = targetDate
+  }
+
+  return await api.get(`${BASE_URL}/gate-equipments`, {
+    params,
+    timeout: 20000
+  })
 }
