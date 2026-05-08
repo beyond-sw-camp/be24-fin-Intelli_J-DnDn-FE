@@ -21,6 +21,7 @@ import {
 } from 'lucide-vue-next'
 import api from '@/api/index.js'
 import { getGateEquipments } from '@/api/workOrder'
+import { analyzeWeatherRisk } from '@/api/weatherAi'
 
 const T = {
   title: '기상 관제',
@@ -59,6 +60,7 @@ const dashboard = ref(null)
 const forecastTab = ref('week')
 const selectedMonthWeekId = ref(null)
 const workOrderEquipments = ref([])
+const aiAnalysisResult = ref(null)
 
 // ─── 데이터 로드 ──────────────────────────────────────────────────────────────
 async function loadDashboard() {
@@ -66,6 +68,7 @@ async function loadDashboard() {
   try {
     dashboard.value = await api.get('/weather/dashboard', {
       params: { reportDate: reportDate.value },
+      timeout: 30000,
     })
   } catch (error) {
     console.error(error)
@@ -85,14 +88,25 @@ async function loadWorkOrders() {
   }
 }
 
+async function loadWeatherAiAnalysis() {
+  try {
+    aiAnalysisResult.value = await analyzeWeatherRisk(reportDate.value)
+  } catch (error) {
+    console.error('기상 AI 분석 실패:', error)
+    aiAnalysisResult.value = null
+  }
+}
+
 onMounted(() => {
   loadDashboard()
   loadWorkOrders()
+  loadWeatherAiAnalysis()
 })
 
 watch(reportDate, () => {
   loadDashboard()
   loadWorkOrders()
+  loadWeatherAiAnalysis()
 })
 
 // ─── 파생값 (백엔드 응답 그대로 사용) ──────────────────────────────────────────
@@ -101,15 +115,25 @@ const week = computed(() => dashboard.value?.week ?? null)
 const rain = computed(() => dashboard.value?.rain ?? null)
 const airQuality = computed(() => dashboard.value?.airQuality ?? null)
 const analysis = computed(() => dashboard.value?.analysis ?? null)
-const baseEquipmentRisks = computed(() => dashboard.value?.equipmentRisks ?? [])
-const basePlanRisks = computed(() => dashboard.value?.planRisks ?? [])
+const aiRiskItems = computed(() => Array.isArray(aiAnalysisResult.value?.risks) ? aiAnalysisResult.value.risks : [])
+const aiActionItems = computed(() => Array.isArray(aiAnalysisResult.value?.actions) ? aiAnalysisResult.value.actions : [])
+const aiEquipmentRisks = computed(() => aiRiskItems.value.filter((risk) => isEquipmentRisk(risk)).map(toWeatherRiskItem))
+const aiPlanRisks = computed(() => aiRiskItems.value.filter((risk) => !isEquipmentRisk(risk)).map(toWeatherRiskItem))
+const aiLiveRiskActions = computed(() => aiActionItems.value.map(toLiveRiskAction))
+const hasWorkOrders = computed(() => workOrderEquipments.value.length > 0)
+
 const equipmentRisks = computed(() => {
-  const actualRisks = buildEquipmentRisksFromWorkOrders()
-  return actualRisks.length > 0 ? actualRisks : baseEquipmentRisks.value
+  return mergeRiskItems(
+    buildEquipmentRisksFromWorkOrders(),
+    aiEquipmentRisks.value,
+  ).slice(0, 5)
 })
+
 const planRisks = computed(() => {
-  const actualRisks = buildPlanRisksFromWorkOrders()
-  return actualRisks.length > 0 ? actualRisks : basePlanRisks.value
+  return mergeRiskItems(
+    buildPlanRisksFromWorkOrders(),
+    aiPlanRisks.value,
+  ).slice(0, 5)
 })
 const forecastDays = computed(() => dashboard.value?.forecastDays ?? [])
 const locationLabel = computed(() => dashboard.value?.locationLabel || '현장')
@@ -279,6 +303,78 @@ function normalizeText(value) {
 function includesAny(text, keywords) {
   const normalized = normalizeText(text)
   return keywords.some((keyword) => normalized.includes(normalizeText(keyword)))
+}
+
+function normalizeRiskLevel(level, priority = null) {
+  if (level === 'DANGER' || level === '위험' || level === '긴급' || priority === '긴급') return '경고'
+  if (level === 'WARNING' || level === '경고' || level === '높음' || priority === '높음') return '경고'
+  if (level === 'CAUTION' || level === '주의' || level === '보통' || priority === '보통') return '주의'
+  if (level === 'SAFE' || level === '양호' || level === '낮음' || priority === '낮음') return '양호'
+  return level || '주의'
+}
+
+function isEquipmentRisk(risk) {
+  const text = `${risk?.target || ''} ${risk?.reason || ''} ${risk?.recommendation || ''}`
+  return includesAny(text, ['장비', '크레인', '타워', '고소작업차', '리프트', '굴착기', '덤프트럭', '트럭', '펌프카', '펌프', '지게차', '양중'])
+}
+
+function cleanAiText(text) {
+  return String(text || '')
+    .replaceAll('콘크리 트', '콘크리트')
+    .replaceAll('작 업', '작업')
+    .replaceAll('작업 반장', '작업반장')
+    .replaceAll('102 동', '102동')
+    .replaceAll('103 동', '103동')
+    .replaceAll('104 동', '104동')
+    .replace(/실시한다\.?/g, '실시해 주세요.')
+    .replace(/통제한다\.?/g, '통제해 주세요.')
+    .replace(/점검한다\.?/g, '점검해 주세요.')
+    .replace(/확인한다\.?/g, '확인해 주세요.')
+    .replace(/결정한다\.?/g, '결정해 주세요.')
+    .replace(/운영한다\.?/g, '운영해 주세요.')
+    .replace(/이동한다\.?/g, '이동해 주세요.')
+    .replace(/설치한다\.?/g, '설치해 주세요.')
+    .replace(/공지한다\.?/g, '공지해 주세요.')
+}
+
+function toWeatherRiskItem(risk) {
+  const affectedWorks = Array.isArray(risk?.affectedWorks) ? risk.affectedWorks.filter(Boolean).map(cleanAiText) : []
+
+  return {
+    badge: 'AI',
+    title: cleanAiText(risk?.target) || '기상 연동 위험 항목',
+    subtitle: affectedWorks.join(', '),
+    level: normalizeRiskLevel(risk?.level),
+    reason: cleanAiText(risk?.reason) || '작업지시서와 금일 기상 조건을 비교해 위험 가능성이 감지되었습니다.',
+    action: cleanAiText(risk?.recommendation) || '작업 전 안전관리자 검토가 필요합니다.',
+  }
+}
+
+function toLiveRiskAction(action, index) {
+  const level = normalizeRiskLevel(action?.priority, action?.priority)
+
+  return {
+    id: `ai-action-${index}-${action?.action || 'weather'}`,
+    icon: level === '경고' ? 'siren' : 'umbrella',
+    label: cleanAiText(action?.action) || '현장 안전 조치 확인',
+    detail: cleanAiText(action?.reason) || cleanAiText(action?.responsibleRole) || '금일 기상 기준으로 즉시 조치가 필요합니다.',
+    level,
+    timing: cleanAiText(action?.estimatedTime) || '작업 시작 전',
+  }
+}
+
+function mergeRiskItems(...groups) {
+  const result = []
+  const seen = new Set()
+
+  groups.flat().filter(Boolean).forEach((item) => {
+    const key = `${item.title || ''}-${item.reason || ''}`
+    if (seen.has(key)) return
+    seen.add(key)
+    result.push(item)
+  })
+
+  return result
 }
 
 function buildEquipmentRiskReason(equipment, cause) {
@@ -534,24 +630,38 @@ const liveRiskActions = computed(() => {
     })
   }
 
-  return actions
+  return mergeLiveRiskActions(aiLiveRiskActions.value, actions).slice(0, 6)
 })
+
+function mergeLiveRiskActions(...groups) {
+  const result = []
+  const seen = new Set()
+
+  groups.flat().filter(Boolean).forEach((item) => {
+    const key = `${item.label || ''}-${item.detail || ''}`
+    if (seen.has(key)) return
+    seen.add(key)
+    result.push(item)
+  })
+
+  return result
+}
 
 const liveRiskCount = computed(() => liveRiskActions.value.length)
 
 // 3일 예보
 const threeDayForecast = computed(() => {
-  const todayText = getTodayDateText()
+  const selectedDateText = reportDate.value
   return forecastDays.value
-    .filter((d) => d.date && d.date >= todayText)
+    .filter((d) => d.date && d.date >= selectedDateText)
     .slice(0, 3)
 })
 
 // 주간 7일 예보
 const weeklyForecast = computed(() => {
-  const todayText = getTodayDateText()
+  const selectedDateText = reportDate.value
   return forecastDays.value
-    .filter((d) => d.date && d.date >= todayText)
+    .filter((d) => d.date && d.date >= selectedDateText)
     .slice(0, 7)
 })
 
@@ -582,8 +692,8 @@ const monthlyForecast = computed(() => {
     if (d.date) dayMap.set(d.date, d)
   })
 
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const selectedDate = new Date(`${reportDate.value}T00:00:00`)
+  const today = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate())
   const thisWeekStart = getWeekStart(today)
   const weeks = []
 
@@ -606,7 +716,7 @@ const monthlyForecast = computed(() => {
         date: key,
         shortDate: formatMD(cursor),
         weekday: KOREAN_WEEKDAYS[cursor.getDay()],
-        dayLabel: w === 0 && cursor.getDate() === today.getDate() ? '오늘' : KOREAN_WEEKDAYS[cursor.getDay()],
+        dayLabel: w === 0 && dateKey(cursor) === reportDate.value ? '기준일' : KOREAN_WEEKDAYS[cursor.getDay()],
         weatherLabel: source?.weatherLabel || '예보 범위 외',
         maxTemp: source?.maxTemp ?? null,
         minTemp: source?.minTemp ?? null,
@@ -688,7 +798,7 @@ function selectMonthWeek(weekId) {
 
 // ─── 표시 헬퍼 ────────────────────────────────────────────────────────────────
 function levelBadgeClass(level) {
-  if (level === '경고' || level === '제한') return 'bg-rose-600 text-white'
+  if (level === '경고' || level === '위험' || level === '제한') return 'bg-rose-600 text-white'
   if (level === '주의') return 'bg-amber-100 text-amber-900'
   return 'bg-emerald-100 text-emerald-900'
 }
@@ -881,7 +991,7 @@ function rainNote(value) {
         </div>
 
         <!-- 실시간 위험 통제 -->
-        <article class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-rose-200/90 bg-gradient-to-br from-rose-50/90 via-white to-orange-50/40 p-4 shadow-card ring-1 ring-rose-100/70">
+        <article class="relative flex h-[360px] flex-col overflow-hidden rounded-2xl border border-rose-200/90 bg-gradient-to-br from-rose-50/90 via-white to-orange-50/40 p-4 shadow-card ring-1 ring-rose-100/70">
           <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-orange-400" />
           <div class="flex items-start justify-between gap-2.5">
             <div class="flex items-start gap-2.5 min-w-0 flex-1 pl-2">
@@ -902,7 +1012,7 @@ function rainNote(value) {
             기상 관제 데이터를 불러오는 중입니다...
           </div>
 
-          <ul v-else-if="liveRiskActions.length > 0" class="mt-4 flex flex-1 flex-col space-y-2">
+          <ul v-else-if="liveRiskActions.length > 0" class="mt-4 flex-1 space-y-2 overflow-y-auto pr-1">
             <li
               v-for="action in liveRiskActions"
               :key="action.id"
@@ -953,7 +1063,7 @@ function rainNote(value) {
       </div>
 
       <!-- 우측: AI 위험 통제 추천 -->
-      <div class="flex h-full flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+      <div class="flex h-[744px] flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
         <div class="border-b border-forena-100 bg-gradient-to-r from-violet-50/70 via-white to-rose-50/60 px-5 py-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -970,10 +1080,10 @@ function rainNote(value) {
           </div>
         </div>
 
-        <div class="flex flex-1 flex-col gap-4 p-4 md:p-5">
+        <div class="flex flex-1 flex-col gap-4 overflow-hidden p-4 md:p-5">
           <!-- 계획 대비 위험 -->
           <div
-            class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/50 p-6 shadow-sm"
+            class="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border-2 border-rose-200/80 bg-gradient-to-br from-rose-50/80 via-white to-rose-50/50 p-5 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-rose-600" />
             <div class="flex items-center gap-3 mb-4">
@@ -985,7 +1095,7 @@ function rainNote(value) {
               </span>
             </div>
 
-            <div v-if="planRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+            <div v-if="planRisks.length > 0" class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               <div
                 v-for="(risk, index) in planRisks"
                 :key="`plan-${index}-${risk.title}`"
@@ -1011,7 +1121,7 @@ function rainNote(value) {
 
           <!-- 장비 통제 -->
           <div
-            class="relative flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-violet-200/80 bg-gradient-to-br from-violet-50/80 via-white to-violet-50/40 p-6 shadow-sm"
+            class="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border-2 border-violet-200/80 bg-gradient-to-br from-violet-50/80 via-white to-violet-50/40 p-5 shadow-sm"
           >
             <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-violet-400 to-violet-600" />
             <div class="flex items-center gap-3 mb-4">
@@ -1023,7 +1133,7 @@ function rainNote(value) {
               </span>
             </div>
 
-            <div v-if="equipmentRisks.length > 0" class="flex flex-col gap-3 overflow-y-auto max-h-64">
+            <div v-if="equipmentRisks.length > 0" class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
               <div
                 v-for="(risk, index) in equipmentRisks"
                 :key="`equip-${index}-${risk.title}`"
