@@ -20,7 +20,6 @@ import {
   Upload,
   Shield,
   UserCog,
-  Building2,
   LogOut,
   KeyRound,
 } from 'lucide-vue-next'
@@ -167,11 +166,6 @@ const accountNavAll = [
     path: '/hr/accounts',
     label: '계정 및 권한 관리',
     icon: UserCog,
-  },
-  {
-    path: '/hr/sites',
-    label: '현장 등록',
-    icon: Building2,
   },
 ]
 

@@ -13,6 +13,14 @@ export async function createProject(body) {
 }
 
 /**
+ * @param {number|string} projectId
+ * @param {{ name?: string, location?: string|null, startDate?: string|null, endDate?: string|null }} body
+ */
+export async function updateProject(projectId, body) {
+  return await api.put(`/project/${projectId}`, body)
+}
+
+/**
  * 현장별 공정(공종) 목록 — 공종 선택용
  * @param {number|string} projectId
  * @param {string} [tradeName]

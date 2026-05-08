@@ -57,8 +57,8 @@ export async function getAdminAccountRequests(status) {
   return await api.get('/admin/account-requests', { params })
 }
 
-/** @param {number|string} idx @param {{ initialPassword: string }} body */
-export async function approveAccountRequest(idx, body) {
+/** @param {number|string} idx @param {{ initialPassword?: string }} [body] */
+export async function approveAccountRequest(idx, body = {}) {
   return await api.put(`/admin/account-requests/${idx}/approve`, body)
 }
 

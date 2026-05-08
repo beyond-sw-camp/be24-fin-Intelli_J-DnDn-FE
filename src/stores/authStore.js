@@ -5,6 +5,8 @@ import { defineStore } from 'pinia'
 export const USER_ROLE = {
   ADMIN: 'ADMIN',
   HEADQUARTOR: 'HEADQUARTOR',
+  /** 본사 현장 관리자 — 백엔드 {@code UserRole} enum name 과 동일해야 함 */
+  HEADQUARTOR_SITE_MANAGER: 'HEADQUARTOR_SITE_MANAGER',
   SITE_DIRECTOR: 'SITE_DIRECTOR',
   SECTION_LEADER: 'SECTION_LEADER',
   SECTION_SUPERVISOR: 'SECTION_SUPERVISOR',
@@ -97,7 +99,8 @@ export function pathAllowedForRole(userRole, fullPath) {
   if (
     role === USER_ROLE.SITE_DIRECTOR ||
     role === USER_ROLE.SECTION_LEADER ||
-    role === USER_ROLE.SECTION_SUPERVISOR
+    role === USER_ROLE.SECTION_SUPERVISOR ||
+    role === USER_ROLE.HEADQUARTOR_SITE_MANAGER
   ) {
     if (path.startsWith('/hr/accounts') || path.startsWith('/hr/sites')) return false
     if (path.startsWith('/system/')) return false
@@ -112,6 +115,7 @@ export function userRoleLabel(userRole) {
   const labels = {
     [USER_ROLE.ADMIN]: '시스템 관리자',
     [USER_ROLE.HEADQUARTOR]: '본사',
+    [USER_ROLE.HEADQUARTOR_SITE_MANAGER]: '본사 현장 관리자',
     [USER_ROLE.SITE_DIRECTOR]: '현장 총 책임자',
     [USER_ROLE.SECTION_LEADER]: '공종별 책임자',
     [USER_ROLE.SECTION_SUPERVISOR]: '공종별 현장 관리자',

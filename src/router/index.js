@@ -132,10 +132,8 @@ const router = createRouter({
     { path: '/site/alerts', redirect: '/site/dashboard' },
 
     {
-      path: '/hr/sites',
-      name: 'hrSites',
-      component: () => import('../views/personnel/SiteRegisterView.vue'),
-      meta: meta('현장 등록'),
+      path: '/hr/sites/:id?',
+      redirect: '/hr/accounts',
     },
     {
       path: '/hr/partners',
@@ -168,8 +166,14 @@ const router = createRouter({
     {
       path: '/hr/accounts',
       name: 'hrAccounts',
+      component: () => import('../views/personnel/SiteRegisterView.vue'),
+      meta: meta('계정 및 권한 관리'),
+    },
+    {
+      path: '/hr/accounts/sites/:projectIdx',
+      name: 'hrAccountsSite',
       component: () => import('../views/personnel/AccountListView.vue'),
-      meta: meta('계정 관리'),
+      meta: meta('계정 및 권한 관리'),
     },
     {
       path: '/system/admins',
