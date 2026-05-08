@@ -30,7 +30,7 @@ const router = createRouter({
       path: '/site/workers/manage',
       name: 'siteWorkerManagement',
       component: () => import('../views/personnel/WorkerManagementView.vue'),
-      meta: meta('작업자 관리'),
+      meta: meta('근무자 관리'),
     },
     {
       path: '/site/workers/manage/:id',
@@ -114,7 +114,7 @@ const router = createRouter({
     {
       path: '/site/documents/upload',
       name: 'siteDocumentUpload',
-      component: () => import('../views/misc/PlaceholderView.vue'),
+      component: () => import('../views/document/DocumentUploadView.vue'),
       meta: meta('업로드 문서'),
     },
     {
