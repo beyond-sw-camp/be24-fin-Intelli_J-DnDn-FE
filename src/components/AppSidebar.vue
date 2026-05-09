@@ -158,7 +158,6 @@ const siteInfoNavAll = [
 
 const documentNavAll = [
   { path: '/site/documents/upload', label: '업로드 문서', icon: Upload },
-  { path: '/site/documents/ai-history', label: 'AI 분석 이력', icon: FileText },
 ]
 
 const accountNavAll = [
