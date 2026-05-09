@@ -6,6 +6,7 @@ import {
   fetchScheduleChangeHistory,
   fetchScheduleChangeList,
 } from '@/api/schedulechange.js'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import {
   CalendarDays,
   ChevronLeft,
@@ -38,7 +39,7 @@ const ROLES = {
   WORKER: 'process_owner',
 }
 
-const PROJECT_ID = 1
+const { currentProjectId } = useCurrentProject()
 
 const currentRole = ref(ROLES.WORKER)
 const ALL_PROCESSES = [
@@ -302,8 +303,8 @@ const approvedScheduleChanges = ref([])
 async function loadApprovedScheduleChanges() {
   try {
     const [listRes, historyRes] = await Promise.all([
-      fetchScheduleChangeList({ projectId: PROJECT_ID }),
-      fetchScheduleChangeHistory({ projectId: PROJECT_ID }),
+      fetchScheduleChangeList({ projectId: currentProjectId.value }),
+      fetchScheduleChangeHistory({ projectId: currentProjectId.value }),
     ])
 
     approvedScheduleChanges.value = [...unwrapApiList(listRes), ...unwrapApiList(historyRes)]

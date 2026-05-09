@@ -5,8 +5,10 @@ import { parseFromApi } from '@/utils/ganttParser.js'
 import { listTradeProcessesRaw } from '@/api/tradeProcess.js'
 import { buildGanttData } from '@/utils/scheduleMapper.js'
 import { fetchWorkPlansByProject } from '@/api/workplan.js'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 
 const ganttStore = useGanttStore() // ← import 다 끝난 후에
+const { currentProjectId } = useCurrentProject()
 import {
   CalendarRange,
   AlertTriangle,
@@ -1025,9 +1027,6 @@ function zoomOut() {
 const isLoading = ref(false)
 const loadError = ref('')
 
-// 임시: 다중 현장 지원 시 라우트 params/쿼리에서 가져오도록 교체 예정
-const CURRENT_PROJECT_ID = 1
-
 async function loadGanttFromApi() {
   // 1) 스토어에 이미 데이터가 있으면 그대로 사용 (FirstDocumentUpload 에서 넘어온 경우)
   if (ganttStore.tasks && ganttStore.tasks.length > 0) {
@@ -1042,7 +1041,7 @@ async function loadGanttFromApi() {
   isLoading.value = true
   loadError.value = ''
   try {
-    const rows = await listTradeProcessesRaw({ projectId: CURRENT_PROJECT_ID })
+    const rows = await listTradeProcessesRaw({ projectId: currentProjectId.value })
 
     console.log(
       'TradeProcess 원본 rows:',
@@ -1052,7 +1051,7 @@ async function loadGanttFromApi() {
         processName: r.processName,
       })),
     )
-    const plans = await fetchWorkPlansByProject(CURRENT_PROJECT_ID)
+    const plans = await fetchWorkPlansByProject(currentProjectId.value)
 
     console.log('WorkPlan 데이터:', plans)
     console.log(

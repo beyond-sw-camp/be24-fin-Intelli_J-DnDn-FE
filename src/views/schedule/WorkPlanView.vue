@@ -22,8 +22,9 @@ import {
 import { planStore } from '@/data/planStore'
 import { fetchTradeProcessList } from '@/api/tradeProcess.js'
 import { fetchWorkPlanList, submitWeeklyWorkPlan, createWorkPlan } from '@/api/workplan.js'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 
-const selectedProjectId = ref(1)
+const { currentProjectId: selectedProjectId } = useCurrentProject()
 
 const weeklyPlans = ref([]) // 주간 작업 계획
 const monthlyPlans = ref([]) // 월간 작업 계획
