@@ -1,35 +1,27 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import api from '@/api/index'
+import WorkInstructionEditorModal from '@/components/schedule/workInstruction/WorkInstructionEditorModal.vue'
+import WorkInstructionTaskSelectorModal from '@/components/schedule/workInstruction/WorkInstructionTaskSelectorModal.vue'
+import WorkInstructionViewerModal from '@/components/schedule/workInstruction/WorkInstructionViewerModal.vue'
 import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   FileText,
   Plus,
-  Save,
   Send,
   Eye,
   Pencil,
-  Users,
-  Wrench,
   MapPin,
-  ClipboardList,
   CheckCircle2,
   AlertTriangle,
   Clock,
   ShieldCheck,
   UserCog,
-  Trash2,
-  X,
   Sparkles,
-  RefreshCw,
-  Truck,
   DoorOpen,
-  Image as ImageIcon,
-  Paperclip,
   Search,
-  ArrowRightLeft,
 } from 'lucide-vue-next'
 
 import {
@@ -38,215 +30,30 @@ import {
   updateWorkOrder,
   approveWorkOrder,
 } from '@/api/workOrder'
+import {
+  DEFAULT_SAFETY_TEXT,
+  DEFAULT_TRADE_OPTIONS,
+  ENUM_TO_KOR_MAP,
+  ROLES,
+  buildInstructionFields,
+  equipmentList,
+  fileBadge,
+  fmtKor,
+  fmtSize,
+  getTradeNameFromPlan,
+  makeId,
+  normalizeTradeName,
+  parseInstructionContent,
+  resolveWorkPlanWorkTime,
+  sortTrades,
+  todayStr,
+  toDateString,
+  unwrapApiData,
+} from '@/utils/schedule/workInstruction.js'
 
-const EQUIPMENT_ENUM_MAP = {
-  굴삭기: 'EXCAVATOR',
-  미니굴삭기: 'MINI_EXCAVATOR',
-  백호: 'BACKHOE_LOADER',
-  드래그라인: 'DRAGLINE_EXCAVATOR',
-  덤프트럭: 'DUMP_TRUCK',
-  '트럭 믹서': 'CONCRETE_MIXER_TRUCK',
-  트랙터: 'TRACTOR',
-  트레일러: 'TRAILER',
-  스크레이퍼: 'SCRAPER',
-  타워크레인: 'TOWER_CRANE',
-  '모바일 크레인': 'MOBILE_CRANE',
-  '크롤러 크레인': 'CRAWLER_CRANE',
-  지게차: 'FORKLIFT',
-  리프트: 'CONSTRUCTION_HOIST',
-  불도저: 'BULLDOZER',
-  '모터 그레이더': 'MOTOR_GRADER',
-  롤러: 'ROAD_ROLLER',
-  콤팩터: 'PLATE_COMPACTOR',
-  '아스팔트 피니셔': 'ASPHALT_PAVER',
-  '밀링 머신': 'MILLING_MACHINE',
-  살수차: 'WATER_TRUCK',
-  '노면 절단기': 'CONCRETE_CUTTER',
-  '파일 드라이버': 'PILE_DRIVER',
-  보링머신: 'BORING_MACHINE',
-  어스오거: 'EARTH_AUGER',
-  RCD: 'REVERSE_CIRCULATION_DRILL',
-  '콘크리트 펌프카': 'CONCRETE_PUMP_TRUCK',
-  '배치 플랜트': 'BATCHING_PLANT',
-  바이브레이터: 'CONCRETE_VIBRATOR',
-  브레이커: 'HYDRAULIC_BREAKER',
-  니블러: 'NIBBLER',
-  크러셔: 'CRUSHER',
-  고소작업차: 'AERIAL_WORK_PLATFORM',
-  TBM: 'TUNNEL_BORING_MACHINE',
-}
-
-const ENUM_TO_KOR_MAP = Object.fromEntries(
-  Object.entries(EQUIPMENT_ENUM_MAP).map(([k, v]) => [v, k]),
-)
-
-const ROLES = { MANAGER: 'site_manager', WORKER: 'process_owner' }
 const currentRole = ref(ROLES.WORKER)
-
-// 일단 작업 지시서에서는 대표 공종을 모두 보여준다.
-// 주간 공정계획/작업지시서에서 추가로 발견되는 공종은 availableTrades에서 함께 병합된다.
-const DEFAULT_TRADE_OPTIONS = [
-  '공통/가설',
-  '토공사',
-  '지정/기초',
-  '골조공사',
-  '건축마감',
-  '기계/설비',
-  '전기/통신',
-  '토목/조경',
-  '준공/검사',
-]
 const tradeOptions = ref([...DEFAULT_TRADE_OPTIONS])
 const myProcess = ref(DEFAULT_TRADE_OPTIONS[0])
-
-const TRADE_LABEL_MAP = {
-  EARTHWORK: '토공사',
-  FRAME: '골조공사',
-  REBAR: '골조공사',
-  FORM: '골조공사',
-  ELECTRIC: '전기/통신',
-  FACILITY: '기계/설비',
-  MASONRY: '건축마감',
-  WATERPROOF: '건축마감',
-  PLASTER: '건축마감',
-  TILE: '건축마감',
-  PAINT: '건축마감',
-  PAVEMENT: '토목/조경',
-  LANDSCAPE: '토목/조경',
-  ETC: '기타',
-  COMMON: '공통/가설',
-  TEMPORARY: '공통/가설',
-  COMMON_TEMP: '공통/가설',
-  FOUNDATION: '지정/기초',
-  FINISH: '건축마감',
-  MECHANICAL: '기계/설비',
-  CIVIL: '토목/조경',
-  INSPECTION: '준공/검사',
-  공통: '공통/가설',
-  가설: '공통/가설',
-  '공통/가설': '공통/가설',
-  지정: '지정/기초',
-  기초: '지정/기초',
-  '지정/기초': '지정/기초',
-  준공: '준공/검사',
-  검사: '준공/검사',
-  '준공/검사': '준공/검사',
-  토공: '토공사',
-  토공사: '토공사',
-  골조: '골조공사',
-  골조공사: '골조공사',
-  철근: '골조공사',
-  형틀: '골조공사',
-  전기: '전기/통신',
-  통신: '전기/통신',
-  '전기/통신': '전기/통신',
-  설비: '기계/설비',
-  기계: '기계/설비',
-  '기계/설비': '기계/설비',
-  마감: '건축마감',
-  건축마감: '건축마감',
-  조경: '토목/조경',
-  토목: '토목/조경',
-  '토목/조경': '토목/조경',
-}
-
-const TRADE_SORT_ORDER = [
-  '공통/가설',
-  '토공사',
-  '지정/기초',
-  '골조공사',
-  '건축마감',
-  '기계/설비',
-  '전기/통신',
-  '토목/조경',
-  '준공/검사',
-]
-
-function normalizeTradeName(value) {
-  if (!value) return ''
-  const raw = String(value)
-    .trim()
-    .replace(/\s*공정$/, '')
-    .replace(/\s*공종$/, '')
-  return TRADE_LABEL_MAP[raw] || raw
-}
-
-function sortTrades(list) {
-  return [...list].sort((a, b) => {
-    const ai = TRADE_SORT_ORDER.indexOf(a)
-    const bi = TRADE_SORT_ORDER.indexOf(b)
-    if (ai === -1 && bi === -1) return a.localeCompare(b, 'ko')
-    if (ai === -1) return 1
-    if (bi === -1) return -1
-    return ai - bi
-  })
-}
-
-function unwrapApiData(response) {
-  const payload = response?.data ?? response
-  const data = payload?.data ?? payload
-  if (Array.isArray(data)) return data
-  if (Array.isArray(data?.content)) return data.content
-  if (Array.isArray(data?.list)) return data.list
-  if (Array.isArray(data?.items)) return data.items
-  return []
-}
-
-function inferTradeNameFromTaskName(value) {
-  const text = String(value || '')
-  if (!text) return ''
-
-  if (/가설|현장\s*개설|울타리|사무실|타워크레인|리프트/.test(text)) return '공통/가설'
-  if (/토공|터파기|되메우기|흙막이|토사|굴착/.test(text)) return '토공사'
-  if (/지정|기초|파일|말뚝|버림|매트/.test(text)) return '지정/기초'
-  if (/골조|철근|콘크리트|거푸집|형틀|슬라브|보강|PHC/.test(text)) return '골조공사'
-  if (/조적|방수|미장|타일|도장|마감|창호|석고|수장|도배/.test(text)) return '건축마감'
-  if (/기계|설비|배관|덕트|위생|소방/.test(text)) return '기계/설비'
-  if (/전기|통신|전력|조명|수배전|케이블/.test(text)) return '전기/통신'
-  if (/토목|조경|포장|도로|배수|외부/.test(text)) return '토목/조경'
-  if (/준공|검사|청소|정리|인수|시운전/.test(text)) return '준공/검사'
-  return ''
-}
-
-function getTradeNameFromPlan(plan) {
-  // tradeProcessName/name은 보통 '현장 개설 및 가설울타리' 같은 세부 공정명이라
-  // 바로 공종으로 쓰지 않고, 아래에서 키워드 기반으로 대표 공종을 추론한다.
-  const directTradeCandidates = [
-    plan?.tradeName,
-    plan?.trade,
-    plan?.tradeType,
-    plan?.tradeCode,
-    plan?.category,
-    plan?.majorTrade,
-    plan?.majorTradeName,
-    plan?.tradeProcess?.tradeName,
-    plan?.tradeProcess?.trade,
-    plan?.tradeProcess?.tradeType,
-    plan?.tradeProcess?.category,
-    plan?.tradeProcess?.majorTrade,
-    plan?.tradeProcess?.majorTradeName,
-    plan?.processTrade,
-    plan?.processTradeName,
-  ]
-
-  for (const candidate of directTradeCandidates) {
-    const normalized = normalizeTradeName(candidate)
-    if (normalized && normalized !== '기타') return normalized
-  }
-
-  const processText = [
-    plan?.tradeProcessName,
-    plan?.tradeProcess?.name,
-    plan?.name,
-    plan?.processName,
-    plan?.title,
-    plan?.workName,
-  ]
-    .filter(Boolean)
-    .join(' ')
-  const inferred = inferTradeNameFromTaskName(processText)
-  return inferred && inferred !== '기타' ? inferred : ''
-}
 
 function ensureSelectedTrade() {
   const options = availableTrades.value
@@ -262,17 +69,6 @@ function ensureSelectedTrade() {
   if (currentRole.value === ROLES.WORKER) filterProcess.value = myProcess.value
   else if (filterProcess.value !== 'all' && !options.includes(filterProcess.value))
     filterProcess.value = 'all'
-}
-
-const equipmentList = {
-  '굴착·토공': ['굴삭기', '미니굴삭기', '백호', '드래그라인'],
-  운반: ['덤프트럭', '트럭 믹서', '트랙터', '트레일러', '스크레이퍼'],
-  '하역·양중': ['타워크레인', '모바일 크레인', '크롤러 크레인', '지게차', '리프트'],
-  '정지·다짐': ['불도저', '모터 그레이더', '롤러', '콤팩터'],
-  '도로·포장': ['아스팔트 피니셔', '밀링 머신', '살수차', '노면 절단기'],
-  '기초·파일': ['파일 드라이버', '보링머신', '어스오거', 'RCD'],
-  콘크리트: ['콘크리트 펌프카', '배치 플랜트', '바이브레이터'],
-  '철거·특수': ['브레이커', '니블러', '크러셔', '고소작업차', 'TBM'],
 }
 
 const GATES = ref([])
@@ -309,16 +105,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 
-function todayStr() {
-  return new Date().toISOString().slice(0, 10)
-}
-function fmtKor(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  const dow = ['일', '월', '화', '수', '목', '금', '토'][d.getDay()]
-  return `${d.getMonth() + 1}월 ${d.getDate()}일 (${dow})`
-}
-
 const filterDate = ref(todayStr())
 const filterProcess = ref('all')
 const filterPartner = ref('')
@@ -349,9 +135,13 @@ function statusMeta(s) {
   return STATUS_META[s] || STATUS_META['작성 전']
 }
 
-function makeId() {
-  return `WO-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
-}
+const canReviewViewing = computed(
+  () =>
+    currentRole.value === ROLES.MANAGER &&
+    !!viewing.value &&
+    [STATUS_LIST[3], STATUS_LIST[4]].includes(viewing.value.status),
+)
+
 const workOrders = ref([])
 
 const availableTrades = computed(() => {
@@ -448,7 +238,6 @@ const isNew = ref(false)
 const draftSourcePlan = ref(null)
 const draftAutoFilled = ref({})
 
-// 🔥 새로 추가된 작업 선택용 반응형 변수들
 const showTaskSelector = ref(false)
 const availableTasks = ref([])
 
@@ -473,7 +262,7 @@ function blankOrder() {
     location: '',
     workTime: '',
     workers: 0,
-    equipment: [], // feat : 장비 데이터 배열 초기화 누락 수정
+    equipment: [],
     equipmentInput: { name: '', count: 1, gateIn: 1, gateOut: 1 },
     workDetail: '',
     safety: '',
@@ -498,77 +287,6 @@ function cloneOrder(o) {
   }
 }
 
-const DEFAULT_WORK_TIME = '07:00 ~ 17:00'
-const DEFAULT_SAFETY_TEXT =
-  '추락/낙하/화재 등 위험요인 사전 점검 및 안전조치 철저. (지시서 및 일일 TBM 준수)'
-
-const WORK_TIME_SECTION_LABELS = ['작업시간', '작업 시간', '?묒뾽?쒓컙']
-const SAFETY_SECTION_LABELS = ['안전사항', '안전 사항', '안전 유의사항', '?덉쟾?ы빆']
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function sectionPattern(labels) {
-  return labels.map(escapeRegExp).join('|')
-}
-
-function parseInstructionContent(content = '') {
-  const text = String(content || '').replace(/\r\n/g, '\n').trim()
-  const workTimePattern = sectionPattern(WORK_TIME_SECTION_LABELS)
-  const safetyPattern = sectionPattern(SAFETY_SECTION_LABELS)
-  const workTimeMatch = text.match(
-    new RegExp(
-      `\\[\\s*(?:${workTimePattern})\\s*\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[\\s*(?:${safetyPattern})\\s*\\]|$)`,
-    ),
-  )
-  const safetyMatch = text.match(
-    new RegExp(`\\[\\s*(?:${safetyPattern})\\s*\\]\\s*([\\s\\S]*)$`),
-  )
-  const metaIndexes = [workTimeMatch?.index, safetyMatch?.index].filter(
-    (index) => Number.isInteger(index) && index >= 0,
-  )
-  const workDetail = metaIndexes.length ? text.slice(0, Math.min(...metaIndexes)).trim() : text
-
-  return {
-    workDetail,
-    workTime: workTimeMatch?.[1]?.trim() || '',
-    safety: safetyMatch?.[1]?.trim() || '',
-  }
-}
-
-function buildInstructionFields(order) {
-  const parsed = parseInstructionContent(order.workDetail)
-  const workDetail = parsed.workDetail || String(order.workDetail || '').trim()
-  const safety = String(order.safety || parsed.safety || DEFAULT_SAFETY_TEXT).trim()
-
-  return {
-    instructionContent: workDetail,
-    workDetail,
-    workTime: order.workTime,
-    safetyContent: safety,
-  }
-}
-
-function resolveWorkPlanWorkTime(plan) {
-  if (plan?.workTime) return plan.workTime
-
-  const note = String(plan?.note || '')
-  const timeRange = '(\\d{1,2}:\\d{2})\\s*[~～]\\s*(\\d{1,2}:\\d{2})'
-  const label = '(?:작업\\s*시간|작업시간)'
-  const changed = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}\\s*(?:->|→)\\s*${timeRange}`))
-  if (changed) return `${changed[3]} ~ ${changed[4]}`
-
-  const bracket = note.match(new RegExp(`\\[${label}\\]\\s*${timeRange}`))
-  if (bracket) return `${bracket[1]} ~ ${bracket[2]}`
-
-  const labeled = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}`))
-  if (labeled) return `${labeled[1]} ~ ${labeled[2]}`
-
-  return DEFAULT_WORK_TIME
-}
-
-// 🔥 수정된 작업 리스트 먼저 불러오는 함수
 async function openCreate() {
   const targetDate = filterDate.value
   const targetProcess = currentRole.value === ROLES.WORKER ? myProcess.value : filterProcess.value
@@ -576,12 +294,6 @@ async function openCreate() {
   try {
     const response = await api.get('/work-plan', { params: { planType: '주간' } })
     const plans = unwrapApiData(response)
-
-    const toDateString = (dateVal) => {
-      if (Array.isArray(dateVal))
-        return `${dateVal[0]}-${String(dateVal[1]).padStart(2, '0')}-${String(dateVal[2]).padStart(2, '0')}`
-      return dateVal
-    }
 
     availableTasks.value = plans.filter((p) => {
       const planTrade = getTradeNameFromPlan(p)
@@ -608,7 +320,6 @@ async function openCreate() {
   }
 }
 
-// 🔥 카드를 클릭했을 때 실행되는 함수
 async function selectTaskForOrder(task) {
   showTaskSelector.value = false
   isNew.value = true
@@ -694,16 +405,6 @@ function removeEquipment(idx) {
   editing.value.equipment.splice(idx, 1)
 }
 
-const photoInputRef = ref(null)
-const fileInputRef = ref(null)
-
-function pickPhotos() {
-  photoInputRef.value?.click()
-}
-function pickFiles() {
-  fileInputRef.value?.click()
-}
-
 function onPhotoChange(e) {
   Array.from(e.target.files || []).forEach((f) => {
     if (!f.type.startsWith('image/')) return
@@ -739,26 +440,10 @@ function removeFile(idx) {
   editing.value.files.splice(idx, 1)
 }
 
-function fmtSize(bytes) {
-  if (!bytes && bytes !== 0) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function fileBadge(type) {
-  if (!type) return '파일'
-  if (type.includes('pdf')) return 'PDF'
-  if (type.includes('sheet') || type.includes('excel')) return 'XLSX'
-  if (type.includes('image')) return 'IMG'
-  return '파일'
-}
-
 function saveDraft() {
   persist('임시 저장', '임시 저장')
 }
 
-// feat : 작업 지시서 제출 API 호출 및 데이터 매핑 수정
 async function submitOrder() {
   const r = editing.value
   if (!r.partner.trim() || !r.location.trim() || !r.workTime.trim() || !r.workDetail.trim()) {
@@ -771,7 +456,7 @@ async function submitOrder() {
       typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
     return {
       gateIdx: safeGateIdx || 1,
-      equipmentName: eq.name, // feat : 한글 장비명 그대로 전송되도록 매핑 제거
+      equipmentName: eq.name,
       equipmentCount: eq.count,
     }
   })
@@ -846,7 +531,6 @@ async function reject() {
   await updateOrderStatus('반려', 'REJECTED')
 }
 
-// feat : 작업 지시서 상태 업데이트 API 호출 및 장비 데이터 매핑 수정
 async function updateOrderStatus(newStatus, statusCodeStr) {
   const order = viewing.value
   if (!order) return
@@ -871,7 +555,7 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
             typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
           return {
             gateIdx: safeGateIdx || 1,
-            equipmentName: eq.name, // feat : 한글 장비명 그대로 전송되도록 매핑 제거
+            equipmentName: eq.name,
             equipmentCount: eq.count || 1,
           }
         }),
@@ -919,7 +603,6 @@ async function fetchTradeOptions() {
   }
 
   try {
-    // 백엔드에서 한글 planType을 받는 경우와 enum 값을 받는 경우를 모두 대응
     await collectFromWorkPlans('주간')
     if (!collected.size) await collectFromWorkPlans('WEEKLY')
   } catch (e) {
@@ -1322,819 +1005,52 @@ async function fetchWorkOrders() {
       </div>
     </div>
 
-    <!-- 🔥 새로 추가된 세부 작업 선택 모달 -->
-    <transition
-      enter-active-class="transition duration-150 ease-out"
-      enter-from-class="opacity-0"
-      enter-to-class="opacity-100"
-      leave-active-class="transition duration-100 ease-in"
-      leave-from-class="opacity-100"
-      leave-to-class="opacity-0"
-    >
-      <div
-        v-if="showTaskSelector"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
-        @click.self="showTaskSelector = false"
-      >
-        <div
-          class="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
-        >
-          <div
-            class="flex shrink-0 items-center justify-between border-b border-forena-100 px-6 py-4"
-          >
-            <div>
-              <p class="text-base font-bold text-forena-900">지시서 작성 대상 세부 작업 선택</p>
-              <p class="mt-0.5 text-xs text-forena-500">
-                {{ filterDate }} 기준 진행 예정인 작업 목록입니다.
-              </p>
-            </div>
-            <button @click="showTaskSelector = false" class="text-slate-400 hover:text-forena-700">
-              <X class="h-5 w-5" />
-            </button>
-          </div>
-          <div class="overflow-y-auto px-6 py-4">
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div
-                v-for="task in availableTasks"
-                :key="task.id"
-                @click="selectTaskForOrder(task)"
-                class="group cursor-pointer rounded-xl border border-forena-200 bg-white p-4 transition-all hover:border-flare-400 hover:bg-flare-50 hover:shadow-md"
-              >
-                <div class="flex items-start justify-between mb-2">
-                  <span
-                    class="rounded bg-forena-100 px-1.5 py-0.5 text-[10px] font-bold text-forena-700"
-                    >{{ task.location }}</span
-                  >
-                </div>
-                <p class="font-bold text-forena-900 group-hover:text-flare-700">{{ task.name }}</p>
-                <p class="mt-2 text-xs text-forena-500 line-clamp-2">
-                  {{ task.note || '세부 내용 없음' }}
-                </p>
-                <div class="mt-3 flex items-center gap-3 text-[11px] font-semibold text-forena-600">
-                  <span class="flex items-center gap-1"
-                    ><Users class="h-3.5 w-3.5" /> {{ task.requiredCount || 0 }}명</span
-                  >
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </transition>
+    <WorkInstructionTaskSelectorModal
+      :show="showTaskSelector"
+      :tasks="availableTasks"
+      :filter-date="filterDate"
+      @close="showTaskSelector = false"
+      @select="selectTaskForOrder"
+    />
 
-    <!-- 기존 지시서 작성 에디터 -->
-    <transition
-      enter-active-class="transition duration-150 ease-out"
-      enter-from-class="opacity-0"
-      enter-to-class="opacity-100"
-      leave-active-class="transition duration-100 ease-in"
-      leave-from-class="opacity-100"
-      leave-to-class="opacity-0"
-    >
-      <div
-        v-if="showEditor && editing"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-        @click.self="closeEditor"
-      >
-        <div
-          class="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
-        >
-          <div
-            class="flex shrink-0 items-start justify-between border-b border-forena-100 px-6 py-4"
-          >
-            <div class="flex items-start gap-3">
-              <div
-                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-flare-50"
-              >
-                <ClipboardList class="h-5 w-5 text-flare-600" />
-              </div>
-              <div>
-                <p class="text-base font-bold text-forena-900">
-                  {{ isNew ? '작업 지시서 작성' : '작업 지시서 수정' }}
-                </p>
-                <p class="mt-0.5 text-xs text-forena-500">
-                  <span class="font-mono text-forena-700">{{ editing.id }}</span> ·
-                  {{ fmtKor(editing.date) }} ·
-                  <span class="font-bold text-forena-700">{{ editing.process }} 공종</span>
-                </p>
-              </div>
-            </div>
-            <button @click="closeEditor" class="text-slate-400 hover:text-forena-700">
-              <X class="h-5 w-5" />
-            </button>
-          </div>
+    <WorkInstructionEditorModal
+      :show="showEditor"
+      :editing="editing"
+      :is-new="isNew"
+      :draft-source-plan="draftSourcePlan"
+      :draft-auto-filled="draftAutoFilled"
+      :available-trades="availableTrades"
+      :equipment-list="equipmentList"
+      :gates="GATES"
+      :gate-assignment="gateAssignment"
+      :get-gate-label="getGateLabel"
+      :format-date="fmtKor"
+      :file-badge="fileBadge"
+      :format-size="fmtSize"
+      @close="closeEditor"
+      @regenerate-draft="regenerateDraft"
+      @clear-draft-highlight="clearDraftHighlight"
+      @add-equipment="addEquipment"
+      @remove-equipment="removeEquipment"
+      @photo-change="onPhotoChange"
+      @remove-photo="removePhoto"
+      @file-change="onFileChangeInput"
+      @remove-file="removeFile"
+      @save-draft="saveDraft"
+      @submit="submitOrder"
+    />
 
-          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            <div class="rounded-xl border border-flare-200 bg-flare-50/40 p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div class="flex items-start gap-2.5">
-                  <Sparkles class="mt-0.5 h-4 w-4 shrink-0 text-flare-600" />
-                  <div>
-                    <p class="text-xs font-bold text-forena-900">
-                      명일 작업 예정으로 초안 자동 생성
-                    </p>
-                    <p class="mt-0.5 text-[11px] text-forena-600">
-                      선택한 세부작업의 위치 · 시간 · 인원 · 장비 · 상세를 자동 입력합니다. 게이트는
-                      직접 지정하세요.
-                    </p>
-                  </div>
-                </div>
-                <div class="flex shrink-0 gap-1.5">
-                  <button
-                    v-if="draftSourcePlan"
-                    @click="regenerateDraft"
-                    class="inline-flex items-center gap-1 rounded-md border border-flare-300 bg-white px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-50"
-                  >
-                    <RefreshCw class="h-3 w-3" /> 다시 생성
-                  </button>
-                </div>
-              </div>
-
-              <div
-                v-if="draftSourcePlan"
-                class="mt-3 rounded-lg bg-white p-3 ring-1 ring-flare-100"
-              >
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  원문 (연결된 주간 세부작업)
-                </p>
-                <p class="mt-1 text-[11px] leading-relaxed text-forena-700">
-                  {{ draftSourcePlan.plan }}
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >작업 일 <span class="text-rose-500">*</span></label
-                >
-                <input
-                  type="date"
-                  v-model="editing.date"
-                  class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
-                />
-              </div>
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >작업 시간 <span class="text-rose-500">*</span
-                  ><span
-                    v-if="draftAutoFilled.workTime"
-                    class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
-                    >자동</span
-                  ></label
-                >
-                <input
-                  v-model="editing.workTime"
-                  placeholder="예: 07:00 ~ 17:00"
-                  @input="clearDraftHighlight('workTime')"
-                  class="w-full rounded-md border bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
-                  :class="draftAutoFilled.workTime ? 'border-flare-300' : 'border-forena-200'"
-                />
-              </div>
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >공종 명</label
-                >
-                <select
-                  v-model="editing.process"
-                  disabled
-                  class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400 disabled:bg-forena-50/40"
-                >
-                  <option v-for="p in availableTrades" :key="p" :value="p">{{ p }}</option>
-                </select>
-              </div>
-              <div class="sm:col-span-2">
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >협력사 명 <span class="text-rose-500">*</span></label
-                >
-                <input
-                  v-model="editing.partner"
-                  placeholder="예: 한울중기"
-                  class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
-                />
-              </div>
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >필요 인원<span
-                    v-if="draftAutoFilled.workers"
-                    class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
-                    >자동</span
-                  ></label
-                >
-                <input
-                  type="number"
-                  min="0"
-                  v-model.number="editing.workers"
-                  @input="clearDraftHighlight('workers')"
-                  class="w-full rounded-md border bg-white px-2.5 py-1.5 text-xs tabular-nums outline-none focus:border-flare-400"
-                  :class="draftAutoFilled.workers ? 'border-flare-300' : 'border-forena-200'"
-                />
-              </div>
-              <div class="sm:col-span-3">
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  ><MapPin class="mr-0.5 inline h-3 w-3" />작업 위치
-                  <span class="text-rose-500">*</span
-                  ><span
-                    v-if="draftAutoFilled.location"
-                    class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
-                    >자동</span
-                  ></label
-                >
-                <input
-                  v-model="editing.location"
-                  placeholder="예: 본동 3층 슬라브"
-                  @input="clearDraftHighlight('location')"
-                  class="w-full rounded-md border bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
-                  :class="draftAutoFilled.location ? 'border-flare-300' : 'border-forena-200'"
-                />
-              </div>
-            </div>
-
-            <div class="mt-5 rounded-xl border border-forena-100 bg-forena-50/30 p-4">
-              <div class="mb-2 flex items-center justify-between">
-                <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <Truck class="h-3.5 w-3.5 text-flare-600" /> 필요 중장비 + 게이트 배정 ({{
-                    editing.equipment.length
-                  }})
-                  <span
-                    v-if="draftAutoFilled.equipment"
-                    class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
-                    >자동 입력됨</span
-                  >
-                </p>
-              </div>
-
-              <div
-                class="grid grid-cols-2 gap-2 rounded-lg bg-white p-3 ring-1 ring-forena-100 sm:grid-cols-5"
-              >
-                <div class="sm:col-span-2">
-                  <label class="mb-1 block text-[10px] font-bold text-forena-500">장비명</label>
-                  <select
-                    v-model="editing.equipmentInput.name"
-                    class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  >
-                    <option value="">장비 선택</option>
-                    <optgroup
-                      v-for="(items, category) in equipmentList"
-                      :key="category"
-                      :label="category"
-                    >
-                      <option
-                        v-for="equipment in items"
-                        :key="`${category}_${equipment}`"
-                        :value="equipment"
-                      >
-                        {{ equipment }}
-                      </option>
-                    </optgroup>
-                  </select>
-                </div>
-                <div>
-                  <label class="mb-1 block text-[10px] font-bold text-forena-500">대수</label>
-                  <input
-                    type="number"
-                    min="1"
-                    v-model.number="editing.equipmentInput.count"
-                    class="w-full rounded-md border border-forena-200 px-2 py-1.5 text-xs tabular-nums outline-none focus:border-flare-400"
-                  />
-                </div>
-                <div class="flex-1">
-                  <label class="block text-xs font-medium text-slate-500 mb-1">입차 게이트</label>
-                  <select
-                    v-model="editing.equipmentInput.gateIn"
-                    class="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-flare-500 outline-none"
-                  >
-                    <option value="" disabled>게이트 선택</option>
-                    <option
-                      v-for="g in GATES"
-                      :key="g.gateIdx"
-                      :value="g.gateIdx"
-                      :class="g.status === '혼잡' ? 'text-rose-500' : 'text-emerald-500'"
-                    >
-                      {{ getGateLabel(g) }}
-                    </option>
-                  </select>
-                </div>
-                <div class="flex-1">
-                  <label class="block text-xs font-medium text-slate-500 mb-1">출차 게이트</label>
-                  <select
-                    v-model="editing.equipmentInput.gateOut"
-                    class="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-flare-500 outline-none"
-                  >
-                    <option value="" disabled>게이트 선택</option>
-                    <option v-for="g in GATES" :key="g.gateIdx" :value="g.gateIdx">
-                      {{ getGateLabel(g) }}
-                    </option>
-                  </select>
-                </div>
-                <div class="sm:col-span-5">
-                  <button
-                    @click="addEquipment"
-                    class="inline-flex items-center gap-1 rounded-md border border-flare-200 bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-100"
-                  >
-                    <Plus class="h-3 w-3" /> 장비 추가
-                  </button>
-                </div>
-              </div>
-
-              <div v-if="editing.equipment.length" class="mt-2 space-y-1.5">
-                <div
-                  v-for="(eq, i) in editing.equipment"
-                  :key="eq.id"
-                  class="flex items-center gap-2 rounded-lg bg-white px-3 py-2 ring-1 ring-forena-100"
-                >
-                  <Wrench class="h-3.5 w-3.5 text-forena-400" />
-                  <span class="font-semibold text-xs text-forena-900">{{ eq.name }}</span>
-                  <span
-                    class="rounded-md bg-forena-50 px-1.5 py-0.5 text-[10px] font-bold text-forena-700 tabular-nums"
-                    >{{ eq.count }}대</span
-                  >
-                  <span class="ml-auto flex items-center gap-1.5 text-[11px]">
-                    <select
-                      v-model="eq.gateIn"
-                      class="rounded border border-forena-200 px-1.5 py-0.5 text-[11px] outline-none focus:border-flare-400"
-                    >
-                      <option v-for="g in GATES" :key="g.gateIdx" :value="g.gateIdx">
-                        입 · {{ g.gateName }}
-                      </option>
-                    </select>
-                    <ArrowRightLeft class="h-3 w-3 text-forena-400" />
-                    <select
-                      v-model="eq.gateOut"
-                      class="rounded border border-forena-200 px-1.5 py-0.5 text-[11px] outline-none focus:border-flare-400"
-                    >
-                      <option v-for="g in GATES" :key="g.gateIdx" :value="g.gateIdx">
-                        출 · {{ g.gateName }}
-                      </option>
-                    </select>
-                  </span>
-                  <button @click="removeEquipment(i)" class="text-slate-400 hover:text-rose-600">
-                    <Trash2 class="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              <div class="mt-3">
-                <p class="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-forena-500">
-                  현재 일자 게이트 혼잡도
-                </p>
-                <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-                  <div
-                    v-for="g in gateAssignment"
-                    :key="g.id"
-                    class="rounded-md border px-2 py-1.5"
-                    :class="
-                      g.level === 'high'
-                        ? 'border-rose-200 bg-rose-50/40'
-                        : g.level === 'mid'
-                          ? 'border-amber-200 bg-amber-50/40'
-                          : 'border-forena-100 bg-white'
-                    "
-                  >
-                    <div class="flex items-center justify-between">
-                      <span class="text-[11px] font-bold text-forena-800">{{ g.name }}</span>
-                      <span v-if="g.level === 'high'" class="text-[9px] font-bold text-rose-600"
-                        >과밀</span
-                      >
-                      <span
-                        v-else-if="g.level === 'mid'"
-                        class="text-[9px] font-bold text-amber-600"
-                        >혼잡</span
-                      >
-                      <span v-else class="text-[9px] font-bold text-emerald-600">원활</span>
-                    </div>
-                    <p class="mt-0.5 text-[10px] tabular-nums text-forena-500">
-                      입차 {{ g.in }} · 출차 {{ g.out }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >작업 상세 내역 <span class="text-rose-500">*</span
-                  ><span
-                    v-if="draftAutoFilled.workDetail"
-                    class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
-                    >자동</span
-                  ></label
-                >
-                <textarea
-                  v-model="editing.workDetail"
-                  rows="5"
-                  @input="clearDraftHighlight('workDetail')"
-                  placeholder="작업 절차, 범위, 협의사항 등"
-                  class="w-full resize-none rounded-md border bg-white px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:border-flare-400"
-                  :class="draftAutoFilled.workDetail ? 'border-flare-300' : 'border-forena-200'"
-                ></textarea>
-              </div>
-              <div>
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >안전 유의사항</label
-                >
-                <textarea
-                  v-model="editing.safety"
-                  rows="5"
-                  placeholder="추락/낙하/화재 등 위험요인 및 안전조치"
-                  class="w-full resize-none rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:border-flare-400"
-                ></textarea>
-              </div>
-              <div class="md:col-span-2">
-                <label
-                  class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >특이사항</label
-                >
-                <textarea
-                  v-model="editing.notes"
-                  rows="2"
-                  placeholder="기상, 선행공정 의존성, 추가 요청 등"
-                  class="w-full resize-none rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:border-flare-400"
-                ></textarea>
-              </div>
-            </div>
-
-            <div class="mt-5 rounded-xl border border-forena-100 bg-forena-50/30 p-3.5">
-              <div class="mb-2 flex items-center justify-between">
-                <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <ImageIcon class="h-3.5 w-3.5 text-flare-600" /> 현장 / 도면 사진 ({{
-                    editing.photos.length
-                  }})
-                </p>
-                <button
-                  @click="pickPhotos"
-                  class="inline-flex items-center gap-1 rounded-md border border-flare-200 bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-100"
-                >
-                  <Plus class="h-3 w-3" /> 사진 추가
-                </button>
-                <input
-                  ref="photoInputRef"
-                  type="file"
-                  class="sr-only"
-                  accept="image/*"
-                  multiple
-                  @change="onPhotoChange"
-                />
-              </div>
-              <div
-                v-if="editing.photos.length"
-                class="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5"
-              >
-                <div
-                  v-for="(photo, i) in editing.photos"
-                  :key="photo.id"
-                  class="group relative aspect-square overflow-hidden rounded-lg border border-forena-200 bg-white"
-                >
-                  <img :src="photo.dataUrl" :alt="photo.name" class="h-full w-full object-cover" />
-                  <button
-                    @click="removePhoto(i)"
-                    class="absolute right-1 top-1 rounded-md bg-slate-900/70 p-1 text-white opacity-0 transition group-hover:opacity-100 hover:bg-rose-600"
-                  >
-                    <Trash2 class="h-3 w-3" />
-                  </button>
-                  <div
-                    class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-900/70 to-transparent px-1.5 py-1"
-                  >
-                    <p class="truncate text-[9px] font-semibold text-white">{{ photo.name }}</p>
-                  </div>
-                </div>
-              </div>
-              <p v-else class="text-[11px] text-slate-400">첨부된 사진이 없습니다.</p>
-            </div>
-
-            <div class="mt-3 rounded-xl border border-forena-100 bg-forena-50/30 p-3.5">
-              <div class="mb-2 flex items-center justify-between">
-                <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <Paperclip class="h-3.5 w-3.5 text-flare-600" /> 첨부 파일 ({{
-                    editing.files.length
-                  }})
-                  <span class="ml-1 text-[10px] font-normal text-forena-400"
-                    >PDF · Excel · 이미지</span
-                  >
-                </p>
-                <button
-                  @click="pickFiles"
-                  class="inline-flex items-center gap-1 rounded-md border border-flare-200 bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-100"
-                >
-                  <Plus class="h-3 w-3" /> 파일 추가
-                </button>
-                <input
-                  ref="fileInputRef"
-                  type="file"
-                  class="sr-only"
-                  accept=".pdf,.xls,.xlsx,.csv,image/*"
-                  multiple
-                  @change="onFileChangeInput"
-                />
-              </div>
-              <ul v-if="editing.files.length" class="space-y-1.5">
-                <li
-                  v-for="(f, i) in editing.files"
-                  :key="f.id"
-                  class="flex items-center gap-2 rounded-lg bg-white px-2.5 py-2 ring-1 ring-forena-100"
-                >
-                  <span
-                    class="rounded-md bg-flare-50 px-1.5 py-0.5 text-[9px] font-bold text-flare-700"
-                    >{{ fileBadge(f.type) }}</span
-                  >
-                  <span class="flex-1 truncate text-xs text-forena-800">{{ f.name }}</span>
-                  <span class="shrink-0 text-[10px] text-forena-400 tabular-nums">{{
-                    fmtSize(f.size)
-                  }}</span>
-                  <button @click="removeFile(i)" class="text-slate-400 hover:text-rose-600">
-                    <Trash2 class="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              </ul>
-              <p v-else class="text-[11px] text-slate-400">첨부된 파일이 없습니다.</p>
-            </div>
-          </div>
-
-          <div
-            class="flex shrink-0 items-center justify-between gap-2 border-t border-forena-100 bg-forena-50/40 px-6 py-3"
-          >
-            <p class="text-[11px] text-forena-500">
-              <span class="text-rose-500">*</span> 표시는 필수 입력 항목입니다.
-            </p>
-            <div class="flex gap-2">
-              <button
-                @click="closeEditor"
-                class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-              >
-                취소
-              </button>
-              <button
-                @click="saveDraft"
-                class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
-              >
-                <Save class="h-3.5 w-3.5" /> 임시 저장
-              </button>
-              <button
-                @click="submitOrder"
-                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
-              >
-                <Send class="h-3.5 w-3.5" /> 제출
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </transition>
-
-    <!-- 뷰어 모달 -->
-    <transition
-      enter-active-class="transition duration-150 ease-out"
-      enter-from-class="opacity-0"
-      enter-to-class="opacity-100"
-      leave-active-class="transition duration-100 ease-in"
-      leave-from-class="opacity-100"
-      leave-to-class="opacity-0"
-    >
-      <div
-        v-if="viewing"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-        @click.self="closeViewer"
-      >
-        <div
-          class="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
-        >
-          <div
-            class="flex shrink-0 items-center justify-between border-b border-forena-100 px-6 py-4"
-          >
-            <p class="text-sm font-bold text-forena-900">작업 상세</p>
-            <div class="flex items-center gap-1">
-              <button
-                v-if="canEdit(viewing)"
-                @click="editViewing"
-                class="rounded-md p-1.5 text-forena-500 hover:bg-forena-50 hover:text-forena-800"
-                title="수정"
-              >
-                <Pencil class="h-4 w-4" />
-              </button>
-              <button @click="closeViewer" class="text-slate-400 hover:text-forena-700">
-                <X class="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            <div class="flex items-start gap-2">
-              <h2 class="text-lg font-bold text-forena-900">{{ viewing.location }}</h2>
-              <span
-                class="mt-1.5 rounded-md bg-forena-100 px-1.5 py-0.5 text-[10px] font-bold text-forena-700"
-                >{{ viewing.process }}</span
-              >
-            </div>
-            <p class="mt-0.5 font-mono text-xs text-forena-500">{{ viewing.id }}</p>
-
-            <div class="mt-2 flex flex-wrap gap-1.5">
-              <span
-                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1"
-                :class="statusMeta(viewing.status).cls"
-                ><component :is="statusMeta(viewing.status).icon" class="h-3 w-3" />
-                {{ viewing.status }}</span
-              >
-              <span
-                class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200"
-                >{{ viewing.partner }}</span
-              >
-            </div>
-
-            <div class="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              <div class="rounded-xl border border-forena-100 bg-forena-50/40 px-4 py-3">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  작업 위치
-                </p>
-                <p class="mt-1 flex items-center gap-1 text-sm font-bold text-forena-900">
-                  <MapPin class="h-3.5 w-3.5 text-flare-600" />{{ viewing.location }}
-                </p>
-              </div>
-              <div class="rounded-xl border border-forena-100 bg-forena-50/40 px-4 py-3">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  작업 시간
-                </p>
-                <p class="mt-1 text-sm font-bold tabular-nums text-forena-900">
-                  {{ viewing.workTime }}
-                </p>
-              </div>
-              <div class="rounded-xl border border-forena-100 bg-forena-50/40 px-4 py-3">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  필요 인원
-                </p>
-                <p class="mt-1 text-2xl font-bold tabular-nums text-forena-900">
-                  {{ viewing.workers
-                  }}<span class="text-sm font-normal text-slate-400 ml-1">명</span>
-                </p>
-              </div>
-              <div class="rounded-xl border border-rose-200 bg-rose-50/40 px-4 py-3">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-rose-600">
-                  작성자 / 작성일
-                </p>
-                <p class="mt-1 text-sm font-bold text-rose-700">
-                  {{ viewing.author
-                  }}<span class="ml-1 text-[11px] font-normal text-rose-500">{{
-                    viewing.createdAt
-                  }}</span>
-                </p>
-              </div>
-            </div>
-
-            <div class="mt-3 rounded-xl border border-forena-100 px-4 py-3">
-              <div class="flex items-center justify-between">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">
-                  필요 장비 + 게이트
-                </p>
-                <span v-if="viewing.equipment.length" class="text-[10px] font-bold text-emerald-700"
-                  >배정 완료</span
-                >
-              </div>
-              <div v-if="viewing.equipment.length" class="mt-2 space-y-1.5">
-                <div
-                  v-for="eq in viewing.equipment"
-                  :key="eq.id"
-                  class="flex flex-wrap items-center gap-2 rounded-lg bg-forena-50/60 px-3 py-1.5"
-                >
-                  <Wrench class="h-3.5 w-3.5 text-forena-500" />
-                  <span class="text-xs font-semibold text-forena-900"
-                    >{{ eq.name }} {{ eq.count }}대</span
-                  >
-                  <span class="ml-auto inline-flex items-center gap-1 text-[11px] text-forena-700">
-                    <span class="rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700"
-                      >입 · {{ gateName(eq.gateIn) }}</span
-                    >
-                    <ArrowRightLeft class="h-3 w-3 text-forena-400" />
-                    <span class="rounded bg-rose-100 px-1.5 py-0.5 font-bold text-rose-700"
-                      >출 · {{ gateName(eq.gateOut) }}</span
-                    >
-                  </span>
-                </div>
-              </div>
-              <p v-else class="mt-1 text-xs text-slate-400">투입 장비 없음</p>
-            </div>
-
-            <div class="mt-3 rounded-xl border border-forena-100 px-4 py-3">
-              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">
-                작업 상세 내역
-              </p>
-              <p class="mt-1 text-xs leading-relaxed text-forena-800">{{ viewing.workDetail }}</p>
-            </div>
-
-            <div
-              v-if="viewing.safety"
-              class="mt-3 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3"
-            >
-              <p class="text-[10px] font-bold uppercase tracking-wide text-amber-700">
-                안전 유의사항
-              </p>
-              <p class="mt-1 text-xs leading-relaxed text-amber-900">{{ viewing.safety }}</p>
-            </div>
-
-            <div v-if="viewing.notes" class="mt-3 rounded-xl border border-forena-100 px-4 py-3">
-              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">특이사항</p>
-              <p class="mt-1 text-xs leading-relaxed text-forena-800">{{ viewing.notes }}</p>
-            </div>
-
-            <div
-              v-if="viewing.files?.length"
-              class="mt-3 rounded-xl border border-forena-100 px-4 py-3"
-            >
-              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">관련 문서</p>
-              <ul class="mt-1.5 space-y-1">
-                <li
-                  v-for="f in viewing.files"
-                  :key="f.id"
-                  class="flex items-center gap-2 text-xs text-forena-800"
-                >
-                  <FileText class="h-3.5 w-3.5 text-forena-400" />
-                  <span class="flex-1 truncate">{{ f.name }}</span>
-                  <span class="text-[10px] text-forena-400 tabular-nums">{{
-                    fmtSize(f.size)
-                  }}</span>
-                  <button
-                    class="rounded p-1 text-forena-400 hover:bg-forena-50 hover:text-forena-700"
-                  >
-                    <Eye class="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              </ul>
-            </div>
-
-            <div
-              v-if="viewing.photos?.length"
-              class="mt-3 rounded-xl border border-forena-100 px-4 py-3"
-            >
-              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">현장 사진</p>
-              <div class="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-                <div
-                  v-for="photo in viewing.photos"
-                  :key="photo.id"
-                  class="aspect-square overflow-hidden rounded-lg border border-forena-200 bg-white"
-                >
-                  <img :src="photo.dataUrl" :alt="photo.name" class="h-full w-full object-cover" />
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-if="viewing.history?.length"
-              class="mt-3 rounded-xl border border-forena-100 px-4 py-3"
-            >
-              <p class="text-[10px] font-bold uppercase tracking-wide text-forena-500">상태 이력</p>
-              <ul class="mt-1.5 space-y-1">
-                <li
-                  v-for="(h, i) in viewing.history"
-                  :key="i"
-                  class="flex items-center gap-2 text-[11px]"
-                >
-                  <span class="font-mono text-forena-400 tabular-nums">{{ h.at }}</span>
-                  <span class="text-forena-700">{{ h.who }}</span>
-                  <span class="rounded bg-forena-50 px-1.5 py-0.5 font-bold text-forena-700">{{
-                    h.what
-                  }}</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <div
-            class="flex shrink-0 items-center justify-end gap-2 border-t border-forena-100 bg-white px-6 py-3"
-          >
-            <button
-              v-if="
-                currentRole === ROLES.MANAGER && ['승인 대기', '검토 중'].includes(viewing.status)
-              "
-              @click="reject"
-              class="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50"
-            >
-              <AlertTriangle class="h-3.5 w-3.5" /> 반려
-            </button>
-            <button
-              v-if="
-                currentRole === ROLES.MANAGER && ['승인 대기', '검토 중'].includes(viewing.status)
-              "
-              @click="approve"
-              class="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-600"
-            >
-              <CheckCircle2 class="h-3.5 w-3.5" /> 승인
-            </button>
-            <button
-              @click="closeViewer"
-              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-            >
-              닫기
-            </button>
-          </div>
-        </div>
-      </div>
-    </transition>
+    <WorkInstructionViewerModal
+      :viewing="viewing"
+      :can-edit="viewing ? canEdit(viewing) : false"
+      :can-review="canReviewViewing"
+      :status-meta="statusMeta"
+      :gate-name="gateName"
+      :format-size="fmtSize"
+      @close="closeViewer"
+      @edit="editViewing"
+      @approve="approve"
+      @reject="reject"
+    />
   </div>
 </template>
