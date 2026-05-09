@@ -86,7 +86,8 @@ const T = {
   modalApproveTitle: '요청 승인',
   modalRejectTitle: '요청 거절',
   labelInitialPwd: '초기 비밀번호 (선택)',
-  approvePwdOptionalHint: '비워 두면 서버에서 임시 비밀번호를 자동 생성합니다. 직접 지정할 때만 8자 이상 입력하세요.',
+  approvePwdOptionalHint:
+    '비워 두면 서버에서 임시 비밀번호를 자동 생성합니다. 직접 지정할 때만 8자 이상 입력하세요.',
   labelRejectNote: '거절 사유 (선택)',
   rolePickHint: '권한 선택',
   sitePick: '현장 명',
@@ -124,6 +125,50 @@ function parseProjectLabel(name) {
     return { code: m.groups.code.trim(), title: m.groups.rest.trim() }
   }
   return { code: '', title: s }
+}
+
+/**
+ * 계정·요청 행에서 현장(project) idx 추론 — API project 필드 우선, 없으면 siteCode와 프로젝트 목록의 [코드] 매칭.
+ * @param {Record<string, unknown>|null|undefined} row
+ * @returns {number|null}
+ */
+function resolveEntityProjectIdx(row) {
+  if (!row) return null
+  const numKeys = ['projectIdx', 'projectId', 'siteProjectIdx', 'siteProjectId']
+  for (const k of numKeys) {
+    const n = Number(row[k])
+    if (Number.isFinite(n)) return Math.trunc(n)
+  }
+  const proj = row.project
+  if (proj && typeof proj === 'object') {
+    for (const k of ['idx', 'projectIdx', 'id']) {
+      const n = Number(/** @type {Record<string, unknown>} */ (proj)[k])
+      if (Number.isFinite(n)) return Math.trunc(n)
+    }
+  }
+  const code = String(row.siteCode ?? row.projectCode ?? '').trim()
+  if (code && projectOptions.value.length) {
+    const match = projectOptions.value.find((p) => parseProjectLabel(p.name).code === code)
+    if (match) return match.idx
+  }
+  return null
+}
+
+/**
+ * 상단에서 선택한 현장(라우트 projectIdx)에 속하는지 여부.
+ * @param {Record<string, unknown>|null|undefined} row
+ */
+function entityBelongsToSelectedSite(row) {
+  const curIdx = projectIdxParam.value
+  if (!Number.isFinite(curIdx)) return true
+  const resolved = resolveEntityProjectIdx(row)
+  if (resolved != null) return resolved === curIdx
+  const code = currentSiteCode.value.trim()
+  if (code) {
+    const rowCode = String(row?.siteCode ?? row?.projectCode ?? '').trim()
+    return rowCode === code
+  }
+  return false
 }
 
 /** @typedef {{ idx: number, loginId?: string, name?: string, role?: string, siteCode?: string|null, trade?: string|null, active?: boolean, phone?: string|null, email?: string|null }} Acc */
@@ -237,14 +282,9 @@ function onSiteSwitcherChange(ev) {
   router.push({ name: 'hrAccountsSite', params: { projectIdx: String(n) } })
 }
 
-const fieldAccounts = computed(() => {
-  const code = currentSiteCode.value.trim()
-  return accounts.value.filter((a) => {
-    if (classify(a) !== 'field') return false
-    if (!code) return true
-    return String(a?.siteCode || '').trim() === code
-  })
-})
+const fieldAccounts = computed(() =>
+  accounts.value.filter((a) => classify(a) === 'field' && entityBelongsToSelectedSite(a)),
+)
 
 /** API에 소속 타입이 있으면 우선, 없으면 역할로 본사 직영 vs 협력체 구분 */
 function workerAffiliationKind(acc) {
@@ -275,9 +315,7 @@ const directorFieldAccounts = computed(() =>
 )
 
 const hqFieldAccounts = computed(() =>
-  fieldAccounts.value.filter(
-    (a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a),
-  ),
+  fieldAccounts.value.filter((a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a)),
 )
 const tradeFieldAccounts = computed(() =>
   fieldAccounts.value.filter(
@@ -321,9 +359,7 @@ function toggleTradeAccordion(label) {
 }
 
 watch(fieldAccounts, (rows) => {
-  const hasHq = rows.some(
-    (a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a),
-  )
+  const hasHq = rows.some((a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a))
   const hasTradeTab = rows.some(
     (a) => workerAffiliationKind(a) === 'partner' && !isSiteDirectorAccount(a),
   )
@@ -357,12 +393,6 @@ function statusLabel(raw) {
 function isPendingRequest(row) {
   const s = String(row?.status || '').toUpperCase()
   return s === 'PENDING' || s === 'WAIT'
-}
-
-function requestSiteKey(row) {
-  const v = row?.siteCode ?? row?.projectCode ?? row?.site ?? ''
-  const t = String(v || '').trim()
-  return t || '미지정'
 }
 
 /** 요청 행 — 신규 계정 부여 권한 (AccountRequestDto.requestedRole) */
@@ -401,7 +431,8 @@ function requestRowDetailText(rq) {
   const ds = String(d || '').trim()
   if (ds) parts.push(ds)
   const note = String(rq?.note ?? '').trim()
-  if (note && String(rq?.status || '').toUpperCase() === 'REJECTED') parts.push(`${T.lblDetailRejectNote}: ${note}`)
+  if (note && String(rq?.status || '').toUpperCase() === 'REJECTED')
+    parts.push(`${T.lblDetailRejectNote}: ${note}`)
   if (!parts.length) {
     const rc = []
     const site = String(rq?.siteCode ?? '').trim()
@@ -426,6 +457,7 @@ function requestSiteNameForDetail(rq) {
 /** UI 확인용 요청 및 승인 탭 더미 (API 응답 앞에 표시) */
 const accountRequestsDummy = computed(() => {
   const code = currentSiteCode.value.trim()
+  const curProjectIdx = Number.isFinite(projectIdxParam.value) ? projectIdxParam.value : undefined
   const when = new Date()
   when.setHours(when.getHours() - 2)
   const iso = when.toISOString()
@@ -445,6 +477,7 @@ const accountRequestsDummy = computed(() => {
       name: '김요청',
       role: USER_ROLE.SECTION_SUPERVISOR,
       siteCode: code || undefined,
+      projectIdx: curProjectIdx,
       trade: '토목',
     },
     {
@@ -461,6 +494,7 @@ const accountRequestsDummy = computed(() => {
       name: '이협력',
       role: USER_ROLE.SECTION_LEADER,
       siteCode: code || undefined,
+      projectIdx: curProjectIdx,
       trade: '골조',
     },
   ]
@@ -473,9 +507,8 @@ const accountRequestsWithDummy = computed(() => [
 
 const accountRequestsFiltered = computed(() => {
   const list = accountRequestsWithDummy.value
-  const code = currentSiteCode.value.trim()
-  if (!code) return list
-  return list.filter((r) => requestSiteKey(r) === code)
+  if (!Number.isFinite(projectIdxParam.value)) return list
+  return list.filter((r) => entityBelongsToSelectedSite(r))
 })
 
 function formatReqDate(row) {
@@ -538,13 +571,9 @@ function accountUpdatePayload(row, overrides = {}) {
   return {
     name: String(row?.name || '').trim(),
     phone:
-      row?.phone != null && String(row.phone).trim() !== ''
-        ? String(row.phone).trim()
-        : undefined,
+      row?.phone != null && String(row.phone).trim() !== '' ? String(row.phone).trim() : undefined,
     email:
-      row?.email != null && String(row.email).trim() !== ''
-        ? String(row.email).trim()
-        : undefined,
+      row?.email != null && String(row.email).trim() !== '' ? String(row.email).trim() : undefined,
     role: r,
     siteCode: String(row?.siteCode || '').trim() || undefined,
     trade: String(row?.trade || '').trim() || undefined,
@@ -848,7 +877,9 @@ async function submitModal() {
     )
     return
   }
-  const tradePut = editNeedsTrade.value ? String(formEdit.trade || '').trim() || undefined : undefined
+  const tradePut = editNeedsTrade.value
+    ? String(formEdit.trade || '').trim() || undefined
+    : undefined
   const prevRow = accounts.value.find((a) => a.idx === idx)
 
   /** 관리자·본사 등 현장 폼 미노출 시 기존 값 유지 */
@@ -971,13 +1002,20 @@ async function submitApprove() {
   const pwd = String(approvePassword.value || '').trim()
   if (!row) return
   if (pwd.length > 0 && pwd.length < 8) {
-    pushToast('초기 비밀번호를 입력할 경우 8자 이상이어야 합니다. 비워 두면 서버에서 자동 생성합니다.', 'warning')
+    pushToast(
+      '초기 비밀번호를 입력할 경우 8자 이상이어야 합니다. 비워 두면 서버에서 자동 생성합니다.',
+      'warning',
+    )
     return
   }
   const body = pwd.length >= 8 ? { initialPassword: pwd } : {}
   try {
     await approveAccountRequest(row.idx, body)
-    pushToast(pwd.length >= 8 ? '승인 처리되었습니다.' : '승인되었습니다. 초기 비밀번호는 서버에서 생성되었습니다.')
+    pushToast(
+      pwd.length >= 8
+        ? '승인 처리되었습니다.'
+        : '승인되었습니다. 초기 비밀번호는 서버에서 생성되었습니다.',
+    )
     closeApprove()
     closeRequestDetail()
     pruneReqSelectionAfterChange([row])
@@ -1003,7 +1041,9 @@ async function submitReject() {
   const row = rejectTarget.value
   if (!row) return
   try {
-    await rejectAccountRequest(row.idx, { note: String(rejectNote.value || '').trim() || undefined })
+    await rejectAccountRequest(row.idx, {
+      note: String(rejectNote.value || '').trim() || undefined,
+    })
     pushToast('거절 처리되었습니다.')
     closeReject()
     closeRequestDetail()
@@ -1066,15 +1106,13 @@ function toggleSelectAllRequests(ev) {
 /** 일괄 완료·반려 버튼 활성화: 대기 상태이며 체크된 행 전부(예시 행 포함). 제출 시 예시 행만 골라진 경우는 API 호출 없이 안내 */
 const bulkApproveEligible = computed(() =>
   accountRequestsFiltered.value.filter(
-    (r) =>
-      selectedReqKeys.value.has(reqRowKey(r)) && isPendingRequest(r) && reqRowKey(r),
+    (r) => selectedReqKeys.value.has(reqRowKey(r)) && isPendingRequest(r) && reqRowKey(r),
   ),
 )
 
 const bulkRejectEligible = computed(() =>
   accountRequestsFiltered.value.filter(
-    (r) =>
-      selectedReqKeys.value.has(reqRowKey(r)) && isPendingRequest(r) && reqRowKey(r),
+    (r) => selectedReqKeys.value.has(reqRowKey(r)) && isPendingRequest(r) && reqRowKey(r),
   ),
 )
 
@@ -1154,8 +1192,7 @@ async function submitBulkRejectRequests() {
   const list = bulkRejectEligible.value
   if (!list.length) return
   const apiRows = list.filter((r) => !r.demo)
-  const demoOnly =
-    apiRows.length === 0 && list.some((r) => r.demo)
+  const demoOnly = apiRows.length === 0 && list.some((r) => r.demo)
   if (demoOnly) {
     pushToast(T.demoRequestHint, 'warning')
     return
@@ -1226,10 +1263,14 @@ watch(
     <div class="flex shrink-0 flex-col gap-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1">
-          <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">{{ T.kicker }}</p>
+          <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">
+            {{ T.kicker }}
+          </p>
           <div class="mt-1 flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2">
             <h1 class="text-xl font-bold leading-tight text-forena-900">{{ T.title }}</h1>
-            <label class="relative inline-flex min-w-0 max-w-[min(100%,22rem)] flex-1 items-center sm:flex-initial">
+            <label
+              class="relative inline-flex min-w-0 max-w-[min(100%,22rem)] flex-1 items-center sm:flex-initial"
+            >
               <span class="sr-only">{{ currentSiteDisplay }}</span>
               <select
                 class="w-full min-w-0 cursor-pointer appearance-none border-0 border-b border-forena-200/70 bg-transparent py-0.5 pr-7 pb-1 pl-0 text-sm font-semibold text-forena-900 shadow-none transition hover:border-flare-400/70 focus:border-flare-500 focus:outline-none focus:ring-0"
@@ -1237,7 +1278,9 @@ watch(
                 :aria-label="currentSiteDisplay"
                 @change="onSiteSwitcherChange"
               >
-                <option v-for="p in sortedProjectOptions" :key="p.idx" :value="p.idx">{{ projectOptionLabel(p) }}</option>
+                <option v-for="p in sortedProjectOptions" :key="p.idx" :value="p.idx">
+                  {{ projectOptionLabel(p) }}
+                </option>
               </select>
               <ChevronDown
                 class="pointer-events-none absolute top-1/2 right-0 h-4 w-4 -translate-y-1/2 text-forena-500/75"
@@ -1456,18 +1499,25 @@ watch(
               <table class="w-full min-w-[920px] border-collapse text-sm">
                 <thead>
                   <tr :class="accountStatusTheadClass">
-                    <th class="w-[13%] py-2.5 pl-5 pr-3 text-left text-xs font-bold sm:pl-6">{{ T.colLoginId }}</th>
+                    <th class="w-[13%] py-2.5 pl-5 pr-3 text-left text-xs font-bold sm:pl-6">
+                      {{ T.colLoginId }}
+                    </th>
                     <th class="w-[15%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerName }}</th>
                     <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerPhone }}</th>
                     <th class="w-[17%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerRole }}</th>
                     <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerTrade }}</th>
                     <th class="w-[11%] px-3 py-2.5 text-left text-xs">{{ T.colStatus }}</th>
-                    <th class="w-[18%] px-3 py-2.5 pr-5 text-center text-xs sm:pr-6">{{ T.colActions }}</th>
+                    <th class="w-[18%] px-3 py-2.5 pr-5 text-center text-xs sm:pr-6">
+                      {{ T.colActions }}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!hqFieldAccounts.length">
-                    <td colspan="7" class="border-b border-slate-100/80 py-8 pl-5 pr-5 text-center text-xs text-slate-400 sm:pl-6 sm:pr-6">
+                    <td
+                      colspan="7"
+                      class="border-b border-slate-100/80 py-8 pl-5 pr-5 text-center text-xs text-slate-400 sm:pl-6 sm:pr-6"
+                    >
                       표시할 계정이 없습니다.
                     </td>
                   </tr>
@@ -1477,13 +1527,19 @@ watch(
                     class="border-b border-violet-100/40 transition hover:bg-violet-50/40"
                     :class="ri % 2 === 0 ? 'bg-white' : 'bg-violet-50/20'"
                   >
-                    <td class="truncate py-2.5 pl-5 pr-3 font-mono text-xs text-forena-800 sm:pl-6">{{ row.loginId }}</td>
+                    <td class="truncate py-2.5 pl-5 pr-3 font-mono text-xs text-forena-800 sm:pl-6">
+                      {{ row.loginId }}
+                    </td>
                     <td class="truncate px-3 py-2.5 text-left">
                       <span class="font-semibold text-forena-900">{{ row.name }}</span>
                     </td>
                     <td class="truncate px-3 py-2.5 text-left text-xs">{{ row.phone || '—' }}</td>
-                    <td class="truncate px-3 py-2.5 text-left text-xs">{{ userRoleLabel(rowRoleStr(row)) }}</td>
-                    <td class="truncate px-3 py-2.5 text-left text-xs text-forena-700">{{ row.trade || '—' }}</td>
+                    <td class="truncate px-3 py-2.5 text-left text-xs">
+                      {{ userRoleLabel(rowRoleStr(row)) }}
+                    </td>
+                    <td class="truncate px-3 py-2.5 text-left text-xs text-forena-700">
+                      {{ row.trade || '—' }}
+                    </td>
                     <td class="whitespace-nowrap px-3 py-2.5 text-left">
                       <span
                         class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1"
@@ -1534,7 +1590,10 @@ watch(
 
           <!-- 공종별: 공종 단위 아코디언 -->
           <div v-else class="divide-y divide-slate-200/70">
-            <div v-if="!tradeGroupedRows.length" class="px-4 py-10 text-center text-sm text-slate-400">
+            <div
+              v-if="!tradeGroupedRows.length"
+              class="px-4 py-10 text-center text-sm text-slate-400"
+            >
               표시할 계정이 없습니다.
             </div>
             <div v-for="[tradeLabel, tradeRows] in tradeGroupedRows" :key="'trade-' + tradeLabel">
@@ -1549,7 +1608,11 @@ watch(
                     class="h-3.5 w-3.5 shrink-0 text-forena-600"
                     aria-hidden="true"
                   />
-                  <ChevronRight v-else class="h-3.5 w-3.5 shrink-0 text-forena-600" aria-hidden="true" />
+                  <ChevronRight
+                    v-else
+                    class="h-3.5 w-3.5 shrink-0 text-forena-600"
+                    aria-hidden="true"
+                  />
                   <span class="truncate">{{ tradeLabel }}</span>
                   <span class="text-[11px] font-semibold tabular-nums text-forena-600">
                     ({{ tradeRows.length }})
@@ -1561,13 +1624,21 @@ watch(
                   <table class="w-full min-w-[920px] border-collapse text-sm">
                     <thead>
                       <tr :class="accountStatusTheadClass">
-                        <th class="w-[13%] py-2.5 pl-5 pr-3 text-left text-xs font-bold sm:pl-6">{{ T.colLoginId }}</th>
+                        <th class="w-[13%] py-2.5 pl-5 pr-3 text-left text-xs font-bold sm:pl-6">
+                          {{ T.colLoginId }}
+                        </th>
                         <th class="w-[15%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerName }}</th>
-                        <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerPhone }}</th>
+                        <th class="w-[13%] px-3 py-2.5 text-left text-xs">
+                          {{ T.colWorkerPhone }}
+                        </th>
                         <th class="w-[17%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerRole }}</th>
-                        <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerTrade }}</th>
+                        <th class="w-[13%] px-3 py-2.5 text-left text-xs">
+                          {{ T.colWorkerTrade }}
+                        </th>
                         <th class="w-[11%] px-3 py-2.5 text-left text-xs">{{ T.colStatus }}</th>
-                        <th class="w-[18%] px-3 py-2.5 pr-5 text-center text-xs sm:pr-6">{{ T.colActions }}</th>
+                        <th class="w-[18%] px-3 py-2.5 pr-5 text-center text-xs sm:pr-6">
+                          {{ T.colActions }}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1577,13 +1648,23 @@ watch(
                         class="border-b border-violet-100/40 transition hover:bg-violet-50/40"
                         :class="ri % 2 === 0 ? 'bg-white' : 'bg-violet-50/20'"
                       >
-                        <td class="truncate py-2.5 pl-5 pr-3 font-mono text-xs text-forena-800 sm:pl-6">{{ row.loginId }}</td>
+                        <td
+                          class="truncate py-2.5 pl-5 pr-3 font-mono text-xs text-forena-800 sm:pl-6"
+                        >
+                          {{ row.loginId }}
+                        </td>
                         <td class="truncate px-3 py-2.5 text-left">
                           <span class="font-semibold text-forena-900">{{ row.name }}</span>
                         </td>
-                        <td class="truncate px-3 py-2.5 text-left text-xs">{{ row.phone || '—' }}</td>
-                        <td class="truncate px-3 py-2.5 text-left text-xs">{{ userRoleLabel(rowRoleStr(row)) }}</td>
-                        <td class="truncate px-3 py-2.5 text-left text-xs text-forena-700">{{ row.trade || '—' }}</td>
+                        <td class="truncate px-3 py-2.5 text-left text-xs">
+                          {{ row.phone || '—' }}
+                        </td>
+                        <td class="truncate px-3 py-2.5 text-left text-xs">
+                          {{ userRoleLabel(rowRoleStr(row)) }}
+                        </td>
+                        <td class="truncate px-3 py-2.5 text-left text-xs text-forena-700">
+                          {{ row.trade || '—' }}
+                        </td>
                         <td class="whitespace-nowrap px-3 py-2.5 text-left">
                           <span
                             class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1"
@@ -1690,14 +1771,22 @@ watch(
                       @change="toggleSelectAllRequests"
                     />
                   </th>
-                  <th class="w-[14%] py-2.5 pr-3 pl-2 text-left text-xs font-bold sm:pl-3">{{ T.colReqAt }}</th>
-                  <th class="w-[21%] px-3 py-2.5 text-left text-xs font-bold">{{ T.colReqTitle }}</th>
+                  <th class="w-[14%] py-2.5 pr-3 pl-2 text-left text-xs font-bold sm:pl-3">
+                    {{ T.colReqAt }}
+                  </th>
+                  <th class="w-[21%] px-3 py-2.5 text-left text-xs font-bold">
+                    {{ T.colReqTitle }}
+                  </th>
                   <th class="w-[11%] px-3 py-2.5 text-left text-xs font-bold">{{ T.colName }}</th>
-                  <th class="w-[16%] px-3 py-2.5 text-left text-xs font-bold">{{ T.colReqRequesterRole }}</th>
+                  <th class="w-[16%] px-3 py-2.5 text-left text-xs font-bold">
+                    {{ T.colReqRequesterRole }}
+                  </th>
                   <th class="min-w-[10.5rem] w-[18%] px-3 py-2.5 text-left text-xs font-bold">
                     {{ T.colReqStatus }}
                   </th>
-                  <th class="w-[6.75rem] shrink-0 px-2 py-2.5 pr-4 text-center text-xs font-bold sm:pr-5">
+                  <th
+                    class="w-[6.75rem] shrink-0 px-2 py-2.5 pr-4 text-center text-xs font-bold sm:pr-5"
+                  >
                     {{ T.colReqDetail }}
                   </th>
                 </tr>
@@ -1718,14 +1807,18 @@ watch(
                       @change="toggleReqCheckbox(rq, $event)"
                     />
                   </td>
-                  <td class="whitespace-nowrap py-2.5 pr-3 pl-2 text-left text-xs text-forena-600 sm:pl-3">
+                  <td
+                    class="whitespace-nowrap py-2.5 pr-3 pl-2 text-left text-xs text-forena-600 sm:pl-3"
+                  >
                     {{ formatReqDate(rq) }}
                   </td>
                   <td class="truncate px-3 py-2.5 text-left text-xs font-medium text-forena-900">
                     {{ requestRowTitle(rq) }}
                   </td>
                   <td class="truncate px-3 py-2.5 text-left text-xs">{{ rq.name ?? '—' }}</td>
-                  <td class="truncate px-3 py-2.5 text-left text-xs">{{ userRoleLabel(requestRowRoleStr(rq)) }}</td>
+                  <td class="truncate px-3 py-2.5 text-left text-xs">
+                    {{ userRoleLabel(requestRowRoleStr(rq)) }}
+                  </td>
                   <td class="px-3 py-2.5 text-left align-middle">
                     <div class="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center">
                       <span
@@ -1742,7 +1835,9 @@ watch(
                       </span>
                       <template v-if="isPendingRequest(rq)">
                         <template v-if="rq.demo">
-                          <span class="text-[10px] font-medium text-slate-400">{{ T.demoRequestHint }}</span>
+                          <span class="text-[10px] font-medium text-slate-400">{{
+                            T.demoRequestHint
+                          }}</span>
                         </template>
                         <div v-else class="flex flex-wrap gap-1">
                           <button
@@ -1793,7 +1888,9 @@ watch(
           role="dialog"
           aria-modal="true"
         >
-          <div class="flex items-start justify-between gap-2 border-b border-forena-100/80 px-4 py-3">
+          <div
+            class="flex items-start justify-between gap-2 border-b border-forena-100/80 px-4 py-3"
+          >
             <h2 class="min-w-0 flex-1 text-sm font-bold leading-snug text-forena-900">
               {{ T.detailModalTitle }}
             </h2>
@@ -1812,7 +1909,9 @@ watch(
               </span>
               <template v-if="isPendingRequest(selectedRequest)">
                 <template v-if="selectedRequest.demo">
-                  <span class="max-w-[8rem] text-right text-[10px] font-medium leading-tight text-slate-400">
+                  <span
+                    class="max-w-[8rem] text-right text-[10px] font-medium leading-tight text-slate-400"
+                  >
                     {{ T.demoRequestHint }}
                   </span>
                 </template>
@@ -1848,7 +1947,9 @@ watch(
             <dl class="space-y-2.5">
               <div>
                 <dt class="text-[11px] font-bold text-forena-500">{{ T.colReqTitle }}</dt>
-                <dd class="mt-0.5 font-semibold text-forena-900">{{ requestRowTitle(selectedRequest) }}</dd>
+                <dd class="mt-0.5 font-semibold text-forena-900">
+                  {{ requestRowTitle(selectedRequest) }}
+                </dd>
               </div>
               <div>
                 <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailAt }}</dt>
@@ -1859,18 +1960,26 @@ watch(
                 <dd class="mt-0.5">{{ requestSiteNameForDetail(selectedRequest) }}</dd>
               </div>
               <div>
-                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedLoginId }}</dt>
+                <dt class="text-[11px] font-bold text-forena-500">
+                  {{ T.lblDetailRequestedLoginId }}
+                </dt>
                 <dd class="mt-0.5 font-mono text-xs">
                   {{ selectedRequest.requestedLoginId ?? selectedRequest.loginId ?? '—' }}
                 </dd>
               </div>
               <div>
-                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedName }}</dt>
+                <dt class="text-[11px] font-bold text-forena-500">
+                  {{ T.lblDetailRequestedName }}
+                </dt>
                 <dd class="mt-0.5">{{ selectedRequest.requestedName ?? '—' }}</dd>
               </div>
               <div>
-                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedRole }}</dt>
-                <dd class="mt-0.5">{{ userRoleLabel(requestRowRequestedRoleStr(selectedRequest)) }}</dd>
+                <dt class="text-[11px] font-bold text-forena-500">
+                  {{ T.lblDetailRequestedRole }}
+                </dt>
+                <dd class="mt-0.5">
+                  {{ userRoleLabel(requestRowRequestedRoleStr(selectedRequest)) }}
+                </dd>
               </div>
               <div>
                 <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailName }}</dt>
@@ -1913,7 +2022,11 @@ watch(
             <h2 class="text-sm font-bold text-forena-900">
               {{ modalMode === 'create' ? T.modalCreate : T.modalEdit }}
             </h2>
-            <button type="button" class="rounded-lg p-1 text-forena-400 hover:bg-forena-50" @click="closeModal">
+            <button
+              type="button"
+              class="rounded-lg p-1 text-forena-400 hover:bg-forena-50"
+              @click="closeModal"
+            >
               <X class="h-4 w-4" />
             </button>
           </div>
@@ -1940,7 +2053,11 @@ watch(
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.phone }}</span>
-                <input v-model="formCreate.phone" type="tel" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+                <input
+                  v-model="formCreate.phone"
+                  type="tel"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                />
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
@@ -1952,21 +2069,31 @@ watch(
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">이름</span>
-                <input v-model="formCreate.name" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+                <input
+                  v-model="formCreate.name"
+                  type="text"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                />
               </label>
 
               <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.rolePickHint }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.rolePickHint
+                }}</span>
                 <select
                   v-model="formCreate.role"
                   class="w-full rounded-lg border border-forena-200/90 bg-white px-3 py-2 text-sm shadow-sm"
                 >
-                  <option v-for="ro in ROLE_OPTIONS" :key="ro.value" :value="ro.value">{{ ro.label }}</option>
+                  <option v-for="ro in ROLE_OPTIONS" :key="ro.value" :value="ro.value">
+                    {{ ro.label }}
+                  </option>
                 </select>
               </label>
 
               <label v-if="needsSiteForRole" class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.sitePick }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.sitePick
+                }}</span>
                 <select
                   v-model.number="formCreate.projectIdx"
                   class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm"
@@ -1976,11 +2103,15 @@ watch(
                     {{ p.name }}
                   </option>
                 </select>
-                <p v-if="selectedProjectLabel" class="mt-1 text-[10px] text-forena-400">선택: {{ selectedProjectLabel }}</p>
+                <p v-if="selectedProjectLabel" class="mt-1 text-[10px] text-forena-400">
+                  선택: {{ selectedProjectLabel }}
+                </p>
               </label>
 
               <label v-if="needsTrade" class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.tradePick }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.tradePick
+                }}</span>
                 <span class="mb-1 block text-[10px] text-forena-400">{{ T.tradeHint }}</span>
                 <select
                   v-model="formCreate.trade"
@@ -1994,9 +2125,13 @@ watch(
             </template>
 
             <template v-else>
-              <p class="rounded-lg bg-forena-50 px-3 py-2 text-[11px] text-forena-600">{{ T.loginIdRo }}</p>
+              <p class="rounded-lg bg-forena-50 px-3 py-2 text-[11px] text-forena-600">
+                {{ T.loginIdRo }}
+              </p>
               <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.lblAccountName }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.lblAccountName
+                }}</span>
                 <input
                   v-model="formEdit.name"
                   type="text"
@@ -2005,7 +2140,11 @@ watch(
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.phone }}</span>
-                <input v-model="formEdit.phone" type="tel" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+                <input
+                  v-model="formEdit.phone"
+                  type="tel"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                />
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
@@ -2016,13 +2155,22 @@ watch(
                 />
               </label>
               <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.rolePickHint }}</span>
-                <select v-model="formEdit.role" class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2">
-                  <option v-for="ro in ROLE_OPTIONS" :key="ro.value" :value="ro.value">{{ ro.label }}</option>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.rolePickHint
+                }}</span>
+                <select
+                  v-model="formEdit.role"
+                  class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2"
+                >
+                  <option v-for="ro in ROLE_OPTIONS" :key="ro.value" :value="ro.value">
+                    {{ ro.label }}
+                  </option>
                 </select>
               </label>
               <label v-if="editNeedsSite" class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.sitePick }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.sitePick
+                }}</span>
                 <select
                   v-model.number="formEdit.projectIdx"
                   class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm"
@@ -2034,7 +2182,9 @@ watch(
                 </select>
               </label>
               <label v-if="editNeedsTrade" class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.tradePick }}</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+                  T.tradePick
+                }}</span>
                 <span class="mb-1 block text-[10px] text-forena-400">{{ T.tradeHint }}</span>
                 <select
                   v-model="formEdit.trade"
@@ -2087,9 +2237,13 @@ watch(
       >
         <div class="w-full max-w-sm rounded-2xl border border-flare-100/90 bg-white p-4 shadow-xl">
           <h3 class="text-sm font-bold text-forena-900">{{ T.modalApproveTitle }}</h3>
-          <p class="mt-1 text-[11px] leading-snug text-forena-500">{{ T.approvePwdOptionalHint }}</p>
+          <p class="mt-1 text-[11px] leading-snug text-forena-500">
+            {{ T.approvePwdOptionalHint }}
+          </p>
           <label class="mt-3 block text-sm">
-            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.labelInitialPwd }}</span>
+            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+              T.labelInitialPwd
+            }}</span>
             <input
               v-model="approvePassword"
               type="password"
@@ -2099,7 +2253,11 @@ watch(
             />
           </label>
           <div class="mt-4 flex gap-2">
-            <button type="button" class="flex-1 rounded-lg border border-forena-200 py-2 text-xs font-bold" @click="closeApprove">
+            <button
+              type="button"
+              class="flex-1 rounded-lg border border-forena-200 py-2 text-xs font-bold"
+              @click="closeApprove"
+            >
               {{ T.cancel }}
             </button>
             <button
@@ -2124,7 +2282,9 @@ watch(
         <div class="w-full max-w-sm rounded-2xl border border-flare-100/90 bg-white p-4 shadow-xl">
           <h3 class="text-sm font-bold text-forena-900">{{ T.modalRejectTitle }}</h3>
           <label class="mt-3 block text-sm">
-            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.labelRejectNote }}</span>
+            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+              T.labelRejectNote
+            }}</span>
             <textarea
               v-model="rejectNote"
               rows="3"
@@ -2132,7 +2292,11 @@ watch(
             />
           </label>
           <div class="mt-4 flex gap-2">
-            <button type="button" class="flex-1 rounded-lg border border-forena-200 py-2 text-xs font-bold" @click="closeReject">
+            <button
+              type="button"
+              class="flex-1 rounded-lg border border-forena-200 py-2 text-xs font-bold"
+              @click="closeReject"
+            >
               {{ T.cancel }}
             </button>
             <button
@@ -2158,7 +2322,9 @@ watch(
           <h3 class="text-sm font-bold text-forena-900">{{ T.bulkRejectModalTitle }}</h3>
           <p class="mt-1 text-xs text-forena-600">{{ bulkRejectEligible.length }}건</p>
           <label class="mt-3 block text-sm">
-            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.labelRejectNote }}</span>
+            <span class="mb-1 block text-[11px] font-bold text-forena-500">{{
+              T.labelRejectNote
+            }}</span>
             <textarea
               v-model="bulkRejectNoteInput"
               rows="3"
