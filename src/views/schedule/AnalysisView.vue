@@ -1,6 +1,10 @@
 <script setup>
-import { ref, computed, reactive, watch, onMounted } from 'vue'
+import { ref, computed, reactive, watch, onMounted, onBeforeUnmount } from 'vue'
 import { fetchProgressList, fetchDelayRiskTasks } from '@/api/analysis.js'
+import {
+  createAiScheduleRecommendation,
+  fetchAiScheduleRecommendation,
+} from '@/api/aischedulerecommendation.js'
 import {
   createScheduleChange,
   fetchScheduleChangeList,
@@ -34,6 +38,7 @@ import {
   ListChecks,
   History,
   Search,
+  LoaderCircle,
 } from 'lucide-vue-next'
 
 // ─── 권한 / 역할 ──────────────────────────────────────────────────────────
@@ -147,6 +152,7 @@ function mapProgressItem(item) {
     forecastEnd: item.forecastEnd ?? '',
     actualSource: item.actualSource ?? 'NONE',
     latestReportDate: item.latestReportDate ?? '',
+    analysisDate: item.analysisDate ?? item.latestReportDate ?? '',
     status: item.status ?? '정상',
     risk: item.risk ?? '낮음',
     partner: item.partner ?? '-',
@@ -312,6 +318,13 @@ function findDetailSchedulesForMonthly(monthlyPlanId) {
   return weeklyWorkPlans.value
     .filter((p) => Number(p.parentWorkPlanId ?? p.parent_work_plan_id ?? p.parentId ?? 0) === id)
     .sort((a, b) => String(a.startDate ?? '').localeCompare(String(b.startDate ?? '')))
+}
+
+function isActionableDetailSchedule(schedule) {
+  const id = getPlanId(schedule)
+  const requiredCount = Number(schedule?.requiredCount ?? 0)
+  const date = schedule?.startDate || schedule?.date
+  return !!id && !!date && requiredCount > 0
 }
 
 function isSameOrAfter(dateValue, baseValue) {
@@ -510,7 +523,9 @@ function buildRedistributionPlan(task) {
   const end = parseDate(task?.plannedEnd || task?.originalEnd)
   const plannedPct = clampPct(task?.plannedPct ?? 0)
   const actualPct = clampPct(task?.actualPct ?? 0)
-  const detailSchedules = Array.isArray(task?.detailSchedules) ? task.detailSchedules : []
+  const detailSchedules = (Array.isArray(task?.detailSchedules) ? task.detailSchedules : []).filter(
+    isActionableDetailSchedule,
+  )
 
   const hasTodayReport = hasTodayReportForMonthlyTask(detailSchedules)
   const beforeWorkEnd = now.getHours() < 17
@@ -751,9 +766,15 @@ function mapDelayTaskItem(item) {
     item.originalEnd ??
     item.effectiveEnd ??
     ''
-  const ended = !!(parseDate(plannedEnd) && new Date() > parseDate(plannedEnd) && actualPct < 100)
+  const analysisDate = item.analysisDate ?? item.latestReportDate ?? ''
+  const statusBaseDate = analysisDate || new Date()
+  const ended = !!(
+    parseDate(plannedEnd) &&
+    parseDate(statusBaseDate) > parseDate(plannedEnd) &&
+    actualPct < 100
+  )
   const risk = riskFromDiff(diff, ended, actualPct)
-  const status = statusFromDiff(diff, ended, actualPct, plannedStart)
+  const status = statusFromDiff(diff, ended, actualPct, plannedStart, statusBaseDate)
 
   const mapped = {
     id: item.workPlanId,
@@ -770,6 +791,7 @@ function mapDelayTaskItem(item) {
     actualPct,
     actualSource: item.actualSource ?? 'NONE',
     latestReportDate: item.latestReportDate ?? '',
+    analysisDate,
     dailyReportId: item.dailyReportId ?? null,
     diff,
     status,
@@ -876,6 +898,12 @@ onMounted(() => {
 
 // ─── AI 추천안 ──────────────────────────────────────────────────────────
 const aiRecs = reactive({})
+const aiRecommendationPollers = new Map()
+
+onBeforeUnmount(() => {
+  aiRecommendationPollers.forEach((timer) => clearInterval(timer))
+  aiRecommendationPollers.clear()
+})
 
 function buildDetailScheduleEditProposals(redistribution) {
   if (!redistribution?.days?.length) return []
@@ -1026,6 +1054,42 @@ function buildDetailedAiRecommendationText(task, redistribution, detailEditPropo
   ].join('\n')
 }
 
+function buildOperationalRecommendationText(task, redistribution, proposals = []) {
+  const shortage = Math.abs(Number(task.diff || 0)).toFixed(1)
+  const latestReportDate = task.latestReportDate || task.analysisDate || '최근 보고일'
+  const expectedDelayDays = Number(task.expectedDelayDays || 0)
+
+  if (!proposals.length) {
+    return (
+      `최신 보고일 ${latestReportDate} 기준 계획 ${task.plannedPct}%, 실제 ${task.actualPct}%로 ` +
+      `${shortage}%p 부족합니다. 현재 조정 가능한 하위 세부일정이 없어 월간 세부계획 매핑과 작업지시서 발급 상태를 먼저 확인해야 합니다.`
+    )
+  }
+
+  const ids = proposals
+    .map((proposal) => proposal.workPlanId)
+    .filter(Boolean)
+    .join(', ')
+  const dates = proposals
+    .map((proposal) => proposal.date)
+    .filter(Boolean)
+    .join(', ')
+  const targetText = proposals
+    .map(
+      (proposal) => `${proposal.date || '-'} ${proposal.normalTargetPct}%→${proposal.targetPct}%`,
+    )
+    .join(', ')
+
+  return [
+    `최신 보고일 ${latestReportDate} 기준 계획 ${task.plannedPct}%, 실제 ${task.actualPct}%로 ${shortage}%p 부족하며 예상 지연은 ${expectedDelayDays}일입니다.`,
+    `가까운 실행 가능 작업 ${ids ? `${ids}번` : ''}${dates ? `(${dates})` : ''}에 미달분을 분산 반영합니다.`,
+    `목표 진척률은 ${targetText} 기준으로 관리하고, 작업명은 기존 세부작업명을 유지한 상태에서 인력·작업시간·비고만 검토합니다.`,
+    redistribution?.normalReturnDate
+      ? `${redistribution.normalReturnDate} 이후 일정은 기존 목표율로 복귀하는 것을 기준으로 합니다.`
+      : '남은 일정은 기존 목표율 복귀를 기준으로 확인합니다.',
+  ].join('\n')
+}
+
 function ensureAiRecommendation(task) {
   if (!task?.id) return
   if (aiRecs[task.id]) return
@@ -1041,6 +1105,10 @@ function ensureAiRecommendation(task) {
       : '현재 계획 대비 미달분이 크지 않아 남은 세부일정은 기존 목표 중심으로 관리합니다.'
 
   aiRecs[task.id] = {
+    source: 'RULE_FALLBACK',
+    aiStatus: 'READY',
+    aiError: '',
+    recommendationId: null,
     summary:
       `${task.name} 월간 세부계획은 현재 계획 대비 ${diffText} 상태입니다. ` +
       `종료일(${task.originalEnd || task.plannedEnd || '-'})은 우선 유지하고, 전체 남은 기간에 균등 분산하기보다 ${catchUpText}`,
@@ -1063,6 +1131,377 @@ function ensureAiRecommendation(task) {
 }
 
 // ─── 일정 변경 요청 ──────────────────────────────────────────────────────
+function isPlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseMaybeJson(value) {
+  if (typeof value !== 'string') return value
+  try {
+    return JSON.parse(value)
+  } catch {
+    return value
+  }
+}
+
+function unwrapAiApiData(response) {
+  if (!isPlainObject(response)) return response
+  if (
+    'data' in response &&
+    ('success' in response || 'isSuccess' in response || 'code' in response)
+  ) {
+    return response.data
+  }
+  return response
+}
+
+function pickText(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function pickNumber(value, fallback = 0) {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function readAiResultParts(record) {
+  const result = parseMaybeJson(record?.result ?? record ?? {})
+  const resultObject = isPlainObject(result) ? result : {}
+  const nestedRecommendation = isPlainObject(resultObject.recommendation)
+    ? resultObject.recommendation
+    : {}
+  const body = { ...resultObject, ...nestedRecommendation }
+  const changeSummary = isPlainObject(body.changeSummary)
+    ? body.changeSummary
+    : isPlainObject(resultObject.changeSummary)
+      ? resultObject.changeSummary
+      : {}
+  const detailChanges = Array.isArray(body.detailChanges)
+    ? body.detailChanges
+    : Array.isArray(resultObject.detailChanges)
+      ? resultObject.detailChanges
+      : []
+
+  return {
+    result,
+    resultObject,
+    body,
+    changeSummary,
+    detailChanges,
+  }
+}
+
+function findFallbackProposal(task, change, index = 0) {
+  const proposals = aiRecs[task.id]?.detailEditProposals || []
+  const workPlanId = Number(change?.workPlanId ?? 0)
+  if (workPlanId) {
+    const byId = proposals.find((proposal) => Number(proposal.workPlanId || 0) === workPlanId)
+    if (byId) return byId
+  }
+  return proposals[index] || {}
+}
+
+function normalizeAiDetailProposal(task, change, index = 0) {
+  change = isPlainObject(change) ? change : {}
+  const fallback = findFallbackProposal(task, change, index)
+  const originalRequiredCount = pickNumber(
+    change.originalRequiredCount,
+    pickNumber(fallback.originalRequiredCount, 0),
+  )
+  const recommendedRequiredCount = pickNumber(
+    change.recommendedRequiredCount,
+    pickNumber(fallback.recommendedRequiredCount, originalRequiredCount),
+  )
+
+  const proposal = {
+    workPlanId: pickNumber(change.workPlanId, pickNumber(fallback.workPlanId, 0)),
+    date: pickText(change.date, fallback.date),
+    location: pickText(change.location, fallback.location),
+    originalName: pickText(change.originalName, fallback.originalName, task.name),
+    recommendedName: pickText(
+      change.recommendedName,
+      fallback.recommendedName,
+      change.originalName,
+      fallback.originalName,
+      task.name,
+    ),
+    originalRequiredCount,
+    recommendedRequiredCount,
+    normalTargetPct: change.normalTargetPct ?? fallback.normalTargetPct,
+    targetPct: change.targetPct ?? fallback.targetPct,
+    catchUpPct: change.catchUpPct ?? fallback.catchUpPct,
+    carryOver: Boolean(change.carryOver ?? fallback.carryOver),
+    originalNote: pickText(change.originalNote, fallback.originalNote),
+    recommendedNote: pickText(
+      change.recommendedNote,
+      fallback.recommendedNote,
+      change.reason,
+      change.note,
+    ),
+    originalWorkTime: pickText(change.originalWorkTime, fallback.originalWorkTime),
+    recommendedWorkTime: pickText(
+      change.recommendedWorkTime,
+      fallback.recommendedWorkTime,
+      change.workTime,
+    ),
+    originalWorkHours: pickNumber(
+      change.originalWorkHours,
+      pickNumber(fallback.originalWorkHours, 0),
+    ),
+    recommendedWorkHours: pickNumber(
+      change.recommendedWorkHours,
+      pickNumber(fallback.recommendedWorkHours, 0),
+    ),
+    originalManHours: pickNumber(change.originalManHours, pickNumber(fallback.originalManHours, 0)),
+    recommendedManHours: pickNumber(
+      change.recommendedManHours,
+      pickNumber(fallback.recommendedManHours, 0),
+    ),
+    additionalManHours: pickNumber(
+      change.additionalManHours,
+      pickNumber(fallback.additionalManHours, 0),
+    ),
+    addedWorkers: pickNumber(change.addedWorkers, pickNumber(fallback.addedWorkers, 0)),
+    addedWorkHours: pickNumber(change.addedWorkHours, pickNumber(fallback.addedWorkHours, 0)),
+    manHourAdjustmentReason: pickText(
+      change.manHourAdjustmentReason,
+      change.reason,
+      fallback.manHourAdjustmentReason,
+    ),
+    trade: pickText(change.trade, fallback.trade, task.process),
+    partner: pickText(change.partner, fallback.partner),
+    manager: pickText(change.manager, fallback.manager),
+    contact: pickText(change.contact, fallback.contact),
+    parentWorkPlanId:
+      change.parentWorkPlanId ?? fallback.parentWorkPlanId ?? task.monthlyWorkPlanId ?? null,
+    tradeProcessId: change.tradeProcessId ?? fallback.tradeProcessId ?? null,
+    isEditing: false,
+    isUserEdited: false,
+  }
+
+  refreshProposalManHours(proposal)
+  return proposal
+}
+
+function setAiRecommendationError(taskId, message) {
+  if (!taskId || !aiRecs[taskId]) return
+  aiRecs[taskId].aiStatus = 'FAILED'
+  aiRecs[taskId].aiError = message || 'AI 추천 생성에 실패했습니다.'
+}
+
+function stopAiRecommendationPolling(taskId) {
+  const timer = aiRecommendationPollers.get(taskId)
+  if (!timer) return
+  clearInterval(timer)
+  aiRecommendationPollers.delete(taskId)
+}
+
+function applyAiRecommendationRecordToTask(taskId, rawRecord) {
+  const task = delayTasks.value.find((item) => item.id === taskId)
+  if (!task) return
+
+  ensureAiRecommendation(task)
+
+  const record = unwrapAiApiData(rawRecord) || {}
+  const previous = aiRecs[task.id] || {}
+  const { resultObject, body, changeSummary, detailChanges } = readAiResultParts(record)
+  const fallbackProposals = previous.detailEditProposals || []
+  const allowedWorkPlanIds = new Set(
+    fallbackProposals.map((proposal) => Number(proposal.workPlanId || 0)).filter(Boolean),
+  )
+  const aiProposals = detailChanges.length
+    ? detailChanges
+        .map((change, index) => normalizeAiDetailProposal(task, change, index))
+        .filter((proposal) => {
+          const workPlanId = Number(proposal.workPlanId || 0)
+          if (!workPlanId || !allowedWorkPlanIds.has(workPlanId)) return false
+          return Number(proposal.originalRequiredCount || 0) > 0
+        })
+        .slice(0, Math.max(1, fallbackProposals.length))
+    : []
+  const aiProposalById = new Map(
+    aiProposals.map((proposal) => [Number(proposal.workPlanId || 0), proposal]),
+  )
+  const normalizedProposals = fallbackProposals.length
+    ? fallbackProposals.map((fallback) => {
+        const aiProposal = aiProposalById.get(Number(fallback.workPlanId || 0))
+        if (!aiProposal) return fallback
+
+        const originalRequiredCount = Number(fallback.originalRequiredCount || 0)
+        const maxRecommendedCount =
+          originalRequiredCount + Math.max(2, Math.ceil(originalRequiredCount * 0.3))
+        const aiRecommendedCount = pickNumber(
+          aiProposal.recommendedRequiredCount,
+          pickNumber(fallback.recommendedRequiredCount, originalRequiredCount),
+        )
+        const aiRecommendedName = pickText(aiProposal.recommendedName, fallback.recommendedName)
+        const recommendedName =
+          aiRecommendedName.includes(fallback.originalName) ||
+          aiRecommendedName === fallback.originalName
+            ? aiRecommendedName
+            : fallback.recommendedName
+
+        const merged = {
+          ...fallback,
+          recommendedName,
+          recommendedRequiredCount: Math.max(
+            originalRequiredCount,
+            Math.min(maxRecommendedCount, aiRecommendedCount),
+          ),
+          recommendedWorkTime: pickText(
+            aiProposal.recommendedWorkTime,
+            fallback.recommendedWorkTime,
+          ),
+          recommendedNote: pickText(aiProposal.recommendedNote, fallback.recommendedNote),
+          manHourAdjustmentReason: pickText(
+            aiProposal.manHourAdjustmentReason,
+            fallback.manHourAdjustmentReason,
+          ),
+          isEditing: false,
+          isUserEdited: false,
+        }
+        refreshProposalManHours(merged)
+        return merged
+      })
+    : aiProposals
+  const maxAddedWorkers = normalizedProposals.reduce(
+    (max, proposal) =>
+      Math.max(
+        max,
+        Number(proposal.recommendedRequiredCount || 0) -
+          Number(proposal.originalRequiredCount || 0),
+      ),
+    0,
+  )
+
+  aiRecs[task.id] = {
+    ...previous,
+    source: 'AI',
+    aiStatus: 'SUCCESS',
+    aiError: '',
+    recommendationId:
+      record.idx ?? record.id ?? record.recommendationId ?? previous.recommendationId,
+    summary: pickText(body.summary, body.summaryText, changeSummary.summary, previous.summary),
+    recommendation: pickText(
+      buildOperationalRecommendationText(task, previous.redistribution, normalizedProposals),
+      previous.recommendation,
+    ),
+    workerSuggestion: pickText(
+      body.workerSuggestion,
+      changeSummary.workerSuggestion,
+      previous.workerSuggestion,
+    ),
+    affectedTasks: Array.isArray(body.affectedTasks)
+      ? body.affectedTasks
+      : previous.affectedTasks || [],
+    redistribution: previous.redistribution,
+    detailEditProposals: normalizedProposals,
+    editedAddDays: pickNumber(changeSummary.addDays, pickNumber(previous.editedAddDays, 0)),
+    editedWorkers: pickNumber(
+      body.editedWorkers ?? changeSummary.recommendedWorkers,
+      pickNumber(previous.editedWorkers, maxAddedWorkers),
+    ),
+    expectedEffect: pickText(
+      body.expectedEffect,
+      changeSummary.expectedEffect,
+      previous.expectedEffect,
+    ),
+  }
+}
+
+function startAiRecommendationPolling(taskId, recommendationId) {
+  stopAiRecommendationPolling(taskId)
+
+  let attempts = 0
+  const timer = setInterval(async () => {
+    attempts += 1
+    try {
+      const record = unwrapAiApiData(await fetchAiScheduleRecommendation(recommendationId))
+      const status = String(record?.status || '').toUpperCase()
+
+      if (status === 'SUCCESS') {
+        stopAiRecommendationPolling(taskId)
+        applyAiRecommendationRecordToTask(taskId, record)
+        return
+      }
+
+      if (status === 'FAILED') {
+        stopAiRecommendationPolling(taskId)
+        setAiRecommendationError(taskId, record?.errorMessage || 'AI 추천 생성에 실패했습니다.')
+        return
+      }
+
+      if (attempts >= 60) {
+        stopAiRecommendationPolling(taskId)
+        setAiRecommendationError(
+          taskId,
+          'AI 추천 생성이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.',
+        )
+      }
+    } catch (err) {
+      if (attempts >= 60) {
+        stopAiRecommendationPolling(taskId)
+        setAiRecommendationError(taskId, err?.message || 'AI 추천 상태 조회에 실패했습니다.')
+      }
+    }
+  }, 2500)
+
+  aiRecommendationPollers.set(taskId, timer)
+}
+
+async function requestAiRecommendationForSelectedTask() {
+  const task = selectedTask.value
+  if (!task?.id) return
+
+  ensureAiRecommendation(task)
+  const rec = aiRecs[task.id]
+  const monthlyWorkPlanId = Number(task.monthlyWorkPlanId || task.workPlanId || task.id || 0)
+
+  if (!monthlyWorkPlanId) {
+    setAiRecommendationError(task.id, '월간 세부계획 ID가 없어 AI 추천을 요청할 수 없습니다.')
+    return
+  }
+
+  try {
+    stopAiRecommendationPolling(task.id)
+    rec.source = 'AI'
+    rec.aiStatus = 'PENDING'
+    rec.aiError = ''
+
+    const created = unwrapAiApiData(
+      await createAiScheduleRecommendation({
+        projectId: PROJECT_ID,
+        monthlyWorkPlanId,
+      }),
+    )
+    const recommendationId = Number(created?.idx ?? created?.id ?? created?.recommendationId ?? 0)
+    rec.recommendationId = recommendationId || null
+
+    const status = String(created?.status || '').toUpperCase()
+    if (status === 'SUCCESS') {
+      applyAiRecommendationRecordToTask(task.id, created)
+      return
+    }
+
+    if (status === 'FAILED') {
+      setAiRecommendationError(task.id, created?.errorMessage || 'AI 추천 생성에 실패했습니다.')
+      return
+    }
+
+    if (!recommendationId) {
+      throw new Error('AI 추천 요청 ID를 받지 못했습니다.')
+    }
+
+    startAiRecommendationPolling(task.id, recommendationId)
+  } catch (err) {
+    console.error('AI schedule recommendation failed:', err)
+    setAiRecommendationError(task.id, err?.message || 'AI 추천 생성에 실패했습니다.')
+  }
+}
+
 const changeRequests = ref([])
 const changeHistory = ref([])
 
@@ -1119,7 +1558,10 @@ function mapScheduleChange(item, historyMode = false) {
     oldEnd: item.oldEnd || '',
     newStart: item.newStart || '',
     newEnd: item.newEnd || '',
-    reason: historyMode && status === 'rejected' ? item.rejectReason || item.reason || '' : item.reason || '',
+    reason:
+      historyMode && status === 'rejected'
+        ? item.rejectReason || item.reason || ''
+        : item.reason || '',
     changeSummary: item.changeSummary || null,
     detailChanges: Array.isArray(item.detailChanges) ? item.detailChanges : [],
     aiApplied: !!item.aiApplied,
@@ -1138,7 +1580,10 @@ function mapScheduleChange(item, historyMode = false) {
 function scheduleChangeDedupeKey(item, includeStatus = false) {
   const detailIds = Array.isArray(item.detailChanges)
     ? item.detailChanges
-        .map((detail) => detail.workPlanId || detail.date || detail.originalName || detail.recommendedName)
+        .map(
+          (detail) =>
+            detail.workPlanId || detail.date || detail.originalName || detail.recommendedName,
+        )
         .filter(Boolean)
         .join(',')
     : ''
@@ -1185,7 +1630,9 @@ async function loadScheduleChangeData() {
 
   const activeStatuses = new Set(['pending', 'approved'])
   const requestItems = Array.isArray(requests)
-    ? requests.map((item) => mapScheduleChange(item, false)).filter((item) => activeStatuses.has(item.status))
+    ? requests
+        .map((item) => mapScheduleChange(item, false))
+        .filter((item) => activeStatuses.has(item.status))
     : []
   const historyItems = Array.isArray(history)
     ? history.map((item) => mapScheduleChange(item, true))
@@ -1463,9 +1910,7 @@ async function submitRequest() {
     changeSummary: clonePlain(requestForm.changeSummary),
     detailChanges,
     aiApplied: requestForm.aiApplied,
-    attachmentUrls: requestForm.attachments
-      .map((file) => file.url || file.name)
-      .filter(Boolean),
+    attachmentUrls: requestForm.attachments.map((file) => file.url || file.name).filter(Boolean),
   })
 
   await loadScheduleChangeData()
@@ -1609,6 +2054,15 @@ const aiQuickSummary = computed(() => {
   const workerChanges = proposals.filter(
     (p) => p.recommendedRequiredCount !== p.originalRequiredCount,
   )
+  const totalAdditionalWorkers = workerChanges.reduce(
+    (sum, p) =>
+      sum +
+      Math.max(
+        0,
+        Number(p.recommendedRequiredCount || 0) - Number(p.originalRequiredCount || 0),
+      ),
+    0,
+  )
 
   // 대표 변경(첫 proposal) 정보
   const sample = proposals[0] || null
@@ -1621,11 +2075,13 @@ const aiQuickSummary = computed(() => {
 
   return {
     proposalCount,
+    proposals,
     oldEnd,
     newEnd,
     addDays: rec.editedAddDays || 0,
     workTimeChanges,
     workerChanges,
+    totalAdditionalWorkers,
     sample,
     totalAdditionalManHours: Math.round(totalAdditionalManHours * 10) / 10,
   }
@@ -1901,9 +2357,6 @@ function addDaysStr(dateStr, n) {
       <div>
         <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">일정 관리</p>
         <h1 class="text-xl font-bold text-forena-900">공정 분석</h1>
-        <p class="mt-1 text-xs text-forena-500">
-          공종별 진척률을 한눈에 보고, AI 추천을 바탕으로 일정을 조정하세요
-        </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <!-- 공종별 권한 선택 -->
@@ -2346,9 +2799,27 @@ function addDaysStr(dateStr, n) {
                   작업 일정 조정 — {{ selectedTask.name }}
                 </p>
               </div>
-              <button @click="selectedTaskId = null" class="text-forena-400 hover:text-forena-700">
-                <X class="h-4 w-4" />
-              </button>
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  :disabled="selectedRec.aiStatus === 'PENDING'"
+                  class="inline-flex items-center gap-1.5 rounded-lg border border-cyan-200 bg-white px-3 py-1.5 text-[11px] font-bold text-cyan-700 transition-colors hover:bg-cyan-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  @click="requestAiRecommendationForSelectedTask"
+                >
+                  <LoaderCircle
+                    v-if="selectedRec.aiStatus === 'PENDING'"
+                    class="h-3.5 w-3.5 animate-spin"
+                  />
+                  <Sparkles v-else class="h-3.5 w-3.5" />
+                  {{ selectedRec.source === 'AI' ? 'AI 재생성' : 'AI 추천 생성' }}
+                </button>
+                <button
+                  @click="selectedTaskId = null"
+                  class="text-forena-400 hover:text-forena-700"
+                >
+                  <X class="h-4 w-4" />
+                </button>
+              </div>
             </div>
             <div class="space-y-4 p-4">
               <!-- 핵심 지표 요약 -->
@@ -2397,6 +2868,21 @@ function addDaysStr(dateStr, n) {
               </div>
 
               <!-- 가장 중요한 영역: 실제 수정안 -->
+              <div
+                v-if="selectedRec.aiStatus === 'PENDING'"
+                class="flex items-center gap-2 rounded-lg border border-cyan-100 bg-cyan-50 px-3.5 py-3 text-xs font-semibold text-cyan-800"
+              >
+                <LoaderCircle class="h-4 w-4 animate-spin" />
+                OpenAI 추천안을 생성하는 중입니다. 완료되면 아래 수정안이 AI 결과로 갱신됩니다.
+              </div>
+
+              <div
+                v-if="selectedRec.aiError"
+                class="rounded-lg border border-rose-100 bg-rose-50 px-3.5 py-3 text-xs font-semibold text-rose-700"
+              >
+                {{ selectedRec.aiError }}
+              </div>
+
               <div
                 v-if="selectedRec.detailEditProposals?.length"
                 class="rounded-xl border border-cyan-200 bg-cyan-50/30 p-4"
@@ -2613,7 +3099,7 @@ function addDaysStr(dateStr, n) {
               </div>
 
               <div
-                v-if="isSupervisor"
+                v-if="false"
                 class="rounded-lg border border-forena-100 bg-forena-50/60 px-3.5 py-3 text-xs text-forena-500"
               >
                 AI 추천안은 참고용입니다. 일정 변경은 공정 책임자 요청 → 총 책임자 승인 → 일정 반영
@@ -3233,7 +3719,7 @@ function addDaysStr(dateStr, n) {
 
               <div class="space-y-2 px-3.5 py-3">
                 <!-- 종료일 변경 -->
-                <div class="flex items-center gap-2 text-xs">
+                <div v-if="aiQuickSummary.addDays !== 0" class="flex items-center gap-2 text-xs">
                   <Clock class="h-3.5 w-3.5 shrink-0 text-flare-600" />
                   <span class="w-16 shrink-0 font-bold text-forena-500">종료일</span>
                   <span
@@ -3266,7 +3752,22 @@ function addDaysStr(dateStr, n) {
 
                 <!-- 인력 변경 -->
                 <div
-                  v-if="aiQuickSummary.workerChanges.length"
+                  v-if="aiQuickSummary.workerChanges.length > 1"
+                  class="flex items-center gap-2 text-xs"
+                >
+                  <UserCog class="h-3.5 w-3.5 shrink-0 text-flare-600" />
+                  <span class="w-16 shrink-0 font-bold text-forena-500">투입 인력</span>
+                  <span class="font-extrabold text-forena-800">
+                    세부일정 {{ aiQuickSummary.workerChanges.length }}건 변경
+                  </span>
+                  <span
+                    class="ml-auto rounded bg-white px-1.5 py-0.5 text-[10px] font-extrabold tabular-nums text-flare-700 ring-1 ring-flare-300"
+                  >
+                    +{{ aiQuickSummary.totalAdditionalWorkers }}명
+                  </span>
+                </div>
+                <div
+                  v-if="aiQuickSummary.workerChanges.length === 1"
                   class="flex items-center gap-2 text-xs"
                 >
                   <UserCog class="h-3.5 w-3.5 shrink-0 text-flare-600" />
@@ -3296,7 +3797,17 @@ function addDaysStr(dateStr, n) {
 
                 <!-- 작업시간 변경 -->
                 <div
-                  v-if="aiQuickSummary.workTimeChanges.length"
+                  v-if="aiQuickSummary.workTimeChanges.length > 1"
+                  class="flex items-center gap-2 text-xs"
+                >
+                  <Activity class="h-3.5 w-3.5 shrink-0 text-flare-600" />
+                  <span class="w-16 shrink-0 font-bold text-forena-500">작업시간</span>
+                  <span class="font-extrabold text-forena-800">
+                    세부일정 {{ aiQuickSummary.workTimeChanges.length }}건 변경
+                  </span>
+                </div>
+                <div
+                  v-if="aiQuickSummary.workTimeChanges.length === 1"
                   class="flex items-center gap-2 text-xs"
                 >
                   <Activity class="h-3.5 w-3.5 shrink-0 text-flare-600" />
@@ -3331,7 +3842,59 @@ function addDaysStr(dateStr, n) {
 
               <!-- 대표 세부일정 정보 -->
               <div
-                v-if="aiQuickSummary.sample && aiQuickSummary.proposalCount > 1"
+                v-if="aiQuickSummary.proposals && aiQuickSummary.proposals.length"
+                class="border-t border-flare-100 bg-white/70 px-3.5 py-3"
+              >
+                <p class="mb-2 text-[10px] font-extrabold uppercase tracking-wide text-forena-500">
+                  변경 대상 세부일정
+                </p>
+                <div class="space-y-2">
+                  <div
+                    v-for="(proposal, index) in aiQuickSummary.proposals"
+                    :key="proposal.workPlanId || `${proposal.date}-${index}`"
+                    class="rounded-lg border border-forena-100 bg-white px-3 py-2"
+                  >
+                    <div class="flex items-start gap-2">
+                      <span
+                        class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-flare-50 text-[10px] font-extrabold tabular-nums text-flare-700 ring-1 ring-flare-200"
+                      >
+                        {{ index + 1 }}
+                      </span>
+                      <div class="min-w-0">
+                        <p class="truncate text-xs font-extrabold text-forena-900">
+                          {{ proposal.date }} · {{ proposal.originalName }}
+                        </p>
+                        <p class="mt-0.5 truncate text-[10px] text-forena-500">
+                          {{ proposal.location || selectedTask.location || '-' }}
+                        </p>
+                      </div>
+                    </div>
+                    <div class="mt-2 grid grid-cols-1 gap-1.5 text-[11px] sm:grid-cols-3">
+                      <p class="tabular-nums text-forena-600">
+                        인력
+                        <span class="font-bold text-forena-800">
+                          {{ proposal.originalRequiredCount }}명 → {{ proposal.recommendedRequiredCount }}명
+                        </span>
+                      </p>
+                      <p class="tabular-nums text-forena-600">
+                        시간
+                        <span class="font-bold text-forena-800">
+                          {{ proposal.originalWorkTime || '-' }} → {{ proposal.recommendedWorkTime || '-' }}
+                        </span>
+                      </p>
+                      <p class="tabular-nums text-forena-600">
+                        공수
+                        <span class="font-bold text-flare-700">
+                          +{{ Math.round(Number(proposal.additionalManHours || 0) * 10) / 10 }}인시
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                v-if="false"
                 class="border-t border-flare-100 bg-white/60 px-3.5 py-2"
               >
                 <p class="text-[10px] text-forena-500">

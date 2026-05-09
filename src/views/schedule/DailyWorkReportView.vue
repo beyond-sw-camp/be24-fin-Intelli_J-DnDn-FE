@@ -3,13 +3,16 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import api from '@/api/index'
 import {
+  fetchScheduleChangeHistory,
+  fetchScheduleChangeList,
+} from '@/api/schedulechange.js'
+import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   FileText,
   Plus,
   Save,
-  Upload,
   Image as ImageIcon,
   Paperclip,
   X,
@@ -23,13 +26,10 @@ import {
   Send,
   Eye,
   Pencil,
-  FileCheck2,
   Layers,
   ShieldCheck,
   UserCog,
   Trash2,
-  Download,
-  Sparkles,
 } from 'lucide-vue-next'
 
 // feat : 사용자 권한 상수 정의
@@ -37,6 +37,8 @@ const ROLES = {
   MANAGER: 'site_manager',
   WORKER: 'process_owner',
 }
+
+const PROJECT_ID = 1
 
 const currentRole = ref(ROLES.WORKER)
 const ALL_PROCESSES = [
@@ -221,8 +223,56 @@ function fmtKor(dateStr) {
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 (${dow})`
 }
 
+function toDateString(dateVal) {
+  if (Array.isArray(dateVal)) {
+    return `${dateVal[0]}-${String(dateVal[1]).padStart(2, '0')}-${String(dateVal[2]).padStart(2, '0')}`
+  }
+  return dateVal ? String(dateVal).slice(0, 10) : ''
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function getPlanId(record) {
+  const id = Number(record?.idx ?? record?.id ?? record?.workPlanId)
+  return Number.isFinite(id) ? id : null
+}
+
+function getPlanDate(record) {
+  return toDateString(record?.startDate || record?.date || record?.reportDate)
+}
+
+function unwrapApiList(res) {
+  if (Array.isArray(res)) return res
+  if (Array.isArray(res?.data)) return res.data
+  if (Array.isArray(res?.data?.data)) return res.data.data
+  return []
+}
+
+function normalizeScheduleChangeStatus(status) {
+  const value = String(status || '').trim().toLowerCase()
+  if (['approved', '승인 완료', '승인완료'].includes(value)) return 'approved'
+  if (['applied', '일정 반영 완료', '일정반영완료', '반영 완료', '반영완료'].includes(value))
+    return 'applied'
+  if (['pending', '승인 대기', '승인대기'].includes(value)) return 'pending'
+  if (['rejected', '반려'].includes(value)) return 'rejected'
+  return value
+}
+
+function parseScheduleTime(value) {
+  if (Array.isArray(value)) {
+    const [year, month, day, hour = 0, minute = 0, second = 0] = value
+    return new Date(year, month - 1, day, hour, minute, second).getTime()
+  }
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
 const selectedDate = ref(todayStr())
-const tomorrowDate = computed(() => addDays(selectedDate.value, 1))
 function prevDay() {
   selectedDate.value = addDays(selectedDate.value, -1)
 }
@@ -235,7 +285,6 @@ function goToday() {
 const isToday = computed(() => selectedDate.value === todayStr())
 
 const activeTab = ref('today')
-const modalTab = ref('today')
 
 function switchTab(tab) {
   if (tab === 'consolidated' && currentRole.value !== ROLES.MANAGER) return
@@ -248,6 +297,162 @@ function switchRole(role) {
 }
 
 const reports = ref([])
+const approvedScheduleChanges = ref([])
+
+async function loadApprovedScheduleChanges() {
+  try {
+    const [listRes, historyRes] = await Promise.all([
+      fetchScheduleChangeList({ projectId: PROJECT_ID }),
+      fetchScheduleChangeHistory({ projectId: PROJECT_ID }),
+    ])
+
+    approvedScheduleChanges.value = [...unwrapApiList(listRes), ...unwrapApiList(historyRes)]
+  } catch (error) {
+    console.error('승인 일정 변경 조회 실패:', error)
+    approvedScheduleChanges.value = []
+  }
+}
+
+function findApprovedScheduleTarget(workPlanId, workDate) {
+  const id = Number(workPlanId)
+  if (!Number.isFinite(id)) return null
+
+  const candidates = []
+
+  approvedScheduleChanges.value.forEach((request) => {
+    const status = normalizeScheduleChangeStatus(request.status)
+    if (!['approved', 'applied'].includes(status)) return
+
+    const details = Array.isArray(request.detailChanges) ? request.detailChanges : []
+    details.forEach((detail) => {
+      if (Number(detail.workPlanId) !== id) return
+
+      const detailDate = toDateString(detail.date)
+      if (detailDate && detailDate !== workDate) return
+
+      const targetPct = toNumberOrNull(
+        detail.targetPct ??
+          detail.recommendedTargetPct ??
+          detail.focusedTargetRate ??
+          detail.dailyTargetPct,
+      )
+      if (!targetPct || targetPct <= 0) return
+
+      const normalTargetPct = toNumberOrNull(
+        detail.normalTargetPct ?? detail.originalTargetPct ?? detail.baseTargetPct,
+      )
+
+      candidates.push({
+        requestId: request.idx ?? request.id ?? 0,
+        status,
+        targetPct,
+        normalTargetPct,
+        processedAt: parseScheduleTime(request.processedAt),
+        requestDate: parseScheduleTime(request.requestDate),
+      })
+    })
+  })
+
+  if (!candidates.length) return null
+
+  candidates.sort((a, b) => {
+    const timeDiff =
+      Math.max(b.processedAt, b.requestDate) - Math.max(a.processedAt, a.requestDate)
+    if (timeDiff) return timeDiff
+    if (Number(b.requestId) !== Number(a.requestId)) return Number(b.requestId) - Number(a.requestId)
+    const statusWeight = { applied: 2, approved: 1 }
+    return (statusWeight[b.status] || 0) - (statusWeight[a.status] || 0)
+  })
+
+  return candidates[0]
+}
+
+function applyApprovedScheduleTarget() {
+  const report = editingReport.value
+  if (!report) return
+
+  const match = findApprovedScheduleTarget(report.workPlanId, report.date)
+  report.approvedDailyTargetPct = match?.targetPct ?? null
+  report.normalDailyTargetPct = match?.normalTargetPct ?? null
+  report.dailyTargetSource = match ? 'schedule_change' : 'duration'
+}
+
+function applyMonthlyScheduleWeights(childPlans = []) {
+  const report = editingReport.value
+  if (!report) return
+
+  report.scheduleWeightPct = null
+  report.normalScheduleWeightPct = null
+  report.remainingScheduleWeightPct = null
+  report.monthlyScheduleCount = 0
+  report.scheduleWeightSource = report.dailyTargetSource || 'duration'
+
+  const monthlyPlanId = Number(report.monthlyWorkPlanId)
+  const currentWorkPlanId = Number(report.workPlanId)
+  const start = new Date(report.startDate)
+  const end = new Date(report.endDate)
+  if (
+    !Number.isFinite(monthlyPlanId) ||
+    !Number.isFinite(currentWorkPlanId) ||
+    isNaN(start.getTime()) ||
+    isNaN(end.getTime())
+  ) {
+    return
+  }
+
+  const duration = Math.max(1, Math.round((end - start) / 86400000) + 1)
+  const normalDailyWeight = 100 / duration
+
+  const monthlyChildren = childPlans
+    .filter((plan) => Number(plan?.parentWorkPlanId) === monthlyPlanId)
+    .map((plan) => ({
+      id: getPlanId(plan),
+      date: getPlanDate(plan),
+    }))
+    .filter((plan) => plan.id && plan.date)
+
+  if (!monthlyChildren.length) return
+
+  const countsByDate = new Map()
+  monthlyChildren.forEach((plan) => {
+    countsByDate.set(plan.date, (countsByDate.get(plan.date) || 0) + 1)
+  })
+
+  const scheduleWeights = monthlyChildren.map((plan) => {
+    const defaultWeight = normalDailyWeight / Math.max(1, countsByDate.get(plan.date) || 1)
+    const approvedTarget = findApprovedScheduleTarget(plan.id, plan.date)
+    return {
+      ...plan,
+      weightPct: approvedTarget?.targetPct ?? defaultWeight,
+      normalWeightPct: approvedTarget?.normalTargetPct ?? defaultWeight,
+      source: approvedTarget ? 'schedule_change' : 'duration',
+    }
+  })
+
+  const reportedWorkPlanIds = new Set(
+    reports.value
+      .filter((item) => item.date === report.date)
+      .map((item) => Number(item.workPlanId))
+      .filter((id) => Number.isFinite(id) && id !== currentWorkPlanId),
+  )
+
+  const currentWeight = scheduleWeights.find((plan) => plan.id === currentWorkPlanId)
+  if (!currentWeight) return
+
+  const remainingWeightPct = scheduleWeights
+    .filter((plan) => {
+      if (plan.id === currentWorkPlanId) return false
+      if (reportedWorkPlanIds.has(plan.id)) return false
+      return plan.date >= report.date
+    })
+    .reduce((sum, plan) => sum + Number(plan.weightPct || 0), 0)
+
+  report.scheduleWeightPct = currentWeight.weightPct
+  report.normalScheduleWeightPct = currentWeight.normalWeightPct
+  report.remainingScheduleWeightPct = remainingWeightPct
+  report.monthlyScheduleCount = monthlyChildren.length
+  report.scheduleWeightSource = currentWeight.source
+}
 
 // feat : 공사일보 조회
 async function loadReportsForDate(targetDate) {
@@ -267,11 +472,10 @@ async function loadReportsForDate(targetDate) {
       date: toDateString(db.reportDate),
       process: getTradeNameFromRecord(db) || '공종 미지정',
       workers: db.actualWorkerCount || 0,
-      location: db.location || '',
+      location: db.location || db.workPlanLocation || '',
       equipmentCount: 0,
       equipmentList: [],
       todayWork: db.todayWork || '',
-      tomorrowPlan: db.tomorrowPlan || '',
       progress: db.todayProgress || 0,
       processProgress: db.actualProgress || 0,
       notes: db.issue || '',
@@ -287,11 +491,13 @@ async function loadReportsForDate(targetDate) {
 
 onMounted(() => {
   loadReportsForDate(selectedDate.value)
+  loadApprovedScheduleChanges()
   document.addEventListener('keydown', onKeydown)
 })
 
 watch(selectedDate, (newDate) => {
   loadReportsForDate(newDate)
+  loadApprovedScheduleChanges()
 })
 
 const STATUS_META = {
@@ -318,7 +524,6 @@ function reportsForDate(dateStr) {
 }
 
 const todayReports = computed(() => reportsForDate(selectedDate.value))
-const tomorrowReports = computed(() => reportsForDate(tomorrowDate.value))
 
 const stats = computed(() => {
   const list = todayReports.value
@@ -342,7 +547,6 @@ const isNewReport = ref(false)
 
 const showTaskSelector = ref(false)
 const availableTodayOrders = ref([])
-const availableTomorrowPlans = ref([])
 
 function canEdit(report) {
   if (currentRole.value === ROLES.MANAGER) return false
@@ -413,21 +617,21 @@ async function selectTaskForReport(order) {
     monthlyWorkPlanId: null,
     monthlyWorkPlanName: '',
     todayMonthlyOrderCount: 1,
-    tomorrowWorkPlanId: null,
-    tomorrowLocation: order.location || '',
-    tomorrowWorkers: 0,
-    tomorrowEquipmentList: [],
-    tomorrowEquipmentInput: { name: '', count: 1 },
-    tomorrowPlan: '',
-    tomorrowSafety: '',
+    approvedDailyTargetPct: null,
+    normalDailyTargetPct: null,
+    dailyTargetSource: 'duration',
+    scheduleWeightPct: null,
+    normalScheduleWeightPct: null,
+    remainingScheduleWeightPct: null,
+    monthlyScheduleCount: 0,
+    scheduleWeightSource: 'duration',
   }
 
   try {
     // 1. 전체 월간 세부계획 기간(철근 전체)을 구하기 위해 모든 계획을 불러옵니다.
-    const [weekRes, monthRes, yearRes] = await Promise.all([
+    const [weekRes, monthRes] = await Promise.all([
       api.get('/work-plan', { params: { planType: '주간' } }).catch(() => ({ data: [] })),
       api.get('/work-plan', { params: { planType: '월간' } }).catch(() => ({ data: [] })),
-      api.get('/work-plan', { params: { planType: '연간' } }).catch(() => ({ data: [] })),
     ])
 
     const weeklyPlans = Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []
@@ -435,10 +639,6 @@ async function selectTaskForReport(order) {
     const monthlyPlans = Array.isArray(monthRes)
       ? monthRes
       : monthRes.data?.data || monthRes.data || []
-
-    const yearlyPlans = Array.isArray(yearRes) ? yearRes : yearRes.data?.data || yearRes.data || []
-
-    const allPlans = [...weeklyPlans, ...monthlyPlans, ...yearlyPlans]
 
     function findMonthlyPlanByWeeklyPlanId(weeklyPlanId) {
       if (!weeklyPlanId) return null
@@ -519,43 +719,15 @@ async function selectTaskForReport(order) {
       editingReport.value.processProgress = editingReport.value.prevProgress
     }
 
-    const tmrwStr = tomorrowDate.value
-    availableTomorrowPlans.value = allPlans.filter(
-      (p) =>
-        getTradeNameFromRecord(p) === myProcess.value &&
-        tmrwStr >= toDateString(p.startDate) &&
-        tmrwStr <= toDateString(p.endDate),
-    )
+    await loadApprovedScheduleChanges()
+    applyApprovedScheduleTarget()
+    applyMonthlyScheduleWeights(weeklyPlans)
   } catch (e) {
-    console.error('명일 주간계획 로드 실패', e)
+    console.error('공사일보 계획 정보 로드 실패', e)
   }
 
+  applyApprovedScheduleTarget()
   showEditor.value = true
-}
-
-// feat : 명일 주간계획 선택 시 내용 자동 바인딩
-function onTomorrowPlanSelect() {
-  const planId = editingReport.value.tomorrowWorkPlanId
-  const targetPlan = availableTomorrowPlans.value.find((p) => p.idx === planId || p.id === planId)
-
-  if (targetPlan) {
-    editingReport.value.tomorrowLocation = targetPlan.location || editingReport.value.location
-    editingReport.value.tomorrowPlan = targetPlan.name || ''
-    if (targetPlan.note) editingReport.value.tomorrowPlan += `\n\n${targetPlan.note}`
-
-    editingReport.value.tomorrowWorkers = targetPlan.requiredCount || 0
-
-    if (targetPlan.equipmentDisplay) {
-      const tEqList = []
-      targetPlan.equipmentDisplay.split(',').forEach((item) => {
-        const match = item.trim().match(/(.+)\s+(\d+)대/)
-        if (match) tEqList.push(`${match[1].trim()} ${match[2]}대`)
-      })
-      editingReport.value.tomorrowEquipmentList = [...new Set(tEqList)]
-    } else {
-      editingReport.value.tomorrowEquipmentList = []
-    }
-  }
 }
 
 // feat : 기존 작성된 보고서 수정
@@ -570,13 +742,14 @@ async function openEditor(report) {
     monthlyWorkPlanId: report.monthlyWorkPlanId || null,
     monthlyWorkPlanName: report.monthlyWorkPlanName || '',
     todayMonthlyOrderCount: report.todayMonthlyOrderCount || 1,
-    tomorrowWorkPlanId: null,
-    tomorrowLocation: report.location || '',
-    tomorrowWorkers: 0,
-    tomorrowEquipmentList: [],
-    tomorrowEquipmentInput: { name: '', count: 1 },
-    tomorrowPlan: report.tomorrowPlan || '',
-    tomorrowSafety: '',
+    approvedDailyTargetPct: report.approvedDailyTargetPct || null,
+    normalDailyTargetPct: report.normalDailyTargetPct || null,
+    dailyTargetSource: report.dailyTargetSource || 'duration',
+    scheduleWeightPct: report.scheduleWeightPct || null,
+    normalScheduleWeightPct: report.normalScheduleWeightPct || null,
+    remainingScheduleWeightPct: report.remainingScheduleWeightPct || null,
+    monthlyScheduleCount: report.monthlyScheduleCount || 0,
+    scheduleWeightSource: report.scheduleWeightSource || 'duration',
     photos: (report.photos || []).map((p) => ({ ...p })),
     files: (report.files || []).map((f) => ({ ...f })),
   }
@@ -633,24 +806,20 @@ async function openEditor(report) {
       }
     }
 
-    const tmrwStr = tomorrowDate.value
-    availableTomorrowPlans.value = allPlans.filter(
-      (p) =>
-        getTradeNameFromRecord(p) === myProcess.value &&
-        tmrwStr >= toDateString(p.startDate) &&
-        tmrwStr <= toDateString(p.endDate),
-    )
+    await loadApprovedScheduleChanges()
+    applyApprovedScheduleTarget()
+    applyMonthlyScheduleWeights(weeklyPlans)
   } catch (e) {
     console.error(e)
   }
 
+  applyApprovedScheduleTarget()
   showEditor.value = true
 }
 
 function closeEditor() {
   showEditor.value = false
   editingReport.value = null
-  modalTab.value = 'today'
 }
 
 // feat : 월간 세부계획 기간 비례 금일 증가분(%) 자동 계산 로직
@@ -666,22 +835,53 @@ const calcInfo = computed(() => {
   // 1. 월간 세부계획 기간 (예: 15일)
   const duration = Math.max(1, Math.round((end - start) / 86400000) + 1)
 
-  // 2. 하루 목표 진척률 (예: 100% / 15일 = 6.67%)
-  const dailyAllocation = 100 / duration
+  // 2. 하루 목표 진척률
+  // 승인된 일정 변경이 있으면 변경안의 목표 진척률을 우선 사용합니다.
+  const normalDailyAllocation = 100 / duration
+  const approvedTargetPct = toNumberOrNull(r.approvedDailyTargetPct)
+  const scheduleWeightPct = toNumberOrNull(r.scheduleWeightPct)
+  const hasScheduleWeight = scheduleWeightPct !== null && scheduleWeightPct > 0
+  const hasApprovedTarget =
+    r.scheduleWeightSource === 'schedule_change' || (approvedTargetPct !== null && approvedTargetPct > 0)
+  const effectiveApprovedTargetPct = approvedTargetPct ?? normalDailyAllocation
+  const dailyAllocation = hasScheduleWeight
+    ? scheduleWeightPct
+    : hasApprovedTarget
+      ? effectiveApprovedTargetPct
+      : normalDailyAllocation
 
   // 3. 금일 발급된 같은 월간 세부계획의 작업 지시서 개수
-  const tasksTodayCount = Math.max(1, r.todayMonthlyOrderCount || availableTodayOrders.value.length)
+  const tasksTodayCount = hasScheduleWeight || hasApprovedTarget
+    ? 1
+    : Math.max(1, r.todayMonthlyOrderCount || availableTodayOrders.value.length)
 
   // 4. 세부 작업 1개당 배분된 가중치
-  const weightPerTask = dailyAllocation / tasksTodayCount
+  const rawWeightPerTask =
+    hasScheduleWeight || hasApprovedTarget ? dailyAllocation : dailyAllocation / tasksTodayCount
 
-  // 5. 사용자가 당긴 해당 세부 작업 완료율에 가중치를 곱함
+  // 5. 남은 하위 일정 가중치까지 고려해 전체 월간 세부계획 진척률이 100%를 넘지 않게 닫습니다.
+  const remainingWeightPct = toNumberOrNull(r.remainingScheduleWeightPct)
+  const closeableWeight =
+    remainingWeightPct !== null
+      ? Math.max(0, 100 - Number(r.prevProgress || 0) - remainingWeightPct)
+      : rawWeightPerTask
+  const weightPerTask = Math.max(0, Math.min(rawWeightPerTask, closeableWeight))
+
+  // 6. 사용자가 입력한 해당 세부 작업 완료율에 가중치를 곱함
   const increment = ((r.progress || 0) / 100) * weightPerTask
 
   return {
     duration,
+    isScheduleChangeTarget: hasApprovedTarget,
+    isMonthlyScheduleWeight: hasScheduleWeight,
     dailyAllocation: parseFloat(dailyAllocation.toFixed(2)),
+    normalDailyAllocation: parseFloat(normalDailyAllocation.toFixed(2)),
+    approvedDailyTargetPct:
+      hasApprovedTarget && approvedTargetPct !== null ? parseFloat(approvedTargetPct.toFixed(2)) : null,
     tasksTodayCount,
+    rawWeightPerTask: parseFloat(rawWeightPerTask.toFixed(2)),
+    remainingScheduleWeightPct:
+      remainingWeightPct !== null ? parseFloat(remainingWeightPct.toFixed(2)) : null,
     weightPerTask: parseFloat(weightPerTask.toFixed(2)),
     increment: parseFloat(increment.toFixed(2)),
   }
@@ -694,6 +894,9 @@ watch(
     editingReport.value?.endDate,
     editingReport.value?.prevProgress,
     editingReport.value?.todayMonthlyOrderCount,
+    editingReport.value?.approvedDailyTargetPct,
+    editingReport.value?.scheduleWeightPct,
+    editingReport.value?.remainingScheduleWeightPct,
   ],
   () => {
     const r = editingReport.value
@@ -717,17 +920,6 @@ function addEquipment() {
 }
 function removeEquipment(idx) {
   editingReport.value.equipmentList.splice(idx, 1)
-}
-
-function addTomorrowEquipment() {
-  const v = (editingReport.value.tomorrowEquipmentInput.name || '').trim()
-  if (!v) return
-  const count = Math.max(1, editingReport.value.tomorrowEquipmentInput.count || 1)
-  editingReport.value.tomorrowEquipmentList.push(v + ' ' + count + '대')
-  editingReport.value.tomorrowEquipmentInput = { name: '', count: 1 }
-}
-function removeTomorrowEquipment(idx) {
-  editingReport.value.tomorrowEquipmentList.splice(idx, 1)
 }
 
 // feat : 복구된 사진 및 첨부파일 업로드 로직
@@ -813,20 +1005,10 @@ async function submitReport() {
     progressIncrementPct: calcInfo.value?.increment ?? 0,
     monthlyProgressPct: parseFloat(r.processProgress || 0),
     actualWorkerCount: r.workers || 0,
+    location: r.location,
     issue: r.notes || '특이사항 없음',
     reportDate: r.date,
     todayWork: r.todayWork,
-
-    // 명일 일정 덮어쓰기용 데이터
-    tomorrowWorkPlanId: r.tomorrowWorkPlanId,
-    tomorrowPlan: r.tomorrowPlan + (r.tomorrowSafety ? `\n\n[안전사항]\n${r.tomorrowSafety}` : ''),
-    tomorrowWorkerCount: r.tomorrowWorkers || 0,
-    tomorrowEquipments: r.tomorrowEquipmentList.map((eqStr) => {
-      const match = eqStr.match(/(.+)\s+(\d+)대/)
-      return match
-        ? { type: match[1].trim(), count: parseInt(match[2], 10) }
-        : { type: '기타', count: 1 }
-    }),
   }
 
   try {
@@ -834,7 +1016,7 @@ async function submitReport() {
     r.submittedAt = new Date().toISOString().slice(0, 16).replace('T', ' ')
     persistEditing('제출 완료')
     closeEditor()
-    alert('🎉 공사일보 제출 및 내일 주간계획 업데이트가 완료되었습니다!')
+    alert('공사일보 제출이 완료되었습니다.')
     loadReportsForDate(selectedDate.value)
   } catch (error) {
     console.error(error)
@@ -845,7 +1027,6 @@ async function submitReport() {
 function persistEditing(newStatus) {
   const r = editingReport.value
   delete r.equipmentInput
-  delete r.tomorrowEquipmentInput
   r.status = newStatus
 
   const idx = reports.value.findIndex((x) => x.id === r.id)
@@ -1053,17 +1234,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         금일 공사일보
       </button>
       <button
-        class="border-b-2 px-4 py-2 text-xs font-bold transition"
-        :class="
-          activeTab === 'tomorrow'
-            ? 'border-flare-500 text-flare-700'
-            : 'border-transparent text-forena-500 hover:text-forena-700'
-        "
-        @click="switchTab('tomorrow')"
-      >
-        명일 작업 예정
-      </button>
-      <button
         v-if="currentRole === ROLES.MANAGER"
         class="inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-xs font-bold transition"
         :class="
@@ -1188,30 +1358,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         </div>
       </div>
 
-      <div v-else-if="activeTab === 'tomorrow'" class="space-y-3 mt-2">
-        <p class="text-xs text-forena-500">
-          <span class="font-bold tabular-nums text-forena-700">{{ fmtKor(tomorrowDate) }}</span>
-          기준 공종별 작업 예정 내용입니다.
-        </p>
-        <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <div
-            v-for="r in todayReports"
-            :key="'tomorrow_' + r.id"
-            class="rounded-xl border border-forena-100 bg-white p-4"
-          >
-            <div class="flex items-center gap-1.5">
-              <span
-                class="rounded-md bg-forena-50 px-1.5 py-0.5 text-[10px] font-bold text-forena-700"
-                >{{ r.process }} 공종</span
-              >
-            </div>
-            <p class="mt-2 text-[10px] font-bold uppercase tracking-wide text-forena-400">
-              명일 작업 예정
-            </p>
-            <p class="mt-1 text-xs leading-relaxed text-forena-800">{{ r.tomorrowPlan || '—' }}</p>
-          </div>
-        </div>
-      </div>
     </div>
 
     <transition
@@ -1313,35 +1459,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             </button>
           </div>
 
-          <div
-            class="flex shrink-0 items-center gap-1 border-b border-forena-100 bg-forena-50/30 px-6"
-          >
-            <button
-              class="border-b-2 px-3 py-2.5 text-xs font-bold transition"
-              :class="
-                modalTab === 'today'
-                  ? 'border-flare-500 text-flare-700'
-                  : 'border-transparent text-forena-500 hover:text-forena-700'
-              "
-              @click="modalTab = 'today'"
-            >
-              금일 공사 내용
-            </button>
-            <button
-              class="border-b-2 px-3 py-2.5 text-xs font-bold transition"
-              :class="
-                modalTab === 'tomorrow'
-                  ? 'border-flare-500 text-flare-700'
-                  : 'border-transparent text-forena-500 hover:text-forena-700'
-              "
-              @click="modalTab = 'tomorrow'"
-            >
-              명일 작업 예정
-            </button>
-          </div>
-
           <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-            <div v-if="modalTab === 'today'" class="space-y-4">
+            <div class="space-y-4">
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div class="sm:col-span-3">
                   <label
@@ -1522,7 +1641,17 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 <p v-if="calcInfo" class="mt-1 text-[10px] text-forena-400">
                   금일 증가분:
                   <span class="font-semibold text-forena-700">{{ calcInfo.increment }}%</span> (기간
-                  {{ calcInfo.duration }}일 · 일일 배분율 {{ calcInfo.dailyAllocation }}%)
+                  {{ calcInfo.duration }}일 ·
+                  <template v-if="calcInfo.isScheduleChangeTarget">
+                    승인 변경 목표 {{ calcInfo.dailyAllocation }}%
+                    <span class="text-forena-300">
+                      / 기본 {{ calcInfo.normalDailyAllocation }}%
+                    </span>
+                  </template>
+                  <template v-else-if="calcInfo.isMonthlyScheduleWeight">
+                    세부일정 가중치 {{ calcInfo.dailyAllocation }}%
+                  </template>
+                  <template v-else>일일 배분율 {{ calcInfo.dailyAllocation }}%</template>)
                 </p>
               </div>
 
@@ -1530,7 +1659,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 <div class="mb-2 flex items-center justify-between">
                   <label class="text-[10px] font-bold uppercase tracking-wide text-flare-600">
                     월간 세부계획 진척률
-                    <span class="font-normal text-flare-400">(공기 비례 자동 계산)</span>
+                    <span class="font-normal text-flare-400">(하위 일정 기준 자동 계산)</span>
                   </label>
                   <span class="text-sm font-bold tabular-nums text-flare-700"
                     >{{ editingReport.processProgress }}%</span
@@ -1543,7 +1672,25 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                   ></div>
                 </div>
                 <p v-if="calcInfo" class="mt-1.5 text-[10px] text-forena-500">
-                  <span class="block mb-0.5 text-forena-600">
+                  <span
+                    v-if="calcInfo.isScheduleChangeTarget"
+                    class="block mb-0.5 text-forena-600"
+                  >
+                    <span class="font-bold">산식:</span> 승인 변경 하루 목표
+                    <span class="font-bold">{{ calcInfo.dailyAllocation }}%</span> × 금일 완료율
+                    <span class="font-bold">{{ editingReport.progress }}%</span> = 금일 증가
+                    <span class="font-bold">{{ calcInfo.increment }}%</span>
+                  </span>
+                  <span
+                    v-else-if="calcInfo.isMonthlyScheduleWeight"
+                    class="block mb-0.5 text-forena-600"
+                  >
+                    <span class="font-bold">산식:</span> 세부일정 가중치
+                    <span class="font-bold">{{ calcInfo.dailyAllocation }}%</span> × 금일 완료율
+                    <span class="font-bold">{{ editingReport.progress }}%</span> = 금일 증가
+                    <span class="font-bold">{{ calcInfo.increment }}%</span>
+                  </span>
+                  <span v-else class="block mb-0.5 text-forena-600">
                     <span class="font-bold">산식:</span> 하루 목표
                     <span class="font-bold">{{ calcInfo.dailyAllocation }}%</span> ÷ 금일 세부작업
                     <span class="font-bold">{{ calcInfo.tasksTodayCount }}건</span> = 건당 최대
@@ -1661,153 +1808,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               </div>
             </div>
 
-            <div v-else-if="modalTab === 'tomorrow'" class="space-y-4 mt-2">
-              <div class="rounded-xl border border-flare-200 bg-flare-50/40 p-4 mb-4">
-                <label class="mb-1.5 block text-xs font-bold text-flare-800"
-                  ><Sparkles class="inline h-3.5 w-3.5 text-flare-600" /> 대상 주간계획 선택</label
-                >
-                <select
-                  v-model="editingReport.tomorrowWorkPlanId"
-                  @change="onTomorrowPlanSelect"
-                  class="w-full rounded-md border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-800 outline-none focus:border-flare-400"
-                >
-                  <option :value="null">-- 내일 진행할 주간계획 일정을 선택하세요 --</option>
-                  <option
-                    v-for="plan in availableTomorrowPlans"
-                    :key="plan.idx || plan.id"
-                    :value="plan.idx || plan.id"
-                  >
-                    [{{ plan.location }}] {{ plan.name }}
-                  </option>
-                </select>
-                <p class="mt-2 text-[11px] text-forena-600">
-                  위에서 내일 일정을 선택하면 기존 데이터가 불려오며, 수정한 내용은 원본 주간계획에
-                  덮어쓰기 됩니다.
-                </p>
-              </div>
-
-              <div
-                v-if="editingReport.tomorrowWorkPlanId"
-                class="grid grid-cols-1 gap-3 sm:grid-cols-2"
-              >
-                <div class="sm:col-span-2">
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    ><MapPin class="mr-0.5 inline h-3 w-3" />작업 위치</label
-                  >
-                  <input
-                    v-model="editingReport.tomorrowLocation"
-                    class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    ><Clock class="mr-0.5 inline h-3 w-3" />작업 시간</label
-                  >
-                  <input
-                    value="07:00 ~ 17:00"
-                    disabled
-                    class="w-full rounded-md border border-forena-200 bg-slate-50 px-2.5 py-1.5 text-xs tabular-nums text-slate-500 outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    ><Users class="mr-0.5 inline h-3 w-3" />필요 인원</label
-                  >
-                  <input
-                    type="number"
-                    min="0"
-                    v-model.number="editingReport.tomorrowWorkers"
-                    class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs tabular-nums outline-none focus:border-flare-400"
-                  />
-                </div>
-
-                <div class="sm:col-span-2">
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    ><Wrench class="mr-0.5 inline h-3 w-3" />필요 장비</label
-                  >
-                  <div class="flex gap-2">
-                    <select
-                      v-model="editingReport.tomorrowEquipmentInput.name"
-                      class="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    >
-                      <option value="">장비 선택</option>
-                      <optgroup
-                        v-for="(items, category) in equipmentList"
-                        :key="category"
-                        :label="category"
-                      >
-                        <option
-                          v-for="equipment in items"
-                          :key="category + '_tom_' + equipment"
-                          :value="equipment"
-                        >
-                          {{ equipment }}
-                        </option>
-                      </optgroup>
-                    </select>
-                    <input
-                      type="number"
-                      min="1"
-                      v-model.number="editingReport.tomorrowEquipmentInput.count"
-                      class="w-16 rounded-lg border border-slate-200 px-2 py-2 text-sm text-center tabular-nums"
-                    />
-                    <button
-                      @click="addTomorrowEquipment"
-                      class="inline-flex items-center gap-1 rounded-md border border-flare-200 bg-flare-50 px-2.5 py-1 text-xs font-bold text-flare-700 hover:bg-flare-100"
-                    >
-                      <Plus class="h-3 w-3" />추가
-                    </button>
-                  </div>
-                  <div
-                    v-if="editingReport.tomorrowEquipmentList.length"
-                    class="mt-2 flex flex-wrap gap-1.5"
-                  >
-                    <span
-                      v-for="(eq, i) in editingReport.tomorrowEquipmentList"
-                      :key="i"
-                      class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200"
-                      >{{ eq
-                      }}<button
-                        @click="removeTomorrowEquipment(i)"
-                        class="text-slate-400 hover:text-rose-600"
-                      >
-                        <X class="h-3 w-3" /></button
-                    ></span>
-                  </div>
-                </div>
-
-                <div class="sm:col-span-2">
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    >작업 상세 내역 <span class="text-rose-500">*</span></label
-                  >
-                  <textarea
-                    v-model="editingReport.tomorrowPlan"
-                    rows="5"
-                    class="w-full resize-none rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:border-flare-400"
-                  ></textarea>
-                </div>
-
-                <div class="sm:col-span-2">
-                  <label
-                    class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                    >안전 유의사항</label
-                  >
-                  <textarea
-                    v-model="editingReport.tomorrowSafety"
-                    rows="3"
-                    placeholder="추락/낙하/화재 등 위험요인 사전 점검"
-                    class="w-full resize-none rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:border-flare-400"
-                  ></textarea>
-                </div>
-              </div>
-            </div>
           </div>
 
           <div
@@ -1961,21 +1961,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               </div>
             </div>
 
-            <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div class="mt-4 grid grid-cols-1 gap-3">
               <div class="rounded-xl border border-forena-100 p-3.5">
                 <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
                   금일 작업 완료
                 </p>
                 <p class="mt-1 text-xs leading-relaxed text-forena-800">
                   {{ viewingReport.todayWork }}
-                </p>
-              </div>
-              <div class="rounded-xl border border-forena-100 p-3.5">
-                <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  명일 작업 예정
-                </p>
-                <p class="mt-1 text-xs leading-relaxed text-forena-800">
-                  {{ viewingReport.tomorrowPlan }}
                 </p>
               </div>
             </div>
