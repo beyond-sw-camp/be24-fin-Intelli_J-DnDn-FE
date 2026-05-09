@@ -55,11 +55,6 @@ export async function putAdminAccount(idx, body) {
   return await api.put(`${ADMIN_ACCOUNTS}/${idx}`, body)
 }
 
-/** 관리자: 계정 비밀번호 설정 — PUT /admin/accounts/{idx}/password (@link AccountDto.PasswordReq) */
-export async function putAdminAccountPassword(idx, body) {
-  return await api.put(`${ADMIN_ACCOUNTS}/${idx}/password`, body)
-}
-
 /** @param {number|string} idx */
 export async function deleteAdminAccount(idx) {
   return await api.delete(`${ADMIN_ACCOUNTS}/${idx}`)
