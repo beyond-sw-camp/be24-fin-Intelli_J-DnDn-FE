@@ -15,6 +15,12 @@ const router = createRouter({
       meta: meta('로그인'),
     },
     {
+      path: '/account/password',
+      name: 'accountPassword',
+      component: () => import('../views/auth/AccountPasswordView.vue'),
+      meta: meta('비밀번호 변경'),
+    },
+    {
       path: '/site/upload',
       name: 'siteUpload',
       component: () => import('../views/schedule/FirstDocumentUpload.vue'), // 실제 경로로 수정
@@ -125,8 +131,10 @@ const router = createRouter({
     },
     { path: '/site/alerts', redirect: '/site/dashboard' },
 
-    { path: '/hr/sites', redirect: '/site/dashboard' },
-    { path: '/hr/sites/:id', redirect: '/site/dashboard' },
+    {
+      path: '/hr/sites/:id?',
+      redirect: '/hr/accounts',
+    },
     {
       path: '/hr/partners',
       name: 'hrPartners',
@@ -158,8 +166,14 @@ const router = createRouter({
     {
       path: '/hr/accounts',
       name: 'hrAccounts',
+      component: () => import('../views/personnel/SiteRegisterView.vue'),
+      meta: meta('계정 및 권한 관리'),
+    },
+    {
+      path: '/hr/accounts/sites/:projectIdx',
+      name: 'hrAccountsSite',
       component: () => import('../views/personnel/AccountListView.vue'),
-      meta: meta('계정 관리'),
+      meta: meta('계정 및 권한 관리'),
     },
     {
       path: '/system/admins',
@@ -181,7 +195,7 @@ const router = createRouter({
     { path: '/Payroll/Ledger', redirect: '/site/dashboard' },
     { path: '/Payroll/Statement', redirect: '/site/dashboard' },
     { path: '/Payroll/Standard', redirect: '/site/dashboard' },
-    { path: '/Account/List', redirect: '/site/dashboard' },
+    { path: '/Account/List', redirect: '/hr/accounts' },
     { path: '/Invoices', redirect: '/site/dashboard' },
   ],
 })
@@ -201,11 +215,8 @@ router.beforeEach((to) => {
     return { path: '/login' }
   }
 
-  if (!pathAllowedForRole(auth.role, to.path, auth.accessScope)) {
-    if (auth.stayOnLogin) {
-      return { path: '/site/dashboard', query: to.query }
-    }
-    return { path: '/login' }
+  if (!pathAllowedForRole(auth.userRole, to.path)) {
+    return { path: '/site/dashboard' }
   }
   return true
 })
