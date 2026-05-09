@@ -56,7 +56,9 @@ const blueprintZoom = ref(1)
 
 const activeBlueprint = computed(() => customBlueprint.value || siteLayout)
 const blueprintZoomPercent = computed(() => `${Math.round(blueprintZoom.value * 100)}%`)
-const gateMarkerScale = computed(() => Math.max(0.82, Math.min(1.12, 0.88 + blueprintZoom.value * 0.12)))
+const gateMarkerScale = computed(() =>
+  Math.max(0.82, Math.min(1.12, 0.88 + blueprintZoom.value * 0.12)),
+)
 const isBlueprintZoomed = computed(() => blueprintZoom.value > 1.01)
 const mapCursorClass = computed(() => {
   if (draggingGateId.value !== null) return 'cursor-grabbing'
@@ -65,9 +67,13 @@ const mapCursorClass = computed(() => {
   return ''
 })
 
-const todayEquipments = computed(() => mapWorkOrderEquipments(workOrderEquipments.value, gates.value))
+const todayEquipments = computed(() =>
+  mapWorkOrderEquipments(workOrderEquipments.value, gates.value),
+)
 const hasTodayEquipments = computed(() => todayEquipments.value.length > 0)
-const totalAssignedEquipmentCount = computed(() => todayEquipments.value.reduce((sum, equipment) => sum + (equipment.count ?? 1), 0))
+const totalAssignedEquipmentCount = computed(() =>
+  todayEquipments.value.reduce((sum, equipment) => sum + (equipment.count ?? 1), 0),
+)
 const equipmentCountByGateKey = computed(() => buildEquipmentCountByGateKey(todayEquipments.value))
 
 const displayGates = computed(() => {
@@ -159,10 +165,7 @@ async function refreshGate(gateId) {
 }
 
 async function loadPageData() {
-  await Promise.all([
-    loadGates(),
-    loadTodayEquipments(),
-  ])
+  await Promise.all([loadGates(), loadTodayEquipments()])
 }
 
 function updateTargetDate(value) {
@@ -240,7 +243,10 @@ async function addCustomGate({ x, y }) {
     })
 
     await loadGates()
-    selectedGateId.value = typeof created === 'number' ? created : created?.idx ?? gates.value[gates.value.length - 1]?.idx ?? null
+    selectedGateId.value =
+      typeof created === 'number'
+        ? created
+        : (created?.idx ?? gates.value[gates.value.length - 1]?.idx ?? null)
     isAddMode.value = false
   } catch (error) {
     console.error('게이트 등록 실패', error)
@@ -379,7 +385,7 @@ watch(targetDate, () => {
 </script>
 
 <template>
-  <div class="space-y-6 pb-10">
+  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
     <HeavyEquipmentHeader
       :target-date="targetDate"
       :equipment-count="todayEquipments.length"

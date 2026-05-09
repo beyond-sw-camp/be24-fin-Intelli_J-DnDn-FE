@@ -59,10 +59,18 @@ const fineDustTone = computed(() => getFineDustTone(fineDustValue.value, airQual
 const windTone = computed(() => getWindTone(analysis.value))
 const riskLevel = computed(() => getRiskLevel(analysis.value))
 
-const aiRiskItems = computed(() => Array.isArray(aiAnalysisResult.value?.risks) ? aiAnalysisResult.value.risks : [])
-const aiActionItems = computed(() => Array.isArray(aiAnalysisResult.value?.actions) ? aiAnalysisResult.value.actions : [])
-const aiEquipmentRisks = computed(() => aiRiskItems.value.filter((risk) => isEquipmentRisk(risk)).map(toWeatherRiskItem))
-const aiPlanRisks = computed(() => aiRiskItems.value.filter((risk) => !isEquipmentRisk(risk)).map(toWeatherRiskItem))
+const aiRiskItems = computed(() =>
+  Array.isArray(aiAnalysisResult.value?.risks) ? aiAnalysisResult.value.risks : [],
+)
+const aiActionItems = computed(() =>
+  Array.isArray(aiAnalysisResult.value?.actions) ? aiAnalysisResult.value.actions : [],
+)
+const aiEquipmentRisks = computed(() =>
+  aiRiskItems.value.filter((risk) => isEquipmentRisk(risk)).map(toWeatherRiskItem),
+)
+const aiPlanRisks = computed(() =>
+  aiRiskItems.value.filter((risk) => !isEquipmentRisk(risk)).map(toWeatherRiskItem),
+)
 const aiLiveRiskActions = computed(() => aiActionItems.value.map(toLiveRiskAction))
 
 const equipmentRisks = computed(() => {
@@ -167,7 +175,7 @@ watch(monthlyForecast, (weeks) => {
 </script>
 
 <template>
-  <div class="space-y-5 pb-10">
+  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
     <WeatherControlHeader
       :report-date="reportDate"
       :source-label="sourceLabel"
@@ -196,16 +204,10 @@ watch(monthlyForecast, (weeks) => {
         />
       </div>
 
-      <WeatherRiskPanel
-        :plan-risks="planRisks"
-        :equipment-risks="equipmentRisks"
-      />
+      <WeatherRiskPanel :plan-risks="planRisks" :equipment-risks="equipmentRisks" />
     </div>
 
-    <WeatherThreeDayForecast
-      :days="threeDayForecast"
-      :location-label="locationLabel"
-    />
+    <WeatherThreeDayForecast :days="threeDayForecast" :location-label="locationLabel" />
 
     <WeatherForecastTabs
       :forecast-tab="forecastTab"

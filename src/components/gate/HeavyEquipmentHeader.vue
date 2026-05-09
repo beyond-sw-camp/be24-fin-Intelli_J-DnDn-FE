@@ -1,5 +1,5 @@
 <script setup>
-import { CalendarDays, Navigation } from 'lucide-vue-next'
+import { CalendarDays } from 'lucide-vue-next'
 
 defineProps({
   targetDate: {
@@ -26,38 +26,29 @@ function updateTargetDate(event) {
 </script>
 
 <template>
-  <div class="relative overflow-hidden rounded-2xl border border-forena-100/90 bg-white p-6 shadow-card">
-    <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-      <div class="flex items-center gap-3">
-        <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-flare-400 to-flare-600 text-white shadow-md">
-          <Navigation class="h-5 w-5" />
-        </span>
-        <div>
-          <h1 class="text-xl font-bold text-forena-900">중장비 입출차 현황 관제</h1>
-          <p class="text-sm text-forena-600">
-            작업지시서의 중장비·게이트 배정과 실시간 게이트 운영 상태를 함께 확인합니다.
-          </p>
-        </div>
-      </div>
+  <div class="flex shrink-0 flex-wrap items-start justify-between gap-3">
+    <div>
+      <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">현장 정보</p>
+      <h1 class="text-xl font-bold text-forena-900">장비 입출차</h1>
+    </div>
 
-      <div class="flex flex-wrap items-center gap-3">
-        <label class="rounded-2xl border border-forena-100 bg-white/90 p-3 shadow-sm">
-          <span class="mb-1 flex items-center gap-1 text-[10px] font-black uppercase tracking-wide text-forena-500">
-            <CalendarDays class="h-3 w-3" />
-            기준 날짜
-          </span>
-          <input
-            :value="targetDate"
-            type="date"
-            class="rounded-xl border border-forena-200 px-3 py-2 text-sm font-semibold text-forena-800 focus:border-flare-400 focus:outline-none focus:ring-2 focus:ring-flare-100"
-            @change="updateTargetDate"
-          />
-        </label>
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white pl-2.5">
+        <CalendarDays class="h-3.5 w-3.5 text-forena-400" />
+        <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">기준 날짜</span>
+        <input
+          :value="targetDate"
+          type="date"
+          class="rounded-r-lg border-0 border-l border-forena-100 bg-white px-3 py-1.5 text-xs font-bold text-forena-700 outline-none focus:bg-forena-50"
+          @change="updateTargetDate"
+        />
+      </label>
 
-        <span class="inline-flex h-fit items-center rounded-full border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700">
-          작업지시서 장비 {{ equipmentCount }}건 · 총 {{ totalAssignedEquipmentCount }}대
-        </span>
-      </div>
+      <span
+        class="inline-flex h-fit items-center rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700"
+      >
+        작업지시서 장비 {{ equipmentCount }}건 · 총 {{ totalAssignedEquipmentCount }}대
+      </span>
     </div>
   </div>
 </template>
