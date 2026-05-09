@@ -9,12 +9,11 @@ import {
   ChevronRight,
   Pencil,
   Ban,
+  Check,
 } from 'lucide-vue-next'
 import {
   getAdminAccounts,
   putAdminAccount,
-  putAdminAccountPassword,
-  deleteAdminAccount,
 } from '@/api/auth.js'
 import { getProjectList, createProject, updateProject } from '@/api/project.js'
 import { USER_ROLE, userRoleLabel } from '@/stores/authStore'
@@ -24,7 +23,7 @@ const router = useRouter()
 const T = {
   kicker: '시스템 관리',
   title: '계정 및 권한 관리',
-  sectionAccountHub: '계정 현황',
+  sectionAccountHub: '본사 계정 현황',
   grpSystem: '시스템 관리자',
   grpHQ: '본사',
   sectionSites: '현장 목록',
@@ -34,7 +33,10 @@ const T = {
   colProjectStatus: '상태',
   modalEditSite: '현장 정보 수정',
   colCode: '현장 코드',
-  colName: '현장 명',
+  /** 현장 목록 표 전용 표시명 열 */
+  colSiteDisplayName: '현장 명',
+  /** 본사 계정 현황 표 — 계정(사용자) 이름 */
+  colHubAccountName: '계정 명',
   colDirectorName: '현장 총 책임자',
   colDirectorPhone: '총 책임자 휴대폰',
   colAddress: '현장 주소',
@@ -55,28 +57,30 @@ const T = {
   colPhone: '휴대폰',
   colEmail: '이메일',
   colRole: '권한',
-  colSite: '현장',
   colTrade: '공종',
   colStatus: '상태',
   colActions: '관리',
   active: '사용 중',
   inactive: '비활성',
   edit: '수정',
+  activate: '활성',
   del: '비활성',
   modalEdit: '계정 수정',
-  pwdNew: '비밀번호 (8자 이상)',
-  pwdPlaceholderEdit: '변경 시에만 입력',
   loginIdRo: '로그인 ID는 수정할 수 없습니다.',
   rolePickHint: '권한 선택',
   phone: '휴대폰 번호',
   email: '이메일',
+  lblAccountName: '계정명',
+  pwdEditSectionTitle: '비밀번호 수정',
+  pwdResetMail: '비밀번호 초기화',
+  pwdResetMailAlert:
+    '등록된 이메일로 비밀번호 재설정 메일을 발송했습니다.\n메일함을 확인해 주세요.',
 }
 
 /** 시스템·본사 전용 (현장 계정은 2페이지) */
 const ROLE_OPTIONS_HUB = [
   { value: USER_ROLE.ADMIN, label: '시스템 관리자' },
   { value: USER_ROLE.HEADQUARTOR, label: '본사' },
-  { value: USER_ROLE.HEADQUARTOR_SITE_MANAGER, label: '본사 현장 관리자' },
 ]
 
 function parseProjectLabel(name) {
@@ -136,7 +140,7 @@ function classify(acc) {
       ? String(/** @type {{ name?: string }} */ (r).name || '')
       : String(r || '')
   if (rs === 'ADMIN') return 'system'
-  if (rs === 'HEADQUARTOR' || rs === 'HEADQUARTOR_SITE_MANAGER') return 'hq'
+  if (rs === 'HEADQUARTOR') return 'hq'
   return 'field'
 }
 
@@ -347,15 +351,31 @@ function rowRoleStr(acc) {
   return String(r || '')
 }
 
+function accountUpdatePayload(row, overrides = {}) {
+  const r = rowRoleStr(row)
+  return {
+    name: String(row?.name || '').trim(),
+    phone:
+      row?.phone != null && String(row.phone).trim() !== ''
+        ? String(row.phone).trim()
+        : undefined,
+    email:
+      row?.email != null && String(row.email).trim() !== ''
+        ? String(row.email).trim()
+        : undefined,
+    role: r,
+    siteCode: String(row?.siteCode || '').trim() || undefined,
+    trade: String(row?.trade || '').trim() || undefined,
+    active: Boolean(row?.active),
+    ...overrides,
+  }
+}
+
 const formEdit = reactive({
   name: '',
   phone: '',
   email: '',
   role: USER_ROLE.ADMIN,
-  siteCode: '',
-  trade: '',
-  active: true,
-  newPassword: '',
 })
 
 /** @param {Acc} row */
@@ -364,11 +384,8 @@ function openEditModal(row) {
   formEdit.name = row.name || ''
   formEdit.phone = row.phone || ''
   formEdit.email = row.email || ''
-  formEdit.role = rowRoleStr(row) || USER_ROLE.ADMIN
-  formEdit.siteCode = row.siteCode || ''
-  formEdit.trade = row.trade || ''
-  formEdit.active = Boolean(row.active)
-  formEdit.newPassword = ''
+  const rs = rowRoleStr(row) || USER_ROLE.ADMIN
+  formEdit.role = ROLE_OPTIONS_HUB.some((o) => o.value === rs) ? rs : USER_ROLE.ADMIN
   modalOpen.value = true
 }
 
@@ -377,9 +394,23 @@ function closeAccountModal() {
   editingIdx.value = null
 }
 
+function notifyPasswordResetEmailSent() {
+  window.alert(T.pwdResetMailAlert)
+}
+
 async function submitAccountModal() {
   const idx = editingIdx.value
   if (idx == null) return
+
+  const prevRow = accounts.value.find((a) => a.idx === idx)
+  const siteCodeMerged =
+    prevRow?.siteCode != null && String(prevRow.siteCode).trim() !== ''
+      ? String(prevRow.siteCode).trim()
+      : undefined
+  const tradeMerged =
+    prevRow?.trade != null && String(prevRow.trade).trim() !== ''
+      ? String(prevRow.trade).trim()
+      : undefined
 
   try {
     await putAdminAccount(idx, {
@@ -387,14 +418,10 @@ async function submitAccountModal() {
       phone: String(formEdit.phone || '').trim() || undefined,
       email: String(formEdit.email || '').trim() || undefined,
       role: formEdit.role,
-      siteCode: String(formEdit.siteCode || '').trim() || undefined,
-      trade: String(formEdit.trade || '').trim() || undefined,
-      active: Boolean(formEdit.active),
+      siteCode: siteCodeMerged,
+      trade: tradeMerged,
+      active: Boolean(prevRow?.active),
     })
-    const np = String(formEdit.newPassword || '').trim()
-    if (np.length >= 8) {
-      await putAdminAccountPassword(idx, { newPassword: np })
-    }
     pushToast('계정이 수정되었습니다.')
     closeAccountModal()
     await refreshList()
@@ -403,11 +430,25 @@ async function submitAccountModal() {
   }
 }
 
+async function activateAccount(row) {
+  if (!row || row.active) return
+  const ok = window.confirm(`‘${row.name}’ 계정을 활성화할까요?`)
+  if (!ok) return
+  try {
+    await putAdminAccount(row.idx, accountUpdatePayload(row, { active: true }))
+    pushToast('활성화되었습니다.')
+    await refreshList()
+  } catch (e) {
+    pushToast(e?.message || '활성화에 실패했습니다.', 'danger')
+  }
+}
+
 async function deactivateAccount(row) {
+  if (!row || !row.active) return
   const ok = window.confirm(`‘${row.name}’ 계정을 비활성화할까요?`)
   if (!ok) return
   try {
-    await deleteAdminAccount(row.idx)
+    await putAdminAccount(row.idx, accountUpdatePayload(row, { active: false }))
     pushToast('비활성화되었습니다.')
     await refreshList()
   } catch (e) {
@@ -462,7 +503,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
       </div>
     </div>
 
-    <!-- 시스템·본사 계정 현황 -->
+    <!-- 본사 계정 현황 -->
     <section class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white shadow-card">
       <div class="border-b border-forena-100/80 px-4 py-4 sm:px-5">
         <h2 class="text-base font-bold text-forena-900">{{ T.sectionAccountHub }}</h2>
@@ -493,20 +534,19 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
               <table class="w-full min-w-[1100px] border-collapse text-left text-sm">
                 <thead>
                   <tr :class="accountStatusTheadClass">
-                    <th class="w-[11%] py-2.5 pl-5 pr-2 sm:pl-6">{{ T.colLoginId }}</th>
-                    <th class="w-[10%] px-3 py-2.5">{{ T.colName }}</th>
-                    <th class="w-[12%] px-3 py-2.5">{{ T.colPhone }}</th>
-                    <th class="w-[14%] px-3 py-2.5">{{ T.colEmail }}</th>
-                    <th class="w-[12%] px-3 py-2.5">{{ T.colRole }}</th>
-                    <th class="w-[11%] px-3 py-2.5">{{ T.colSite }}</th>
+                    <th class="w-[13%] py-2.5 pl-5 pr-2 sm:pl-6">{{ T.colLoginId }}</th>
+                    <th class="w-[12%] px-3 py-2.5">{{ T.colHubAccountName }}</th>
+                    <th class="w-[14%] px-3 py-2.5">{{ T.colPhone }}</th>
+                    <th class="w-[16%] px-3 py-2.5">{{ T.colEmail }}</th>
+                    <th class="w-[14%] px-3 py-2.5">{{ T.colRole }}</th>
                     <th class="w-[10%] px-3 py-2.5">{{ T.colTrade }}</th>
-                    <th class="w-[8%] px-3 py-2.5">{{ T.colStatus }}</th>
+                    <th class="w-[9%] px-3 py-2.5">{{ T.colStatus }}</th>
                     <th class="w-[12%] px-3 py-2.5 pr-5 text-center sm:pr-6">{{ T.colActions }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-if="!sec.rows.length">
-                    <td colspan="9" class="border-b border-slate-100/80 py-8 pl-5 pr-3 text-center text-xs text-slate-400 sm:pl-6 sm:pr-5">
+                    <td colspan="8" class="border-b border-slate-100/80 py-8 pl-5 pr-3 text-center text-xs text-slate-400 sm:pl-6 sm:pr-5">
                       표시할 계정이 없습니다.
                     </td>
                   </tr>
@@ -523,7 +563,6 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                     <td class="truncate px-3 py-2.5 text-xs">{{ row.phone || '—' }}</td>
                     <td class="truncate px-3 py-2.5 text-xs text-forena-700">{{ row.email || '—' }}</td>
                     <td class="truncate px-3 py-2.5 text-xs">{{ userRoleLabel(rowRoleStr(row)) }}</td>
-                    <td class="truncate px-3 py-2.5 text-xs">{{ row.siteCode || '—' }}</td>
                     <td class="truncate px-3 py-2.5 text-xs text-forena-700">{{ row.trade || '—' }}</td>
                     <td class="whitespace-nowrap px-3 py-2.5">
                       <span
@@ -549,7 +588,16 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                         </button>
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50"
+                          class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35"
+                          :disabled="row.active"
+                          @click="activateAccount(row)"
+                        >
+                          <Check class="h-3 w-3" />
+                          {{ T.activate }}
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-35"
                           :disabled="!row.active"
                           @click="deactivateAccount(row)"
                         >
@@ -581,7 +629,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
           >
             <tr>
               <th class="whitespace-nowrap px-3 py-3">{{ T.colCode }}</th>
-              <th class="whitespace-nowrap px-3 py-3">{{ T.colName }}</th>
+              <th class="whitespace-nowrap px-3 py-3">{{ T.colSiteDisplayName }}</th>
               <th class="whitespace-nowrap px-3 py-3">{{ T.colDirectorName }}</th>
               <th class="whitespace-nowrap px-3 py-3">{{ T.colDirectorPhone }}</th>
               <th class="px-3 py-3">{{ T.colAddress }}</th>
@@ -815,60 +863,38 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
 
           <div class="flex-1 space-y-3 overflow-y-auto px-4 py-4 text-sm">
             <p class="rounded-lg bg-forena-50 px-3 py-2 text-[11px] text-forena-600">{{ T.loginIdRo }}</p>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">이름</span>
-                <input v-model="formEdit.name" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.phone }}</span>
-                <input v-model="formEdit.phone" type="tel" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
-                <input
-                  v-model="formEdit.email"
-                  type="email"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.rolePickHint }}</span>
-                <select v-model="formEdit.role" class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2">
-                  <option v-for="ro in ROLE_OPTIONS_HUB" :key="ro.value" :value="ro.value">{{ ro.label }}</option>
-                </select>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.colSite }} (코드)</span>
-                <input
-                  v-model="formEdit.siteCode"
-                  type="text"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2 font-mono text-xs"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.colTrade }}</span>
-                <input v-model="formEdit.trade" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
-              </label>
-              <label class="flex cursor-pointer items-center gap-2 py-1">
-                <input
-                  v-model="formEdit.active"
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-forena-300 text-flare-600"
-                />
-                <span class="text-[11px] font-bold text-forena-700">계정 사용</span>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500"
-                  >{{ T.pwdNew }}
-                  <span class="font-normal text-forena-400">({{ T.pwdPlaceholderEdit }})</span></span
-                >
-                <input
-                  v-model="formEdit.newPassword"
-                  type="password"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
-                  autocomplete="new-password"
-                />
-              </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.lblAccountName }}</span>
+              <input v-model="formEdit.name" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.phone }}</span>
+              <input v-model="formEdit.phone" type="tel" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
+              <input
+                v-model="formEdit.email"
+                type="email"
+                class="w-full rounded-lg border border-forena-200 px-3 py-2"
+              />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.rolePickHint }}</span>
+              <select v-model="formEdit.role" class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2">
+                <option v-for="ro in ROLE_OPTIONS_HUB" :key="ro.value" :value="ro.value">{{ ro.label }}</option>
+              </select>
+            </label>
+            <div class="mt-3 space-y-2 border-t border-forena-100 pt-3">
+              <p class="text-[11px] font-bold text-black">{{ T.pwdEditSectionTitle }}</p>
+              <button
+                type="button"
+                class="w-full rounded-lg border border-forena-200 bg-white py-2 text-xs font-bold text-black shadow-sm transition hover:bg-slate-50"
+                @click="notifyPasswordResetEmailSent"
+              >
+                {{ T.pwdResetMail }}
+              </button>
+            </div>
           </div>
 
           <div class="flex gap-2 border-t border-forena-100/80 bg-white px-4 py-3">

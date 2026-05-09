@@ -30,3 +30,13 @@ export async function getTradeProcessList(projectId, tradeName) {
   if (tradeName) params.tradeName = tradeName
   return await api.get('/trade-process', { params })
 }
+
+/**
+ * 계정 생성 공종 드롭다운 전용.
+ * isMilestone=true 이고 '준공','착공' 제외한 공종명 목록(List<String>) 반환.
+ * @param {number|string} projectId
+ * @returns {Promise<string[]>}
+ */
+export async function getMilestoneTradeNames(projectId) {
+  return await api.get('/trade-process/milestone-trades', { params: { projectId } })
+}

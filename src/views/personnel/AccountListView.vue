@@ -7,6 +7,7 @@ import {
   Plus,
   Pencil,
   Ban,
+  Check,
   X,
   RefreshCw,
   ArrowLeft,
@@ -15,13 +16,11 @@ import {
   getAdminAccounts,
   postAdminAccount,
   putAdminAccount,
-  putAdminAccountPassword,
-  deleteAdminAccount,
   getAdminAccountRequests,
   approveAccountRequest,
   rejectAccountRequest,
 } from '@/api/auth.js'
-import { getProjectList, getTradeProcessList } from '@/api/project.js'
+import { getProjectList, getMilestoneTradeNames } from '@/api/project.js'
 import { userRoleLabel, USER_ROLE } from '@/stores/authStore'
 
 const T = {
@@ -30,6 +29,7 @@ const T = {
   tabStatus: '계정 및 권한 현황',
   tabRequests: '요청 및 승인',
   sectionAccountStatus: '근무자 계정 현황',
+  sectionSiteDirectorAccounts: '현장 총 책임자',
   workerSubTabHQ: '본사 직영',
   workerSubTabByTrade: '공종별',
   tradeUnassigned: '공종 미지정',
@@ -64,25 +64,36 @@ const T = {
   lblDetailSite: '현장명',
   lblDetailName: '요청자명',
   lblDetailRole: '요청자 권한',
-  lblDetailTrade: '요청자 공종',
-  lblDetailBody: '요청 상세내용',
+  lblDetailTrade: '공종',
+  lblDetailRequestedLoginId: '신규 계정 로그인 ID',
+  lblDetailRequestedName: '신규 계정 이름',
+  lblDetailRequestedRole: '신규 계정 권한',
+  lblDetailSiteCode: '현장 코드',
+  lblDetailRejectNote: '거절 사유',
+  lblDetailBody: '요약·비고',
   active: '사용 중',
   inactive: '비활성',
   edit: '수정',
+  activate: '활성',
   del: '비활성',
+  lblAccountName: '계정명',
   modalCreate: '신규 계정 생성',
   modalEdit: '계정 수정',
   save: '저장',
   cancel: '취소',
   pwdNew: '비밀번호 (8자 이상)',
-  pwdPlaceholderEdit: '변경 시에만 입력',
   loginIdRo: '로그인 ID는 수정할 수 없습니다.',
   modalApproveTitle: '요청 승인',
   modalRejectTitle: '요청 거절',
-  labelInitialPwd: '초기 비밀번호',
+  labelInitialPwd: '초기 비밀번호 (선택)',
+  approvePwdOptionalHint: '비워 두면 서버에서 임시 비밀번호를 자동 생성합니다. 직접 지정할 때만 8자 이상 입력하세요.',
   labelRejectNote: '거절 사유 (선택)',
   rolePickHint: '권한 선택',
   sitePick: '현장 명',
+  pwdEditSectionTitle: '비밀번호 수정',
+  pwdResetMail: '비밀번호 초기화',
+  pwdResetMailAlert:
+    '등록된 이메일로 비밀번호 재설정 메일을 발송했습니다.\n메일함을 확인해 주세요.',
   tradePick: '공종',
   tradeHint: '공종별 책임자·관리자만 선택',
   phone: '휴대폰 번호',
@@ -100,7 +111,7 @@ const T = {
 const ROLE_OPTIONS = [
   { value: USER_ROLE.ADMIN, label: '시스템 관리자' },
   { value: USER_ROLE.HEADQUARTOR, label: '본사' },
-  { value: USER_ROLE.HEADQUARTOR_SITE_MANAGER, label: '본사 현장 관리자' },
+  { value: USER_ROLE.SITE_MANAGER, label: '현장 관리자' },
   { value: USER_ROLE.SITE_DIRECTOR, label: '현장 총 책임자' },
   { value: USER_ROLE.SECTION_LEADER, label: '공종별 책임자' },
   { value: USER_ROLE.SECTION_SUPERVISOR, label: '공종별 현장 관리자' },
@@ -164,7 +175,7 @@ function classify(acc) {
       ? String(/** @type {{ name?: string }} */ (r).name || '')
       : String(r || '')
   if (rs === 'ADMIN') return 'system'
-  if (rs === 'HEADQUARTOR' || rs === 'HEADQUARTOR_SITE_MANAGER') return 'hq'
+  if (rs === 'HEADQUARTOR') return 'hq'
   return 'field'
 }
 
@@ -254,11 +265,24 @@ function workerAffiliationKind(acc) {
   return 'hq'
 }
 
+function isSiteDirectorAccount(acc) {
+  return rowRoleStr(acc) === USER_ROLE.SITE_DIRECTOR
+}
+
+/** 현장 총 책임자만 상단 블록 (본사 직영·공종별 목록에서는 제외) */
+const directorFieldAccounts = computed(() =>
+  fieldAccounts.value.filter((a) => isSiteDirectorAccount(a)),
+)
+
 const hqFieldAccounts = computed(() =>
-  fieldAccounts.value.filter((a) => workerAffiliationKind(a) === 'hq'),
+  fieldAccounts.value.filter(
+    (a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a),
+  ),
 )
 const tradeFieldAccounts = computed(() =>
-  fieldAccounts.value.filter((a) => workerAffiliationKind(a) === 'partner'),
+  fieldAccounts.value.filter(
+    (a) => workerAffiliationKind(a) === 'partner' && !isSiteDirectorAccount(a),
+  ),
 )
 
 const tradeGroupedRows = computed(() => {
@@ -297,8 +321,12 @@ function toggleTradeAccordion(label) {
 }
 
 watch(fieldAccounts, (rows) => {
-  const hasHq = rows.some((a) => workerAffiliationKind(a) === 'hq')
-  const hasTradeTab = rows.some((a) => workerAffiliationKind(a) === 'partner')
+  const hasHq = rows.some(
+    (a) => workerAffiliationKind(a) === 'hq' && !isSiteDirectorAccount(a),
+  )
+  const hasTradeTab = rows.some(
+    (a) => workerAffiliationKind(a) === 'partner' && !isSiteDirectorAccount(a),
+  )
   if (!hasHq && hasTradeTab && workerAffiliationTab.value === 'hq') {
     workerAffiliationTab.value = 'trade'
   } else if (hasHq && !hasTradeTab && workerAffiliationTab.value === 'trade') {
@@ -337,7 +365,15 @@ function requestSiteKey(row) {
   return t || '미지정'
 }
 
-/** 요청 행 — role 문자열 */
+/** 요청 행 — 신규 계정 부여 권한 (AccountRequestDto.requestedRole) */
+function requestRowRequestedRoleStr(rq) {
+  const r = rq?.requestedRole
+  if (r && typeof r === 'object' && r !== null && 'name' in r)
+    return String(/** @type {{ name?: string }} */ (r).name || '')
+  return String(r || '')
+}
+
+/** 요청 행 — role 문자열 (요청자 권한 = Res.role) */
 function requestRowRoleStr(rq) {
   const r = rq?.role
   if (r && typeof r === 'object' && r !== null && 'name' in r)
@@ -345,23 +381,43 @@ function requestRowRoleStr(rq) {
   return String(r || '')
 }
 
-/** 목록/상세 공통: 요청 제목 */
+/** 목록/상세 공통: 요청 한 줄 제목 */
 function requestRowTitle(rq) {
   const t = rq?.title ?? rq?.requestTitle ?? rq?.subject
-  const s = String(t || '').trim()
-  return s || T.reqTypeCreate
+  const ts = String(t || '').trim()
+  if (ts) return ts
+  const lid = String(rq?.requestedLoginId ?? rq?.loginId ?? '').trim()
+  const nm = String(rq?.requestedName ?? '').trim()
+  if (lid && nm) return `${nm} · ${lid}`
+  if (lid) return lid
+  if (nm) return nm
+  return T.reqTypeCreate
 }
 
-/** 상세 본문 */
+/** 상세 보조 텍스트 (자유 입력 필드 + 백엔드 note 등) */
 function requestRowDetailText(rq) {
+  const parts = []
   const d = rq?.detail ?? rq?.content ?? rq?.description ?? rq?.memo ?? rq?.body
-  const s = String(d || '').trim()
-  return s || '—'
+  const ds = String(d || '').trim()
+  if (ds) parts.push(ds)
+  const note = String(rq?.note ?? '').trim()
+  if (note && String(rq?.status || '').toUpperCase() === 'REJECTED') parts.push(`${T.lblDetailRejectNote}: ${note}`)
+  if (!parts.length) {
+    const rc = []
+    const site = String(rq?.siteCode ?? '').trim()
+    const tr = String(rq?.trade ?? '').trim()
+    if (site) rc.push(`${T.lblDetailSiteCode} ${site}`)
+    if (tr) rc.push(`${T.lblDetailTrade} ${tr}`)
+    return rc.length ? rc.join(' · ') : '—'
+  }
+  return parts.join('\n\n')
 }
 
 /** 상세 모달 현장명 — API 필드 우선, 없으면 상단 선택 현장 */
 function requestSiteNameForDetail(rq) {
   if (!rq) return '—'
+  const code = String(rq.siteCode ?? '').trim()
+  if (code) return code
   const n = rq.projectName ?? rq.siteName ?? rq.siteDisplayName
   if (n != null && String(n).trim() !== '') return String(n).trim()
   return currentSiteDisplay.value
@@ -383,6 +439,9 @@ const accountRequestsDummy = computed(() => {
       detail:
         '현장 협력사 소속 근로자 계정 발급을 요청드립니다.\n안전관리팀 검토 후 회신 부탁드립니다.',
       loginId: 'demo.kim.req',
+      requestedLoginId: 'demo.kim.new',
+      requestedName: '김신규',
+      requestedRole: USER_ROLE.SITE_DIRECTOR,
       name: '김요청',
       role: USER_ROLE.SECTION_SUPERVISOR,
       siteCode: code || undefined,
@@ -396,6 +455,9 @@ const accountRequestsDummy = computed(() => {
       title: '공종별 권한 변경 요청',
       detail: '골조 공정 담당자 권한을 공종별 책임자로 상향 조정해 주시기 바랍니다.',
       loginId: 'demo.lee.req',
+      requestedLoginId: 'demo.lee.new',
+      requestedName: '이신규',
+      requestedRole: USER_ROLE.SECTION_LEADER,
       name: '이협력',
       role: USER_ROLE.SECTION_LEADER,
       siteCode: code || undefined,
@@ -449,16 +511,83 @@ const formEdit = reactive({
   phone: '',
   email: '',
   role: USER_ROLE.SITE_DIRECTOR,
-  siteCode: '',
+  /** @type {number|null} */
+  projectIdx: null,
   trade: '',
-  active: true,
-  newPassword: '',
 })
 
+const editTradeLoading = ref(false)
+/** @type {import('vue').Ref<string[]>} */
+const editTradeOptions = ref([])
+
+const editNeedsSite = computed(() =>
+  [
+    USER_ROLE.SITE_MANAGER,
+    USER_ROLE.SITE_DIRECTOR,
+    USER_ROLE.SECTION_LEADER,
+    USER_ROLE.SECTION_SUPERVISOR,
+  ].includes(formEdit.role),
+)
+
+const editNeedsTrade = computed(() =>
+  [USER_ROLE.SECTION_LEADER, USER_ROLE.SECTION_SUPERVISOR].includes(formEdit.role),
+)
+
+function accountUpdatePayload(row, overrides = {}) {
+  const r = rowRoleStr(row)
+  return {
+    name: String(row?.name || '').trim(),
+    phone:
+      row?.phone != null && String(row.phone).trim() !== ''
+        ? String(row.phone).trim()
+        : undefined,
+    email:
+      row?.email != null && String(row.email).trim() !== ''
+        ? String(row.email).trim()
+        : undefined,
+    role: r,
+    siteCode: String(row?.siteCode || '').trim() || undefined,
+    trade: String(row?.trade || '').trim() || undefined,
+    active: Boolean(row?.active),
+    ...overrides,
+  }
+}
+
+function findProjectIdxForAccountRow(row) {
+  const code = String(row?.siteCode || '').trim()
+  if (code) {
+    const match = projectOptions.value.find((p) => parseProjectLabel(p.name).code === code)
+    if (match) return match.idx
+  }
+  const routeIdx = projectIdxParam.value
+  return Number.isFinite(routeIdx) ? routeIdx : null
+}
+
+async function loadEditTradeOptions(projectId) {
+  if (projectId == null) {
+    editTradeOptions.value = []
+    return
+  }
+  editTradeLoading.value = true
+  try {
+    const list = await getMilestoneTradeNames(projectId)
+    editTradeOptions.value = Array.isArray(list)
+      ? [...list].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko'))
+      : []
+  } catch {
+    editTradeOptions.value = []
+  } finally {
+    editTradeLoading.value = false
+  }
+}
+
 const needsSiteForRole = computed(() =>
-  [USER_ROLE.SITE_DIRECTOR, USER_ROLE.SECTION_LEADER, USER_ROLE.SECTION_SUPERVISOR].includes(
-    formCreate.role,
-  ),
+  [
+    USER_ROLE.SITE_MANAGER,
+    USER_ROLE.SITE_DIRECTOR,
+    USER_ROLE.SECTION_LEADER,
+    USER_ROLE.SECTION_SUPERVISOR,
+  ].includes(formCreate.role),
 )
 
 const needsTrade = computed(() =>
@@ -480,21 +609,13 @@ watch(
   async (pid) => {
     formCreate.trade = ''
     tradeOptions.value = []
-    if (pid == null || !needsTrade.value) return
+    if (pid == null) return
     tradeLoading.value = true
     try {
-      const list = await getTradeProcessList(pid)
-      const arr = Array.isArray(list) ? list : []
-      const names = new Set()
-      for (const row of arr) {
-        const n =
-          row?.tradeName ??
-          row?.trade ??
-          row?.processName ??
-          row?.name
-        if (n) names.add(String(n).trim())
-      }
-      tradeOptions.value = [...names].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko'))
+      const list = await getMilestoneTradeNames(pid)
+      tradeOptions.value = Array.isArray(list)
+        ? [...list].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko'))
+        : []
     } catch {
       tradeOptions.value = []
     } finally {
@@ -512,6 +633,40 @@ watch(
       formCreate.trade = ''
       tradeOptions.value = []
     }
+  },
+)
+
+watch(
+  () => formEdit.role,
+  (r) => {
+    if (!modalOpen.value || modalMode.value !== 'edit') return
+    const siteRoles = [
+      USER_ROLE.SITE_MANAGER,
+      USER_ROLE.SITE_DIRECTOR,
+      USER_ROLE.SECTION_LEADER,
+      USER_ROLE.SECTION_SUPERVISOR,
+    ]
+    if (!siteRoles.includes(r)) {
+      formEdit.projectIdx = null
+      formEdit.trade = ''
+      editTradeOptions.value = []
+      return
+    }
+    if (![USER_ROLE.SECTION_LEADER, USER_ROLE.SECTION_SUPERVISOR].includes(r)) {
+      formEdit.trade = ''
+    }
+  },
+)
+
+watch(
+  () => [modalOpen.value, modalMode.value, formEdit.projectIdx, formEdit.role],
+  async ([mo, mm, pid, role]) => {
+    if (!mo || mm !== 'edit') return
+    if (![USER_ROLE.SECTION_LEADER, USER_ROLE.SECTION_SUPERVISOR].includes(role)) {
+      editTradeOptions.value = []
+      return
+    }
+    await loadEditTradeOptions(pid)
   },
 )
 
@@ -594,10 +749,8 @@ function openEditModal(row) {
   formEdit.phone = row.phone || ''
   formEdit.email = row.email || ''
   formEdit.role = rowRoleStr(row) || USER_ROLE.SITE_DIRECTOR
-  formEdit.siteCode = row.siteCode || ''
+  formEdit.projectIdx = findProjectIdxForAccountRow(row)
   formEdit.trade = row.trade || ''
-  formEdit.active = Boolean(row.active)
-  formEdit.newPassword = ''
   modalOpen.value = true
 }
 
@@ -606,9 +759,23 @@ function closeModal() {
   editingIdx.value = null
 }
 
+function notifyPasswordResetEmailSent() {
+  window.alert(T.pwdResetMailAlert)
+}
+
 function deriveSiteCodeFromForm() {
   if (!needsSiteForRole.value) return undefined
   const idx = formCreate.projectIdx
+  if (idx == null) return undefined
+  const p = projectOptions.value.find((x) => x.idx === idx)
+  if (!p) return undefined
+  const { code } = parseProjectLabel(p.name)
+  return code || undefined
+}
+
+function deriveSiteCodeFromEditForm() {
+  if (!editNeedsSite.value) return undefined
+  const idx = formEdit.projectIdx
   if (idx == null) return undefined
   const p = projectOptions.value.find((x) => x.idx === idx)
   if (!p) return undefined
@@ -663,20 +830,56 @@ async function submitModal() {
   const idx = editingIdx.value
   if (idx == null) return
 
+  if (editNeedsSite.value && formEdit.projectIdx == null) {
+    pushToast('현장을 선택해 주세요.', 'warning')
+    return
+  }
+  if (editNeedsTrade.value) {
+    if (!String(formEdit.trade || '').trim()) {
+      pushToast('공종을 선택해 주세요.', 'warning')
+      return
+    }
+  }
+  const siteCodePut = editNeedsSite.value ? deriveSiteCodeFromEditForm() : undefined
+  if (editNeedsSite.value && !siteCodePut) {
+    pushToast(
+      '선택한 현장에서 현장 코드를 확인할 수 없습니다. 현장 등록 형식을 [코드] 표시명 인지 확인해 주세요.',
+      'warning',
+    )
+    return
+  }
+  const tradePut = editNeedsTrade.value ? String(formEdit.trade || '').trim() || undefined : undefined
+  const prevRow = accounts.value.find((a) => a.idx === idx)
+
+  /** 관리자·본사 등 현장 폼 미노출 시 기존 값 유지 */
+  let siteCodeMerged
+  if (editNeedsSite.value) {
+    siteCodeMerged = siteCodePut
+  } else if (prevRow?.siteCode != null && String(prevRow.siteCode).trim() !== '') {
+    siteCodeMerged = String(prevRow.siteCode).trim()
+  } else {
+    siteCodeMerged = undefined
+  }
+
+  let tradeMerged
+  if (editNeedsTrade.value) {
+    tradeMerged = tradePut
+  } else if (prevRow?.trade != null && String(prevRow.trade).trim() !== '') {
+    tradeMerged = String(prevRow.trade).trim()
+  } else {
+    tradeMerged = undefined
+  }
+
   try {
     await putAdminAccount(idx, {
       name: String(formEdit.name || '').trim(),
       phone: String(formEdit.phone || '').trim() || undefined,
       email: String(formEdit.email || '').trim() || undefined,
       role: formEdit.role,
-      siteCode: String(formEdit.siteCode || '').trim() || undefined,
-      trade: String(formEdit.trade || '').trim() || undefined,
-      active: Boolean(formEdit.active),
+      siteCode: siteCodeMerged,
+      trade: tradeMerged,
+      active: Boolean(prevRow?.active),
     })
-    const np = String(formEdit.newPassword || '').trim()
-    if (np.length >= 8) {
-      await putAdminAccountPassword(idx, { newPassword: np })
-    }
     pushToast('계정이 수정되었습니다.')
     closeModal()
     await refreshList()
@@ -685,11 +888,25 @@ async function submitModal() {
   }
 }
 
+async function activateAccount(row) {
+  if (!row || row.active) return
+  const ok = window.confirm(`‘${row.name}’ 계정을 활성화할까요?`)
+  if (!ok) return
+  try {
+    await putAdminAccount(row.idx, accountUpdatePayload(row, { active: true }))
+    pushToast('활성화되었습니다.')
+    await refreshList()
+  } catch (e) {
+    pushToast(e?.message || '활성화에 실패했습니다.', 'danger')
+  }
+}
+
 async function deactivateAccount(row) {
+  if (!row || !row.active) return
   const ok = window.confirm(`‘${row.name}’ 계정을 비활성화할까요?`)
   if (!ok) return
   try {
-    await deleteAdminAccount(row.idx)
+    await putAdminAccount(row.idx, accountUpdatePayload(row, { active: false }))
     pushToast('비활성화되었습니다.')
     await refreshList()
   } catch (e) {
@@ -752,13 +969,15 @@ function closeApprove() {
 async function submitApprove() {
   const row = approveTarget.value
   const pwd = String(approvePassword.value || '').trim()
-  if (!row || pwd.length < 8) {
-    pushToast('초기 비밀번호(8자 이상)를 입력해 주세요.', 'warning')
+  if (!row) return
+  if (pwd.length > 0 && pwd.length < 8) {
+    pushToast('초기 비밀번호를 입력할 경우 8자 이상이어야 합니다. 비워 두면 서버에서 자동 생성합니다.', 'warning')
     return
   }
+  const body = pwd.length >= 8 ? { initialPassword: pwd } : {}
   try {
-    await approveAccountRequest(row.idx, { initialPassword: pwd })
-    pushToast('승인 처리되었습니다.')
+    await approveAccountRequest(row.idx, body)
+    pushToast(pwd.length >= 8 ? '승인 처리되었습니다.' : '승인되었습니다. 초기 비밀번호는 서버에서 생성되었습니다.')
     closeApprove()
     closeRequestDetail()
     pruneReqSelectionAfterChange([row])
@@ -1094,9 +1313,115 @@ watch(
       <section
         class="mt-6 overflow-hidden rounded-2xl border border-forena-100/90 bg-white shadow-card"
       >
-        <div class="flex flex-wrap items-start justify-between gap-3 px-4 pt-4 pb-2 sm:px-5">
+        <div class="px-4 pt-4 pb-3 sm:px-5">
           <h2 class="text-base font-bold text-forena-900">{{ T.sectionAccountStatus }}</h2>
-          <div class="-mx-1 flex flex-wrap gap-1 px-1">
+        </div>
+
+        <div class="border-t border-forena-100/70 bg-white px-4 pb-px pt-3 sm:px-5">
+          <!-- 현장 총 책임자: 본사 직영·공종별과 분리하여 상단 고정 -->
+          <div
+            v-if="directorFieldAccounts.length"
+            class="mb-5 overflow-hidden rounded-xl border border-slate-200/80"
+          >
+            <div
+              class="flex items-center justify-between gap-3 bg-slate-200/55 px-4 py-2.5 text-left"
+            >
+              <span class="text-sm font-bold text-forena-900">{{
+                T.sectionSiteDirectorAccounts
+              }}</span>
+              <span class="shrink-0 text-[11px] font-semibold tabular-nums text-forena-600">
+                ({{ directorFieldAccounts.length }})
+              </span>
+            </div>
+            <div class="overflow-x-auto border-t border-slate-200/70">
+              <table class="w-full min-w-[920px] border-collapse text-sm">
+                <thead>
+                  <tr :class="accountStatusTheadClass">
+                    <th class="w-[13%] py-2.5 pl-5 pr-3 text-left text-xs font-bold sm:pl-6">
+                      {{ T.colLoginId }}
+                    </th>
+                    <th class="w-[15%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerName }}</th>
+                    <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerPhone }}</th>
+                    <th class="w-[17%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerRole }}</th>
+                    <th class="w-[13%] px-3 py-2.5 text-left text-xs">{{ T.colWorkerTrade }}</th>
+                    <th class="w-[11%] px-3 py-2.5 text-left text-xs">{{ T.colStatus }}</th>
+                    <th class="w-[18%] px-3 py-2.5 pr-5 text-center text-xs sm:pr-6">
+                      {{ T.colActions }}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(row, ri) in directorFieldAccounts"
+                    :key="'dir-' + row.idx"
+                    class="border-b border-violet-100/40 transition hover:bg-violet-50/40"
+                    :class="ri % 2 === 0 ? 'bg-white' : 'bg-violet-50/20'"
+                  >
+                    <td class="truncate py-2.5 pl-5 pr-3 font-mono text-xs text-forena-800 sm:pl-6">
+                      {{ row.loginId }}
+                    </td>
+                    <td class="truncate px-3 py-2.5 text-left">
+                      <span class="font-semibold text-forena-900">{{ row.name }}</span>
+                    </td>
+                    <td class="truncate px-3 py-2.5 text-left text-xs">{{ row.phone || '—' }}</td>
+                    <td class="truncate px-3 py-2.5 text-left text-xs">
+                      {{ userRoleLabel(rowRoleStr(row)) }}
+                    </td>
+                    <td class="truncate px-3 py-2.5 text-left text-xs text-forena-700">
+                      {{ row.trade || '—' }}
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2.5 text-left">
+                      <span
+                        class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1"
+                        :class="
+                          row.active
+                            ? 'bg-sky-100 text-sky-900 ring-sky-200/80'
+                            : 'bg-slate-100 text-slate-600 ring-slate-200/80'
+                        "
+                      >
+                        {{ row.active ? T.active : T.inactive }}
+                      </span>
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2.5 pr-5 text-center sm:pr-6">
+                      <div class="flex flex-wrap items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-forena-700 hover:bg-slate-50"
+                          @click="openEditModal(row)"
+                        >
+                          <Pencil class="h-3 w-3" />
+                          {{ T.edit }}
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35"
+                          :disabled="row.active"
+                          @click="activateAccount(row)"
+                        >
+                          <Check class="h-3 w-3" />
+                          {{ T.activate }}
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-35"
+                          :disabled="!row.active"
+                          @click="deactivateAccount(row)"
+                        >
+                          <Ban class="h-3 w-3" />
+                          {{ T.del }}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 본사 직영·공종별 분류: 현장 총 책임자 블록 아래 -->
+          <div
+            class="-mx-1 mb-3 flex flex-wrap items-center gap-1 border-b border-forena-100/60 px-1 pb-3"
+          >
             <button
               type="button"
               class="rounded-lg px-3 py-1.5 text-xs font-bold transition"
@@ -1124,9 +1449,7 @@ watch(
               <span class="ml-1 tabular-nums opacity-90">({{ tradeFieldAccounts.length }})</span>
             </button>
           </div>
-        </div>
 
-        <div class="border-t border-forena-100/70 bg-white px-4 pb-px pt-3 sm:px-5">
           <!-- 본사 직영: 단일 표 -->
           <template v-if="workerAffiliationTab === 'hq'">
             <div class="overflow-x-auto">
@@ -1185,7 +1508,16 @@ watch(
                         </button>
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50"
+                          class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35"
+                          :disabled="row.active"
+                          @click="activateAccount(row)"
+                        >
+                          <Check class="h-3 w-3" />
+                          {{ T.activate }}
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-35"
                           :disabled="!row.active"
                           @click="deactivateAccount(row)"
                         >
@@ -1276,7 +1608,16 @@ watch(
                             </button>
                             <button
                               type="button"
-                              class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50"
+                              class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-bold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35"
+                              :disabled="row.active"
+                              @click="activateAccount(row)"
+                            >
+                              <Check class="h-3 w-3" />
+                              {{ T.activate }}
+                            </button>
+                            <button
+                              type="button"
+                              class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-35"
                               :disabled="!row.active"
                               @click="deactivateAccount(row)"
                             >
@@ -1514,8 +1855,22 @@ watch(
                 <dd class="mt-0.5">{{ formatReqDate(selectedRequest) }}</dd>
               </div>
               <div>
-                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailSite }}</dt>
+                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailSiteCode }}</dt>
                 <dd class="mt-0.5">{{ requestSiteNameForDetail(selectedRequest) }}</dd>
+              </div>
+              <div>
+                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedLoginId }}</dt>
+                <dd class="mt-0.5 font-mono text-xs">
+                  {{ selectedRequest.requestedLoginId ?? selectedRequest.loginId ?? '—' }}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedName }}</dt>
+                <dd class="mt-0.5">{{ selectedRequest.requestedName ?? '—' }}</dd>
+              </div>
+              <div>
+                <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailRequestedRole }}</dt>
+                <dd class="mt-0.5">{{ userRoleLabel(requestRowRequestedRoleStr(selectedRequest)) }}</dd>
               </div>
               <div>
                 <dt class="text-[11px] font-bold text-forena-500">{{ T.lblDetailName }}</dt>
@@ -1641,7 +1996,7 @@ watch(
             <template v-else>
               <p class="rounded-lg bg-forena-50 px-3 py-2 text-[11px] text-forena-600">{{ T.loginIdRo }}</p>
               <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">이름</span>
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.lblAccountName }}</span>
                 <input
                   v-model="formEdit.name"
                   type="text"
@@ -1666,38 +2021,40 @@ watch(
                   <option v-for="ro in ROLE_OPTIONS" :key="ro.value" :value="ro.value">{{ ro.label }}</option>
                 </select>
               </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.colSite }} (코드)</span>
-                <input
-                  v-model="formEdit.siteCode"
-                  type="text"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2 font-mono text-xs"
-                />
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.colTrade }}</span>
-                <input v-model="formEdit.trade" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
-              </label>
-              <label class="flex cursor-pointer items-center gap-2 py-1">
-                <input
-                  v-model="formEdit.active"
-                  type="checkbox"
-                  class="h-4 w-4 rounded border-forena-300 text-flare-600"
-                />
-                <span class="text-[11px] font-bold text-forena-700">계정 사용</span>
-              </label>
-              <label class="block">
-                <span class="mb-1 block text-[11px] font-bold text-forena-500"
-                  >{{ T.pwdNew }}
-                  <span class="font-normal text-forena-400">({{ T.pwdPlaceholderEdit }})</span></span
+              <label v-if="editNeedsSite" class="block">
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.sitePick }}</span>
+                <select
+                  v-model.number="formEdit.projectIdx"
+                  class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm"
                 >
-                <input
-                  v-model="formEdit.newPassword"
-                  type="password"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
-                  autocomplete="new-password"
-                />
+                  <option :value="null">현장 선택</option>
+                  <option v-for="p in sortedProjectOptions" :key="'e-' + p.idx" :value="p.idx">
+                    {{ projectOptionLabel(p) }}
+                  </option>
+                </select>
               </label>
+              <label v-if="editNeedsTrade" class="block">
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.tradePick }}</span>
+                <span class="mb-1 block text-[10px] text-forena-400">{{ T.tradeHint }}</span>
+                <select
+                  v-model="formEdit.trade"
+                  class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  :disabled="editTradeLoading || formEdit.projectIdx == null"
+                >
+                  <option value="">{{ editTradeLoading ? '불러오는 중…' : '공종 선택' }}</option>
+                  <option v-for="t in editTradeOptions" :key="'et-' + t" :value="t">{{ t }}</option>
+                </select>
+              </label>
+              <div class="mt-3 space-y-2 border-t border-forena-100 pt-3">
+                <p class="text-[11px] font-bold text-black">{{ T.pwdEditSectionTitle }}</p>
+                <button
+                  type="button"
+                  class="w-full rounded-lg border border-forena-200 bg-white py-2 text-xs font-bold text-black shadow-sm transition hover:bg-slate-50"
+                  @click="notifyPasswordResetEmailSent"
+                >
+                  {{ T.pwdResetMail }}
+                </button>
+              </div>
             </template>
           </div>
 
@@ -1730,6 +2087,7 @@ watch(
       >
         <div class="w-full max-w-sm rounded-2xl border border-flare-100/90 bg-white p-4 shadow-xl">
           <h3 class="text-sm font-bold text-forena-900">{{ T.modalApproveTitle }}</h3>
+          <p class="mt-1 text-[11px] leading-snug text-forena-500">{{ T.approvePwdOptionalHint }}</p>
           <label class="mt-3 block text-sm">
             <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.labelInitialPwd }}</span>
             <input
@@ -1737,6 +2095,7 @@ watch(
               type="password"
               class="w-full rounded-lg border border-forena-200 px-3 py-2"
               autocomplete="new-password"
+              placeholder="선택 입력"
             />
           </label>
           <div class="mt-4 flex gap-2">
