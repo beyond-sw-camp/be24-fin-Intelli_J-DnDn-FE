@@ -1,5 +1,4 @@
 <script setup>
-// feat : Vue Composition API 및 아이콘, API 모듈 임포트
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import api from '@/api/index'
 import {
@@ -23,7 +22,6 @@ import {
   UserCog,
   Trash2,
   X,
-  Layers,
   Sparkles,
   RefreshCw,
   Truck,
@@ -31,9 +29,7 @@ import {
   Image as ImageIcon,
   Paperclip,
   Search,
-  Filter,
   ArrowRightLeft,
-  Download,
 } from 'lucide-vue-next'
 
 import {
@@ -43,7 +39,6 @@ import {
   approveWorkOrder,
 } from '@/api/workOrder'
 
-// feat : 한글 장비명과 영문 Enum 간의 매핑 상수
 const EQUIPMENT_ENUM_MAP = {
   굴삭기: 'EXCAVATOR',
   미니굴삭기: 'MINI_EXCAVATOR',
@@ -81,21 +76,194 @@ const EQUIPMENT_ENUM_MAP = {
   TBM: 'TUNNEL_BORING_MACHINE',
 }
 
-// feat : 영문 Enum을 한글 장비명으로 역매핑
 const ENUM_TO_KOR_MAP = Object.fromEntries(
   Object.entries(EQUIPMENT_ENUM_MAP).map(([k, v]) => [v, k]),
 )
 
-// feat : 사용자 권한 및 공정 기본 설정
-const ROLES = {
-  MANAGER: 'site_manager',
-  WORKER: 'process_owner',
-}
+const ROLES = { MANAGER: 'site_manager', WORKER: 'process_owner' }
 const currentRole = ref(ROLES.WORKER)
-const ALL_PROCESSES = ['토공', '골조', '철근', '전기', '설비', '마감']
-const myProcess = ref('철근')
 
-// feat : 장비 선택 옵션
+// 일단 작업 지시서에서는 대표 공종을 모두 보여준다.
+// 주간 공정계획/작업지시서에서 추가로 발견되는 공종은 availableTrades에서 함께 병합된다.
+const DEFAULT_TRADE_OPTIONS = [
+  '공통/가설',
+  '토공사',
+  '지정/기초',
+  '골조공사',
+  '건축마감',
+  '기계/설비',
+  '전기/통신',
+  '토목/조경',
+  '준공/검사',
+]
+const tradeOptions = ref([...DEFAULT_TRADE_OPTIONS])
+const myProcess = ref(DEFAULT_TRADE_OPTIONS[0])
+
+const TRADE_LABEL_MAP = {
+  EARTHWORK: '토공사',
+  FRAME: '골조공사',
+  REBAR: '골조공사',
+  FORM: '골조공사',
+  ELECTRIC: '전기/통신',
+  FACILITY: '기계/설비',
+  MASONRY: '건축마감',
+  WATERPROOF: '건축마감',
+  PLASTER: '건축마감',
+  TILE: '건축마감',
+  PAINT: '건축마감',
+  PAVEMENT: '토목/조경',
+  LANDSCAPE: '토목/조경',
+  ETC: '기타',
+  COMMON: '공통/가설',
+  TEMPORARY: '공통/가설',
+  COMMON_TEMP: '공통/가설',
+  FOUNDATION: '지정/기초',
+  FINISH: '건축마감',
+  MECHANICAL: '기계/설비',
+  CIVIL: '토목/조경',
+  INSPECTION: '준공/검사',
+  공통: '공통/가설',
+  가설: '공통/가설',
+  '공통/가설': '공통/가설',
+  지정: '지정/기초',
+  기초: '지정/기초',
+  '지정/기초': '지정/기초',
+  준공: '준공/검사',
+  검사: '준공/검사',
+  '준공/검사': '준공/검사',
+  토공: '토공사',
+  토공사: '토공사',
+  골조: '골조공사',
+  골조공사: '골조공사',
+  철근: '골조공사',
+  형틀: '골조공사',
+  전기: '전기/통신',
+  통신: '전기/통신',
+  '전기/통신': '전기/통신',
+  설비: '기계/설비',
+  기계: '기계/설비',
+  '기계/설비': '기계/설비',
+  마감: '건축마감',
+  건축마감: '건축마감',
+  조경: '토목/조경',
+  토목: '토목/조경',
+  '토목/조경': '토목/조경',
+}
+
+const TRADE_SORT_ORDER = [
+  '공통/가설',
+  '토공사',
+  '지정/기초',
+  '골조공사',
+  '건축마감',
+  '기계/설비',
+  '전기/통신',
+  '토목/조경',
+  '준공/검사',
+]
+
+function normalizeTradeName(value) {
+  if (!value) return ''
+  const raw = String(value)
+    .trim()
+    .replace(/\s*공정$/, '')
+    .replace(/\s*공종$/, '')
+  return TRADE_LABEL_MAP[raw] || raw
+}
+
+function sortTrades(list) {
+  return [...list].sort((a, b) => {
+    const ai = TRADE_SORT_ORDER.indexOf(a)
+    const bi = TRADE_SORT_ORDER.indexOf(b)
+    if (ai === -1 && bi === -1) return a.localeCompare(b, 'ko')
+    if (ai === -1) return 1
+    if (bi === -1) return -1
+    return ai - bi
+  })
+}
+
+function unwrapApiData(response) {
+  const payload = response?.data ?? response
+  const data = payload?.data ?? payload
+  if (Array.isArray(data)) return data
+  if (Array.isArray(data?.content)) return data.content
+  if (Array.isArray(data?.list)) return data.list
+  if (Array.isArray(data?.items)) return data.items
+  return []
+}
+
+function inferTradeNameFromTaskName(value) {
+  const text = String(value || '')
+  if (!text) return ''
+
+  if (/가설|현장\s*개설|울타리|사무실|타워크레인|리프트/.test(text)) return '공통/가설'
+  if (/토공|터파기|되메우기|흙막이|토사|굴착/.test(text)) return '토공사'
+  if (/지정|기초|파일|말뚝|버림|매트/.test(text)) return '지정/기초'
+  if (/골조|철근|콘크리트|거푸집|형틀|슬라브|보강|PHC/.test(text)) return '골조공사'
+  if (/조적|방수|미장|타일|도장|마감|창호|석고|수장|도배/.test(text)) return '건축마감'
+  if (/기계|설비|배관|덕트|위생|소방/.test(text)) return '기계/설비'
+  if (/전기|통신|전력|조명|수배전|케이블/.test(text)) return '전기/통신'
+  if (/토목|조경|포장|도로|배수|외부/.test(text)) return '토목/조경'
+  if (/준공|검사|청소|정리|인수|시운전/.test(text)) return '준공/검사'
+  return ''
+}
+
+function getTradeNameFromPlan(plan) {
+  // tradeProcessName/name은 보통 '현장 개설 및 가설울타리' 같은 세부 공정명이라
+  // 바로 공종으로 쓰지 않고, 아래에서 키워드 기반으로 대표 공종을 추론한다.
+  const directTradeCandidates = [
+    plan?.tradeName,
+    plan?.trade,
+    plan?.tradeType,
+    plan?.tradeCode,
+    plan?.category,
+    plan?.majorTrade,
+    plan?.majorTradeName,
+    plan?.tradeProcess?.tradeName,
+    plan?.tradeProcess?.trade,
+    plan?.tradeProcess?.tradeType,
+    plan?.tradeProcess?.category,
+    plan?.tradeProcess?.majorTrade,
+    plan?.tradeProcess?.majorTradeName,
+    plan?.processTrade,
+    plan?.processTradeName,
+  ]
+
+  for (const candidate of directTradeCandidates) {
+    const normalized = normalizeTradeName(candidate)
+    if (normalized && normalized !== '기타') return normalized
+  }
+
+  const processText = [
+    plan?.tradeProcessName,
+    plan?.tradeProcess?.name,
+    plan?.name,
+    plan?.processName,
+    plan?.title,
+    plan?.workName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const inferred = inferTradeNameFromTaskName(processText)
+  return inferred && inferred !== '기타' ? inferred : ''
+}
+
+function ensureSelectedTrade() {
+  const options = availableTrades.value
+  if (!options.length) {
+    myProcess.value = ''
+    if (filterProcess.value !== 'all') filterProcess.value = 'all'
+    return
+  }
+
+  if (!myProcess.value || !options.includes(myProcess.value)) {
+    myProcess.value = options[0]
+  }
+  if (currentRole.value === ROLES.WORKER) filterProcess.value = myProcess.value
+  else if (filterProcess.value !== 'all' && !options.includes(filterProcess.value))
+    filterProcess.value = 'all'
+}
+
 const equipmentList = {
   '굴착·토공': ['굴삭기', '미니굴삭기', '백호', '드래그라인'],
   운반: ['덤프트럭', '트럭 믹서', '트랙터', '트레일러', '스크레이퍼'],
@@ -107,29 +275,20 @@ const equipmentList = {
   '철거·특수': ['브레이커', '니블러', '크러셔', '고소작업차', 'TBM'],
 }
 
-// feat : 게이트 목록 및 상태 정보를 담을 반응형 변수
 const GATES = ref([])
-const GATE_CAPACITY = 6 // 혼잡도를 판별할 기준 대수
+const GATE_CAPACITY = 6
 
-// feat : DB에서 게이트 목록과 실시간 장비 점유 상태를 함께 조회
 async function fetchGates() {
   try {
-    // 나중에 팀원이 만든 API 엔드포인트에 맞춰 수정.
-    // 현재는 게이트 정보와 해당 게이트의 '현재 대기 대수'를 같이 준다고 가정.
     const response = await api.get('/gates/status', { params: { siteIdx: 1 } })
     const data = response.data?.data || response.data || []
-
-    // feat : 받아온 데이터를 화면에서 쓰기 좋게 매핑
     GATES.value = data.map((g) => ({
-      gateIdx: g.gateIdx, // DB PK (팀원과 맞출 컬럼)
-      gateName: g.gateName, // 화면 표시용 이름
-      currentCount: g.currentCount || 0, // 현재 해당 게이트 점유 대수
-      // feat : 대기 대수에 따른 상태값 계산
+      gateIdx: g.gateIdx,
+      gateName: g.gateName,
+      currentCount: g.currentCount || 0,
       status: (g.currentCount || 0) >= GATE_CAPACITY ? '혼잡' : '원활',
     }))
   } catch (error) {
-    console.error('게이트 상태 정보 조회 실패:', error)
-    // API 에러 시 기본값 세팅 (테스트용)
     GATES.value = [
       { gateIdx: 1, gateName: '1번 게이트', currentCount: 0, status: '원활' },
       { gateIdx: 2, gateName: '2번 게이트', currentCount: 0, status: '원활' },
@@ -137,16 +296,18 @@ async function fetchGates() {
   }
 }
 
-// feat : 게이트 이름과 상태를 같이 보여주는 포맷터
 function getGateLabel(g) {
   return `${g.gateName} (${g.status})`
 }
 
-// feat : 컴포넌트 마운트 시 호출
 onMounted(() => {
-  fetchGates() // 게이트 정보 먼저 로드
+  fetchGates()
+  fetchTradeOptions()
   fetchWorkOrders()
+  document.addEventListener('keydown', onKeydown)
 })
+
+onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10)
@@ -193,10 +354,23 @@ function makeId() {
 }
 const workOrders = ref([])
 
+const availableTrades = computed(() => {
+  const merged = new Set(tradeOptions.value)
+  workOrders.value.forEach((o) => {
+    const tradeName = normalizeTradeName(o.process)
+    if (tradeName && tradeName !== '기타') merged.add(tradeName)
+  })
+  return sortTrades(Array.from(merged).filter(Boolean))
+})
+
 const visibleTabs = computed(() => {
-  if (currentRole.value === ROLES.WORKER)
-    return [{ key: myProcess.value, label: `${myProcess.value} 공정` }]
-  return [{ key: 'all', label: '전체' }, ...ALL_PROCESSES.map((p) => ({ key: p, label: p }))]
+  if (currentRole.value === ROLES.WORKER) {
+    return myProcess.value ? [{ key: myProcess.value, label: `${myProcess.value} 공종` }] : []
+  }
+  return [
+    { key: 'all', label: '전체' },
+    ...availableTrades.value.map((p) => ({ key: p, label: p })),
+  ]
 })
 
 function onRoleChange(role) {
@@ -204,6 +378,7 @@ function onRoleChange(role) {
   if (role === ROLES.WORKER) filterProcess.value = myProcess.value
   else filterProcess.value = 'all'
 }
+
 function onMyProcessChange() {
   if (currentRole.value === ROLES.WORKER) filterProcess.value = myProcess.value
 }
@@ -233,10 +408,9 @@ const missingProcesses = computed(() => {
   const existing = new Set(
     workOrders.value.filter((o) => o.date === filterDate.value).map((o) => o.process),
   )
-  return ALL_PROCESSES.filter((p) => !existing.has(p))
+  return availableTrades.value.filter((p) => !existing.has(p))
 })
 
-// feat : 게이트 혼잡도 계산 로직 (에러 픽스: GATES.value 사용 및 gateIdx 매핑)
 const gateAssignment = computed(() => {
   const map = {}
   GATES.value.forEach((g) => (map[g.gateIdx] = { in: 0, out: 0 }))
@@ -274,35 +448,15 @@ const isNew = ref(false)
 const draftSourcePlan = ref(null)
 const draftAutoFilled = ref({})
 
+// 🔥 새로 추가된 작업 선택용 반응형 변수들
+const showTaskSelector = ref(false)
+const availableTasks = ref([])
+
 function canEdit(order) {
   if (currentRole.value === ROLES.MANAGER) return false
   if (order.process !== myProcess.value) return false
   if (['승인 완료', '작업 완료'].includes(order.status)) return false
   return true
-}
-
-async function openCreate() {
-  isNew.value = true
-  editing.value = blankOrder()
-  draftSourcePlan.value = null
-  draftAutoFilled.value = {}
-  showEditor.value = true
-  await generateDraft(true)
-}
-
-function openEdit(order) {
-  isNew.value = false
-  editing.value = cloneOrder(order)
-  draftSourcePlan.value = null
-  draftAutoFilled.value = {}
-  showEditor.value = true
-}
-
-function closeEditor() {
-  showEditor.value = false
-  editing.value = null
-  draftSourcePlan.value = null
-  draftAutoFilled.value = {}
 }
 
 function blankOrder() {
@@ -314,11 +468,12 @@ function blankOrder() {
         ? myProcess.value
         : filterProcess.value !== 'all'
           ? filterProcess.value
-          : ALL_PROCESSES[0],
+          : availableTrades.value[0] || '',
     partner: '',
     location: '',
     workTime: '',
     workers: 0,
+    equipment: [], // feat : 장비 데이터 배열 초기화 누락 수정
     equipmentInput: { name: '', count: 1, gateIn: 1, gateOut: 1 },
     workDetail: '',
     safety: '',
@@ -343,15 +498,84 @@ function cloneOrder(o) {
   }
 }
 
-// feat : 워크오더 API 조회 + 실패 시 대비한 무적의 3중 Fallback 안전모드 장착
-async function generateDraft(isAutoMode = false) {
-  if (!editing.value) return
+const DEFAULT_WORK_TIME = '07:00 ~ 17:00'
+const DEFAULT_SAFETY_TEXT =
+  '추락/낙하/화재 등 위험요인 사전 점검 및 안전조치 철저. (지시서 및 일일 TBM 준수)'
+
+const WORK_TIME_SECTION_LABELS = ['작업시간', '작업 시간', '?묒뾽?쒓컙']
+const SAFETY_SECTION_LABELS = ['안전사항', '안전 사항', '안전 유의사항', '?덉쟾?ы빆']
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function sectionPattern(labels) {
+  return labels.map(escapeRegExp).join('|')
+}
+
+function parseInstructionContent(content = '') {
+  const text = String(content || '').replace(/\r\n/g, '\n').trim()
+  const workTimePattern = sectionPattern(WORK_TIME_SECTION_LABELS)
+  const safetyPattern = sectionPattern(SAFETY_SECTION_LABELS)
+  const workTimeMatch = text.match(
+    new RegExp(
+      `\\[\\s*(?:${workTimePattern})\\s*\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[\\s*(?:${safetyPattern})\\s*\\]|$)`,
+    ),
+  )
+  const safetyMatch = text.match(
+    new RegExp(`\\[\\s*(?:${safetyPattern})\\s*\\]\\s*([\\s\\S]*)$`),
+  )
+  const metaIndexes = [workTimeMatch?.index, safetyMatch?.index].filter(
+    (index) => Number.isInteger(index) && index >= 0,
+  )
+  const workDetail = metaIndexes.length ? text.slice(0, Math.min(...metaIndexes)).trim() : text
+
+  return {
+    workDetail,
+    workTime: workTimeMatch?.[1]?.trim() || '',
+    safety: safetyMatch?.[1]?.trim() || '',
+  }
+}
+
+function buildInstructionFields(order) {
+  const parsed = parseInstructionContent(order.workDetail)
+  const workDetail = parsed.workDetail || String(order.workDetail || '').trim()
+  const safety = String(order.safety || parsed.safety || DEFAULT_SAFETY_TEXT).trim()
+
+  return {
+    instructionContent: workDetail,
+    workDetail,
+    workTime: order.workTime,
+    safetyContent: safety,
+  }
+}
+
+function resolveWorkPlanWorkTime(plan) {
+  if (plan?.workTime) return plan.workTime
+
+  const note = String(plan?.note || '')
+  const timeRange = '(\\d{1,2}:\\d{2})\\s*[~～]\\s*(\\d{1,2}:\\d{2})'
+  const label = '(?:작업\\s*시간|작업시간)'
+  const changed = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}\\s*(?:->|→)\\s*${timeRange}`))
+  if (changed) return `${changed[3]} ~ ${changed[4]}`
+
+  const bracket = note.match(new RegExp(`\\[${label}\\]\\s*${timeRange}`))
+  if (bracket) return `${bracket[1]} ~ ${bracket[2]}`
+
+  const labeled = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}`))
+  if (labeled) return `${labeled[1]} ~ ${labeled[2]}`
+
+  return DEFAULT_WORK_TIME
+}
+
+// 🔥 수정된 작업 리스트 먼저 불러오는 함수
+async function openCreate() {
+  const targetDate = filterDate.value
+  const targetProcess = currentRole.value === ROLES.WORKER ? myProcess.value : filterProcess.value
+
   try {
     const response = await api.get('/work-plan', { params: { planType: '주간' } })
-    const plans = Array.isArray(response) ? response : response?.data?.data || response?.data || []
-
-    const targetDate = editing.value.date
-    const targetProcess = editing.value.process
+    const plans = unwrapApiData(response)
 
     const toDateString = (dateVal) => {
       if (Array.isArray(dateVal))
@@ -359,98 +583,94 @@ async function generateDraft(isAutoMode = false) {
       return dateVal
     }
 
-    let targetPlan = plans.find(
-      (p) =>
-        (p.trade === targetProcess || p.tradeType === targetProcess) &&
-        p.name &&
-        p.name.includes('(명일 예정)') &&
-        toDateString(p.startDate) === targetDate,
-    )
-    if (!targetPlan)
-      targetPlan = plans.find(
-        (p) =>
-          (p.trade === targetProcess || p.tradeType === targetProcess) &&
-          toDateString(p.startDate) === targetDate,
-      )
-    if (!targetPlan)
-      targetPlan = plans.find(
-        (p) =>
-          (p.trade === targetProcess || p.tradeType === targetProcess) &&
-          targetDate >= toDateString(p.startDate) &&
-          targetDate <= toDateString(p.endDate),
-      )
+    availableTasks.value = plans.filter((p) => {
+      const planTrade = getTradeNameFromPlan(p)
+      const matchTrade = planTrade === targetProcess
+      const matchDate =
+        targetDate >= toDateString(p.startDate) && targetDate <= toDateString(p.endDate)
+      return matchTrade && matchDate
+    })
 
-    if (!targetPlan) {
-      if (!isAutoMode)
-        alert(`DB에서 ${targetDate} 일자의 [${targetProcess}] 계획을 찾지 못했습니다.`)
+    if (availableTasks.value.length === 0) {
+      alert(
+        `${targetDate} 일자에 등록된 [${targetProcess}] 세부 작업이 없습니다. 주간계획서를 먼저 작성해주세요.`,
+      )
       return
     }
 
-    draftSourcePlan.value = { plan: targetPlan.name }
-    editing.value.workPlanId = targetPlan.idx
-    editing.value.location = targetPlan.location
-    editing.value.partner = targetPlan.partner || ''
-    editing.value.workTime = '07:00 ~ 17:00'
-    editing.value.workers = targetPlan.requiredCount || 0
-    editing.value.workDetail = targetPlan.name + (targetPlan.note ? '\n' + targetPlan.note : '')
-
-    const eqList = []
-
-    try {
-      // 1순위: 깔끔하게 백엔드 DB에서 직접 조회 시도
-      const eqRes = await api.get(`/work-order/draft-equipments/${targetPlan.idx}`)
-      const equipments = eqRes.data?.data || eqRes.data || []
-
-      if (equipments.length > 0) {
-        equipments.forEach((eq, i) => {
-          const korName = ENUM_TO_KOR_MAP[eq.equipmentName] || eq.equipmentName
-          eqList.push({
-            id: `eq_${Date.now()}_${i}`,
-            name: korName,
-            count: eq.equipmentCount || 1,
-            gateIn: 1,
-            gateOut: 1,
-          })
-        })
-      } else {
-        throw new Error('API 응답이 비어있음')
-      }
-    } catch (apiError) {
-      console.warn('API 직접 조회 실패, 안전 모드로 자체 복구 시도:', apiError)
-      // 2순위: 혹시 백엔드가 터졌으면 프론트가 문자열을 쪼개서라도 무조건 렌더링함!
-      if (targetPlan.equipmentDisplay) {
-        const items = targetPlan.equipmentDisplay.split(',')
-        items.forEach((item, i) => {
-          const match = item.trim().match(/(.+)\s+(\d+)대/)
-          if (match)
-            eqList.push({
-              id: `eq_fb_${Date.now()}_${i}`,
-              name: match[1].trim(),
-              count: parseInt(match[2], 10),
-              gateIn: 1,
-              gateOut: 1,
-            })
-        })
-      }
+    if (availableTasks.value.length === 1) {
+      selectTaskForOrder(availableTasks.value[0])
+    } else {
+      showTaskSelector.value = true
     }
-
-    editing.value.equipment = eqList
-    draftAutoFilled.value = {
-      location: true,
-      workTime: true,
-      workers: true,
-      workDetail: true,
-      equipment: true,
-    }
-    if (editing.value.status === '작성 전') editing.value.status = '초안 생성'
-  } catch (error) {
-    console.error('계획 데이터 자동 연동 실패:', error)
+  } catch (e) {
+    console.error('작업 목록 조회 실패:', e)
   }
 }
 
+// 🔥 카드를 클릭했을 때 실행되는 함수
+async function selectTaskForOrder(task) {
+  showTaskSelector.value = false
+  isNew.value = true
+  editing.value = blankOrder()
+
+  editing.value.workPlanId = task.idx || task.id
+  editing.value.location = task.location || ''
+  editing.value.workers = task.requiredCount || 0
+  editing.value.workTime = resolveWorkPlanWorkTime(task)
+  editing.value.workDetail = task.name + (task.note ? '\n' + task.note : '')
+  editing.value.safety = DEFAULT_SAFETY_TEXT
+
+  draftAutoFilled.value = {
+    location: true,
+    workTime: true,
+    workers: true,
+    workDetail: true,
+    safety: true,
+    equipment: true,
+  }
+
+  try {
+    const eqRes = await api.get(`/work-order/draft-equipments/${editing.value.workPlanId}`)
+    const equipments = eqRes.data?.data || eqRes.data || []
+
+    editing.value.equipment = equipments.map((eq, i) => ({
+      id: `eq_${Date.now()}_${i}`,
+      name: ENUM_TO_KOR_MAP[eq.equipmentName] || eq.equipmentName || '굴삭기',
+      count: eq.equipmentCount || 1,
+      gateIn: 1,
+      gateOut: 1,
+    }))
+  } catch (e) {
+    console.warn('특정 작업 장비 조회 실패', e)
+  }
+
+  draftSourcePlan.value = { plan: task.name }
+  showEditor.value = true
+}
+
+function openEdit(order) {
+  isNew.value = false
+  editing.value = cloneOrder(order)
+  draftSourcePlan.value = null
+  draftAutoFilled.value = {}
+  showEditor.value = true
+}
+
+function closeEditor() {
+  showEditor.value = false
+  editing.value = null
+  draftSourcePlan.value = null
+  draftAutoFilled.value = {}
+}
+
 async function regenerateDraft() {
-  if (!confirm('현재 입력 내용이 초안으로 다시 덮어쓰여집니다. 계속할까요?')) return
-  await generateDraft()
+  if (!confirm('초기 세부 작업 내용으로 덮어쓰여집니다. 계속할까요?')) return
+  const currentPlanId = editing.value.workPlanId
+  if (currentPlanId) {
+    const plan = availableTasks.value.find((p) => p.idx === currentPlanId || p.id === currentPlanId)
+    if (plan) selectTaskForOrder(plan)
+  }
 }
 
 function clearDraftHighlight(field) {
@@ -467,14 +687,16 @@ function addEquipment() {
     gateIn: inp.gateIn,
     gateOut: inp.gateOut,
   })
-  editing.value.equipmentInput = { name: '', count: 1, gateIn: 'G1', gateOut: 'G1' }
+  editing.value.equipmentInput = { name: '', count: 1, gateIn: 1, gateOut: 1 }
 }
+
 function removeEquipment(idx) {
   editing.value.equipment.splice(idx, 1)
 }
 
 const photoInputRef = ref(null)
 const fileInputRef = ref(null)
+
 function pickPhotos() {
   photoInputRef.value?.click()
 }
@@ -523,6 +745,7 @@ function fmtSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
+
 function fileBadge(type) {
   if (!type) return '파일'
   if (type.includes('pdf')) return 'PDF'
@@ -535,7 +758,7 @@ function saveDraft() {
   persist('임시 저장', '임시 저장')
 }
 
-// feat : 작업 지시서 제출 (숫자 타입인 gateIdx를 그대로 사용하도록 수정)
+// feat : 작업 지시서 제출 API 호출 및 데이터 매핑 수정
 async function submitOrder() {
   const r = editing.value
   if (!r.partner.trim() || !r.location.trim() || !r.workTime.trim() || !r.workDetail.trim()) {
@@ -543,13 +766,15 @@ async function submitOrder() {
     return
   }
 
-  // feat : 장비 리스트 매핑 (replace 제거 및 숫자 데이터 직접 전송)
-  const equipmentList = r.equipment.map((eq) => ({
-    // eq.gateIn이 이제 숫자(1, 2...)이므로 바로 할당합니다.
-    gateIdx: eq.gateIn,
-    equipmentName: EQUIPMENT_ENUM_MAP[eq.name] || 'EXCAVATOR',
-    equipmentCount: eq.count,
-  }))
+  const equipmentList = r.equipment.map((eq) => {
+    const safeGateIdx =
+      typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
+    return {
+      gateIdx: safeGateIdx || 1,
+      equipmentName: eq.name, // feat : 한글 장비명 그대로 전송되도록 매핑 제거
+      equipmentCount: eq.count,
+    }
+  })
 
   const requestPayload = {
     siteIdx: 1,
@@ -563,16 +788,18 @@ async function submitOrder() {
     equipments: equipmentList,
   }
 
+  Object.assign(requestPayload, buildInstructionFields(r))
+
   try {
     if (isNew.value) {
       requestPayload.statusCode = 'OPEN'
       await createWorkOrder(requestPayload)
-      alert('작업 지시서가 성공적으로 전송되었습니다!')
+      alert('작업 지시서가 성공적으로 전송되었습니다.')
     } else {
       const rawId = r.id.replace('WO-', '')
       requestPayload.statusCode = 'OPEN'
       await updateWorkOrder(rawId, requestPayload)
-      alert('작업 지시서가 성공적으로 수정되었습니다!')
+      alert('작업 지시서가 성공적으로 수정되었습니다.')
     }
     closeEditor()
     await fetchWorkOrders()
@@ -619,7 +846,7 @@ async function reject() {
   await updateOrderStatus('반려', 'REJECTED')
 }
 
-// feat : 작업 지시서 상태 업데이트 (승인은 전용 엔드포인트 사용)
+// feat : 작업 지시서 상태 업데이트 API 호출 및 장비 데이터 매핑 수정
 async function updateOrderStatus(newStatus, statusCodeStr) {
   const order = viewing.value
   if (!order) return
@@ -628,10 +855,8 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
 
   try {
     if (statusCodeStr === 'APPROVED') {
-      // ★ 승인: 전용 엔드포인트 호출 → 백엔드가 WorkPlan까지 동기화
       await approveWorkOrder(rawId)
     } else {
-      // 반려/기타: 기존 방식 유지 (페이로드 구성)
       const requestPayload = {
         siteIdx: 1,
         partnerCompanyIdx: 1,
@@ -646,15 +871,15 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
             typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
           return {
             gateIdx: safeGateIdx || 1,
-            equipmentName: EQUIPMENT_ENUM_MAP[eq.name] || 'EXCAVATOR',
+            equipmentName: eq.name, // feat : 한글 장비명 그대로 전송되도록 매핑 제거
             equipmentCount: eq.count || 1,
           }
         }),
       }
+      Object.assign(requestPayload, buildInstructionFields(order))
       await updateWorkOrder(rawId, requestPayload)
     }
 
-    // 로컬 상태 업데이트
     const idx = workOrders.value.findIndex((o) => o.id === order.id)
     if (idx >= 0) {
       workOrders.value[idx].status = newStatus
@@ -664,7 +889,7 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
         what: newStatus,
       })
     }
-    alert(`성공적으로 ${newStatus} 처리되었습니다!`)
+    alert(`성공적으로 ${newStatus} 처리되었습니다.`)
     closeViewer()
   } catch (e) {
     console.error('상태 업데이트 API 오류:', e)
@@ -672,27 +897,66 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
   }
 }
 
-// feat : 게이트 고유 번호로 이름을 찾는 유틸 함수 수정
 function gateName(id) {
   return GATES.value.find((g) => g.gateIdx === id)?.gateName || id
 }
 function onKeydown(e) {
   if (e.key !== 'Escape') return
-  if (showEditor.value) closeEditor()
+  if (showTaskSelector.value) showTaskSelector.value = false
+  else if (showEditor.value) closeEditor()
   else if (viewing.value) closeViewer()
+}
+
+async function fetchTradeOptions() {
+  const collected = new Set()
+
+  async function collectFromWorkPlans(planType) {
+    const response = await api.get('/work-plan', { params: { planType } })
+    unwrapApiData(response).forEach((plan) => {
+      const tradeName = getTradeNameFromPlan(plan)
+      if (tradeName && tradeName !== '기타') collected.add(tradeName)
+    })
+  }
+
+  try {
+    // 백엔드에서 한글 planType을 받는 경우와 enum 값을 받는 경우를 모두 대응
+    await collectFromWorkPlans('주간')
+    if (!collected.size) await collectFromWorkPlans('WEEKLY')
+  } catch (e) {
+    console.warn('주간 공정계획 기준 공종 목록 조회 실패:', e)
+  }
+
+  if (!collected.size) {
+    try {
+      const response = await api.get('/trade-process')
+      unwrapApiData(response).forEach((process) => {
+        const tradeName = getTradeNameFromPlan(process)
+        if (tradeName && tradeName !== '기타') collected.add(tradeName)
+      })
+    } catch (e) {
+      console.warn('TradeProcess 기준 공종 목록 조회 실패:', e)
+    }
+  }
+
+  tradeOptions.value = sortTrades(
+    Array.from(new Set([...DEFAULT_TRADE_OPTIONS, ...Array.from(collected)])).filter(Boolean),
+  )
+  ensureSelectedTrade()
 }
 
 async function fetchWorkOrders() {
   try {
     const response = await getWorkOrderList()
-    let serverData = Array.isArray(response)
-      ? response
-      : response?.data?.data || response?.data || []
+    let serverData = unwrapApiData(response)
     if (!Array.isArray(serverData)) return
 
     workOrders.value = serverData.map((dto) => {
+      const processLabel = getTradeNameFromPlan(dto) || normalizeTradeName(dto.tradeType)
       let locationStr = dto.title
-        ? dto.title.replace(`[${dto.tradeType}] `, '').replace(' 작업지시서', '')
+        ? dto.title
+            .replace(`[${dto.tradeType}] `, '')
+            .replace(`[${processLabel}] `, '')
+            .replace(' 작업지시서', '')
         : ''
       let detail = dto.instructionContent || ''
       let time = ''
@@ -704,10 +968,15 @@ async function fetchWorkOrders() {
         time = subParts[0] ? subParts[0].trim() : ''
         if (subParts.length > 1) safetyText = subParts[1].trim()
       }
+      const parsedContent = parseInstructionContent(dto.instructionContent || '')
+      detail = dto.workDetail || parsedContent.workDetail
+      time = dto.workTime || parsedContent.workTime || time
+      safetyText = dto.safetyContent || parsedContent.safety || safetyText
+
       return {
         id: `WO-${dto.idx}`,
         date: dto.dueDate,
-        process: dto.tradeType,
+        process: processLabel,
         partner: '한울중기',
         location: locationStr,
         workTime: time,
@@ -737,16 +1006,11 @@ async function fetchWorkOrders() {
         })),
       }
     })
+    ensureSelectedTrade()
   } catch (e) {
     console.error('데이터 불러오기 실패:', e)
   }
 }
-
-onMounted(() => {
-  document.addEventListener('keydown', onKeydown)
-  fetchWorkOrders()
-})
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -785,11 +1049,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
           v-if="currentRole === ROLES.WORKER"
           v-model="myProcess"
           @change="onMyProcessChange"
-          class="rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-forena-700 outline-none focus:border-flare-400"
+          :disabled="!availableTrades.length"
+          class="rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-forena-700 outline-none focus:border-flare-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
         >
-          <option v-for="p in ALL_PROCESSES" :key="p" :value="p">{{ p }} 공정</option>
+          <option v-if="!availableTrades.length" value="">공종 없음</option>
+          <option v-for="p in availableTrades" :key="p" :value="p">{{ p }} 공종</option>
         </select>
-
         <button
           @click="openCreate"
           class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
@@ -805,8 +1070,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
     >
       <UserCog class="mt-0.5 h-4 w-4 shrink-0 text-flare-600" />
       <p class="text-xs text-forena-800">
-        현재 계정은 <span class="font-bold text-flare-700">{{ myProcess }} 공정 담당자</span>입니다.
-        {{ myProcess }} 공정 작업 지시서만 조회 · 작성 · 수정할 수 있습니다.
+        현재 계정은
+        <span class="font-bold text-flare-700">{{ myProcess || '공종 미선택' }} 담당자</span>입니다.
+        선택된 공종의 작업 지시서만 조회 · 작성 · 수정할 수 있습니다.
       </p>
     </div>
     <div
@@ -817,9 +1083,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       <p class="text-xs text-forena-800">
         현재 계정은 <span class="font-bold text-emerald-700">현장 총 관리자</span>입니다. 전체 공정
         작업 지시서를 조회하고 승인/반려할 수 있습니다.
-        <span v-if="missingProcesses.length" class="ml-1 font-bold text-rose-600">
-          · 미작성 공정: {{ missingProcesses.join(', ') }}
-        </span>
+        <span v-if="missingProcesses.length" class="ml-1 font-bold text-rose-600"
+          >· 미작성 공종: {{ missingProcesses.join(', ') }}</span
+        >
       </p>
     </div>
 
@@ -917,16 +1183,16 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             >
           </div>
           <div class="mt-2 flex items-center gap-3 text-[11px] text-forena-700">
-            <span class="inline-flex items-center gap-1">
-              <ChevronRight class="h-3 w-3 text-emerald-500" />입차
+            <span class="inline-flex items-center gap-1"
+              ><ChevronRight class="h-3 w-3 text-emerald-500" />입차
               <b class="tabular-nums">{{ g.in }}</b
-              >대
-            </span>
-            <span class="inline-flex items-center gap-1">
-              <ChevronLeft class="h-3 w-3 text-rose-500" />출차
+              >대</span
+            >
+            <span class="inline-flex items-center gap-1"
+              ><ChevronLeft class="h-3 w-3 text-rose-500" />출차
               <b class="tabular-nums">{{ g.out }}</b
-              >대
-            </span>
+              >대</span
+            >
           </div>
           <div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-forena-100">
             <div
@@ -1004,8 +1270,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                   class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1"
                   :class="statusMeta(o.status).cls"
                 >
-                  <component :is="statusMeta(o.status).icon" class="h-3 w-3" />
-                  {{ o.status }}
+                  <component :is="statusMeta(o.status).icon" class="h-3 w-3" /> {{ o.status }}
                 </span>
               </td>
               <td class="px-3 py-3 font-mono text-[11px] text-forena-700">{{ o.id }}</td>
@@ -1026,9 +1291,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 <div v-if="o.equipment.length" class="space-y-0.5">
                   <p v-for="eq in o.equipment" :key="eq.id" class="text-[11px] text-forena-700">
                     <span class="font-semibold">{{ eq.name }} {{ eq.count }}대</span>
-                    <span class="ml-1 text-forena-400">
-                      ({{ gateName(eq.gateIn) }} → {{ gateName(eq.gateOut) }})
-                    </span>
+                    <span class="ml-1 text-forena-400"
+                      >({{ gateName(eq.gateIn) }} → {{ gateName(eq.gateOut) }})</span
+                    >
                   </p>
                 </div>
                 <span v-else class="text-[11px] text-slate-400">—</span>
@@ -1057,6 +1322,67 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       </div>
     </div>
 
+    <!-- 🔥 새로 추가된 세부 작업 선택 모달 -->
+    <transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition duration-100 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showTaskSelector"
+        class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4"
+        @click.self="showTaskSelector = false"
+      >
+        <div
+          class="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        >
+          <div
+            class="flex shrink-0 items-center justify-between border-b border-forena-100 px-6 py-4"
+          >
+            <div>
+              <p class="text-base font-bold text-forena-900">지시서 작성 대상 세부 작업 선택</p>
+              <p class="mt-0.5 text-xs text-forena-500">
+                {{ filterDate }} 기준 진행 예정인 작업 목록입니다.
+              </p>
+            </div>
+            <button @click="showTaskSelector = false" class="text-slate-400 hover:text-forena-700">
+              <X class="h-5 w-5" />
+            </button>
+          </div>
+          <div class="overflow-y-auto px-6 py-4">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div
+                v-for="task in availableTasks"
+                :key="task.id"
+                @click="selectTaskForOrder(task)"
+                class="group cursor-pointer rounded-xl border border-forena-200 bg-white p-4 transition-all hover:border-flare-400 hover:bg-flare-50 hover:shadow-md"
+              >
+                <div class="flex items-start justify-between mb-2">
+                  <span
+                    class="rounded bg-forena-100 px-1.5 py-0.5 text-[10px] font-bold text-forena-700"
+                    >{{ task.location }}</span
+                  >
+                </div>
+                <p class="font-bold text-forena-900 group-hover:text-flare-700">{{ task.name }}</p>
+                <p class="mt-2 text-xs text-forena-500 line-clamp-2">
+                  {{ task.note || '세부 내용 없음' }}
+                </p>
+                <div class="mt-3 flex items-center gap-3 text-[11px] font-semibold text-forena-600">
+                  <span class="flex items-center gap-1"
+                    ><Users class="h-3.5 w-3.5" /> {{ task.requiredCount || 0 }}명</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- 기존 지시서 작성 에디터 -->
     <transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="opacity-0"
@@ -1087,9 +1413,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                   {{ isNew ? '작업 지시서 작성' : '작업 지시서 수정' }}
                 </p>
                 <p class="mt-0.5 text-xs text-forena-500">
-                  <span class="font-mono text-forena-700">{{ editing.id }}</span>
-                  · {{ fmtKor(editing.date) }} ·
-                  <span class="font-bold text-forena-700">{{ editing.process }} 공정</span>
+                  <span class="font-mono text-forena-700">{{ editing.id }}</span> ·
+                  {{ fmtKor(editing.date) }} ·
+                  <span class="font-bold text-forena-700">{{ editing.process }} 공종</span>
                 </p>
               </div>
             </div>
@@ -1108,21 +1434,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                       명일 작업 예정으로 초안 자동 생성
                     </p>
                     <p class="mt-0.5 text-[11px] text-forena-600">
-                      전일 공사일보의 명일 작업 예정 내용을 불러와 작업 위치 · 시간 · 인원 · 장비 ·
-                      상세를 자동 입력합니다. 게이트는 직접 지정하세요.
+                      선택한 세부작업의 위치 · 시간 · 인원 · 장비 · 상세를 자동 입력합니다. 게이트는
+                      직접 지정하세요.
                     </p>
                   </div>
                 </div>
                 <div class="flex shrink-0 gap-1.5">
                   <button
-                    v-if="!draftSourcePlan"
-                    @click="generateDraft"
-                    class="inline-flex items-center gap-1 rounded-md bg-flare-500 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-flare-600"
-                  >
-                    <Sparkles class="h-3 w-3" /> 초안 생성
-                  </button>
-                  <button
-                    v-else
+                    v-if="draftSourcePlan"
                     @click="regenerateDraft"
                     class="inline-flex items-center gap-1 rounded-md border border-flare-300 bg-white px-2.5 py-1 text-[11px] font-bold text-flare-700 hover:bg-flare-50"
                   >
@@ -1136,7 +1455,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 class="mt-3 rounded-lg bg-white p-3 ring-1 ring-flare-100"
               >
                 <p class="text-[10px] font-bold uppercase tracking-wide text-forena-400">
-                  원문 (전일 공사일보 명일 작업)
+                  원문 (연결된 주간 세부작업)
                 </p>
                 <p class="mt-1 text-[11px] leading-relaxed text-forena-700">
                   {{ draftSourcePlan.plan }}
@@ -1159,14 +1478,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div>
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                >
-                  작업 시간 <span class="text-rose-500">*</span>
-                  <span
+                  >작업 시간 <span class="text-rose-500">*</span
+                  ><span
                     v-if="draftAutoFilled.workTime"
                     class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
                     >자동</span
-                  >
-                </label>
+                  ></label
+                >
                 <input
                   v-model="editing.workTime"
                   placeholder="예: 07:00 ~ 17:00"
@@ -1178,14 +1496,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div>
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                  >공정 명</label
+                  >공종 명</label
                 >
                 <select
                   v-model="editing.process"
-                  :disabled="currentRole === ROLES.WORKER"
+                  disabled
                   class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400 disabled:bg-forena-50/40"
                 >
-                  <option v-for="p in ALL_PROCESSES" :key="p">{{ p }}</option>
+                  <option v-for="p in availableTrades" :key="p" :value="p">{{ p }}</option>
                 </select>
               </div>
               <div class="sm:col-span-2">
@@ -1202,14 +1520,12 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div>
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                >
-                  필요 인원
-                  <span
+                  >필요 인원<span
                     v-if="draftAutoFilled.workers"
                     class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
                     >자동</span
-                  >
-                </label>
+                  ></label
+                >
                 <input
                   type="number"
                   min="0"
@@ -1222,15 +1538,14 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div class="sm:col-span-3">
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                >
-                  <MapPin class="mr-0.5 inline h-3 w-3" />작업 위치
-                  <span class="text-rose-500">*</span>
-                  <span
+                  ><MapPin class="mr-0.5 inline h-3 w-3" />작업 위치
+                  <span class="text-rose-500">*</span
+                  ><span
                     v-if="draftAutoFilled.location"
                     class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
                     >자동</span
-                  >
-                </label>
+                  ></label
+                >
                 <input
                   v-model="editing.location"
                   placeholder="예: 본동 3층 슬라브"
@@ -1244,8 +1559,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             <div class="mt-5 rounded-xl border border-forena-100 bg-forena-50/30 p-4">
               <div class="mb-2 flex items-center justify-between">
                 <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <Truck class="h-3.5 w-3.5 text-flare-600" />
-                  필요 중장비 + 게이트 배정 ({{ editing.equipment.length }})
+                  <Truck class="h-3.5 w-3.5 text-flare-600" /> 필요 중장비 + 게이트 배정 ({{
+                    editing.equipment.length
+                  }})
                   <span
                     v-if="draftAutoFilled.equipment"
                     class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
@@ -1295,7 +1611,6 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                     class="w-full h-9 px-3 rounded-lg border border-slate-200 text-sm focus:ring-2 focus:ring-flare-500 outline-none"
                   >
                     <option value="" disabled>게이트 선택</option>
-                    <!-- feat : GATES 배열을 돌며 동적으로 옵션 생성 -->
                     <option
                       v-for="g in GATES"
                       :key="g.gateIdx"
@@ -1345,8 +1660,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                       v-model="eq.gateIn"
                       class="rounded border border-forena-200 px-1.5 py-0.5 text-[11px] outline-none focus:border-flare-400"
                     >
-                      <option v-for="g in GATES" :key="g.id" :value="g.id">
-                        입 · {{ g.name }}
+                      <option v-for="g in GATES" :key="g.gateIdx" :value="g.gateIdx">
+                        입 · {{ g.gateName }}
                       </option>
                     </select>
                     <ArrowRightLeft class="h-3 w-3 text-forena-400" />
@@ -1354,8 +1669,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                       v-model="eq.gateOut"
                       class="rounded border border-forena-200 px-1.5 py-0.5 text-[11px] outline-none focus:border-flare-400"
                     >
-                      <option v-for="g in GATES" :key="g.id" :value="g.id">
-                        출 · {{ g.name }}
+                      <option v-for="g in GATES" :key="g.gateIdx" :value="g.gateIdx">
+                        출 · {{ g.gateName }}
                       </option>
                     </select>
                   </span>
@@ -1406,14 +1721,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <div>
                 <label
                   class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-                >
-                  작업 상세 내역 <span class="text-rose-500">*</span>
-                  <span
+                  >작업 상세 내역 <span class="text-rose-500">*</span
+                  ><span
                     v-if="draftAutoFilled.workDetail"
                     class="ml-1 rounded bg-flare-100 px-1 text-[9px] font-bold text-flare-700"
                     >자동</span
-                  >
-                </label>
+                  ></label
+                >
                 <textarea
                   v-model="editing.workDetail"
                   rows="5"
@@ -1452,8 +1766,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             <div class="mt-5 rounded-xl border border-forena-100 bg-forena-50/30 p-3.5">
               <div class="mb-2 flex items-center justify-between">
                 <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <ImageIcon class="h-3.5 w-3.5 text-flare-600" />
-                  현장 / 도면 사진 ({{ editing.photos.length }})
+                  <ImageIcon class="h-3.5 w-3.5 text-flare-600" /> 현장 / 도면 사진 ({{
+                    editing.photos.length
+                  }})
                 </p>
                 <button
                   @click="pickPhotos"
@@ -1499,8 +1814,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
             <div class="mt-3 rounded-xl border border-forena-100 bg-forena-50/30 p-3.5">
               <div class="mb-2 flex items-center justify-between">
                 <p class="flex items-center gap-1.5 text-[11px] font-bold text-forena-700">
-                  <Paperclip class="h-3.5 w-3.5 text-flare-600" />
-                  첨부 파일 ({{ editing.files.length }})
+                  <Paperclip class="h-3.5 w-3.5 text-flare-600" /> 첨부 파일 ({{
+                    editing.files.length
+                  }})
                   <span class="ml-1 text-[10px] font-normal text-forena-400"
                     >PDF · Excel · 이미지</span
                   >
@@ -1574,6 +1890,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       </div>
     </transition>
 
+    <!-- 뷰어 모달 -->
     <transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="opacity-0"
@@ -1623,15 +1940,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
               <span
                 class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1"
                 :class="statusMeta(viewing.status).cls"
+                ><component :is="statusMeta(viewing.status).icon" class="h-3 w-3" />
+                {{ viewing.status }}</span
               >
-                <component :is="statusMeta(viewing.status).icon" class="h-3 w-3" />
-                {{ viewing.status }}
-              </span>
               <span
                 class="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-200"
+                >{{ viewing.partner }}</span
               >
-                {{ viewing.partner }}
-              </span>
             </div>
 
             <div class="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">

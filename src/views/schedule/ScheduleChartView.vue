@@ -1,9 +1,12 @@
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'  // ← 맨 위로
+import { ref, computed, onMounted, nextTick, watch } from 'vue' // ← 맨 위로
 import { useGanttStore } from '@/stores/ganttStore.js'
 import { parseFromApi } from '@/utils/ganttParser.js'
+import { listTradeProcessesRaw } from '@/api/tradeProcess.js'
+import { buildGanttData } from '@/utils/scheduleMapper.js'
+import { fetchWorkPlansByProject } from '@/api/workplan.js'
 
-const ganttStore = useGanttStore()  // ← import 다 끝난 후에
+const ganttStore = useGanttStore() // ← import 다 끝난 후에
 import {
   CalendarRange,
   AlertTriangle,
@@ -21,7 +24,6 @@ import {
   ZoomOut,
   Locate,
   Search,
-  History,
   GitBranch,
   ChevronDown,
   ChevronRight,
@@ -45,16 +47,64 @@ import { parseGanttJSON } from '@/utils/ganttParser.js'
 const projectInfo = ref(ganttStore.projectInfo ?? {})
 const aiTasks = ref(ganttStore.tasks ?? [])
 const milestones = ref(ganttStore.milestones ?? [])
+const workPlans = ref([])
+
+function getWorkPlanStart(wp) {
+  return wp.actualStart || wp.start
+}
+
+function getWorkPlanEnd(wp) {
+  return wp.effectiveEnd || wp.end
+}
+
+function getWorkPlanDoneEnd(wp) {
+  const start = getWorkPlanStart(wp)
+  const end = getWorkPlanEnd(wp)
+  const today = todayIso.value
+
+  if (!start || !end) return null
+  if (today < start) return null
+  if (today > end) return end
+
+  return today
+}
+
+function getWorkPlanRemainStart(wp) {
+  const start = getWorkPlanStart(wp)
+  const end = getWorkPlanEnd(wp)
+  const today = todayIso.value
+
+  if (!start || !end) return null
+  if (today < start) return start
+  if (today >= end) return null
+
+  return today
+}
 
 // 스토어 데이터 변경 시 자동 반영
-watch(() => ganttStore.tasks, (val) => { aiTasks.value = val ?? [] })
-watch(() => ganttStore.milestones, (val) => { milestones.value = val ?? [] })
-watch(() => ganttStore.projectInfo, (val) => { projectInfo.value = val ?? {} })
+watch(
+  () => ganttStore.tasks,
+  (val) => {
+    aiTasks.value = val ?? []
+  },
+)
+watch(
+  () => ganttStore.milestones,
+  (val) => {
+    milestones.value = val ?? []
+  },
+)
+watch(
+  () => ganttStore.projectInfo,
+  (val) => {
+    projectInfo.value = val ?? {}
+  },
+)
 
 // 아래는 다른 기능용 — 건드리지 않아도 됨
-const uploadedDocs  = ref([])
+const uploadedDocs = ref([])
 const changeRequests = ref([])
-const changeLog      = ref([])
+const changeLog = ref([])
 
 // ======================================================
 // 상태/UI 토글
@@ -66,10 +116,38 @@ const onlyMilestone = ref(false)
 const highlightDelayed = ref(true)
 
 const groupOpen = ref({})
-watch(aiTasks, (tasks) => {
-  const groups = [...new Set(tasks.map(t => t.group))]
-  groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
-}, { immediate: true })
+
+function isDateInRange(start, end, date = new Date().toISOString().slice(0, 10)) {
+  if (!start || !end) return false
+  return start <= date && date <= end
+}
+
+function isTaskInProgress(task) {
+  if (isDateInRange(task?.start, task?.end)) return true
+
+  const plans = task?.workPlans
+  if (!Array.isArray(plans)) return false
+
+  return plans.some((plan) => isDateInRange(getWorkPlanStart(plan), getWorkPlanEnd(plan)))
+}
+
+function resetGroupOpenByCurrentTasks(tasks = aiTasks.value) {
+  const groups = [...new Set((tasks ?? []).map((t) => t.group).filter(Boolean))]
+  groupOpen.value = Object.fromEntries(
+    groups.map((group) => [
+      group,
+      (tasks ?? []).some((task) => task.group === group && isTaskInProgress(task)),
+    ]),
+  )
+}
+
+watch(
+  aiTasks,
+  (tasks) => {
+    resetGroupOpenByCurrentTasks(tasks)
+  },
+  { immediate: true },
+)
 
 const filterGroup = ref('')
 const filterReview = ref('')
@@ -80,11 +158,153 @@ const selectedTaskId = ref(null)
 const selectedTask = computed(
   () => aiTasks.value.find((t) => t.id === selectedTaskId.value) ?? null,
 )
+function attachWorkPlansToTasks(tasks, plans) {
+  const workPlanMap = new Map()
 
+  plans.forEach((plan) => {
+    if (!plan.tradeProcessId) return
+
+    if (!workPlanMap.has(plan.tradeProcessId)) {
+      workPlanMap.set(plan.tradeProcessId, [])
+    }
+
+    workPlanMap.get(plan.tradeProcessId).push(plan)
+  })
+
+  return tasks.map((task) => {
+    const taskId = Number(task.id)
+
+    return {
+      ...task,
+      workPlans: workPlanMap.get(taskId) || [],
+    }
+  })
+}
+
+/**
+ * task 에 연결된 WorkPlan 들을 합쳐서 빨간 막대 좌표 산출.
+ *
+ * 디자인:
+ *   - 연한 빨강 (배경): planStart ~ planEnd (WorkPlan 기간 전체)
+ *   - 진한 빨강 (오버레이): actualStart ~ min(today, planEnd) (실제 진행한 부분)
+ *
+ * 반환: { planStart, planEnd, actualStart, hasStarted } | null
+ *  - 연결된 WorkPlan 이 하나도 없으면 null (빨간 막대 안 그림)
+ *  - planStart: WorkPlan 들 중 가장 빠른 start
+ *  - planEnd: WorkPlan 들 중 가장 늦은 effectiveEnd (또는 end)
+ *  - actualStart: WorkPlan 들 중 가장 빠른 actualStart. 없으면 null.
+ *  - hasStarted: 어느 한 plan 이라도 actualStart 가 있으면 true
+ */
+function workPlanProgress(task) {
+  const plans = task?.workPlans
+  if (!Array.isArray(plans) || plans.length === 0) return null
+
+  let planStart = null
+  let planEnd = null
+  let actualStart = null
+
+  for (const p of plans) {
+    if (p.start && (!planStart || p.start < planStart)) planStart = p.start
+    const e = p.effectiveEnd ?? p.end
+    if (e && (!planEnd || e > planEnd)) planEnd = e
+    if (p.actualStart && (!actualStart || p.actualStart < actualStart)) {
+      actualStart = p.actualStart
+    }
+  }
+
+  // 어떤 좌표도 못 잡으면 그릴 게 없음
+  if (!planStart || !planEnd) return null
+
+  return {
+    planStart,
+    planEnd,
+    actualStart,
+    hasStarted: !!actualStart,
+  }
+}
+
+/**
+ * 진한 빨강(진행된 구간) 의 [시작, 끝] 좌표.
+ * 그릴 게 없으면 null.
+ *
+ * 원본 동작과 호환: actualStart 가 없어도 planStart 부터 today 까지 채움.
+ * (실측 시작일이 안 들어와도 "오늘까지 진행된 것으로 간주"하던 기존 로직 유지)
+ */
+function progressBarRange(task) {
+  const wp = workPlanProgress(task)
+  if (!wp || !wp.planStart || !wp.planEnd) return null
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  // 시작점: actualStart 우선, 없으면 planStart
+  const fillStart = wp.actualStart ?? wp.planStart
+
+  // 오늘이 아직 시작 전이면 진행된 것 없음
+  if (today < fillStart) return null
+
+  // 끝점: 오늘 vs planEnd 중 빠른 쪽
+  const fillEnd = today < wp.planEnd ? today : wp.planEnd
+
+  if (fillStart > fillEnd) return null
+
+  return { start: fillStart, end: fillEnd }
+}
+
+/**
+ * 빨간 막대의 진한 부분(오버레이) 너비를 % 로 계산.
+ * 전체 막대(planStart ~ planEnd) 기준 actualStart 또는 planStart ~ min(today, planEnd) 의 비율.
+ */
+function progressFillWidthPct(task) {
+  const wp = workPlanProgress(task)
+  if (!wp || !wp.planStart || !wp.planEnd) return 0
+
+  const today = new Date().toISOString().slice(0, 10)
+  // 진한 부분 시작점: actualStart 가 있으면 그 값, 없으면 0% (안 그림)
+  const fillStart = wp.actualStart ?? null
+  if (!fillStart) return 0
+
+  // 진한 부분 끝점: today vs planEnd 중 작은 값
+  const fillEnd = today < wp.planEnd ? today : wp.planEnd
+
+  // fillStart 가 planEnd 보다 미래면 진행 0
+  if (fillStart > wp.planEnd) return 0
+  // fillEnd 가 fillStart 이전이면 진행 0
+  if (fillEnd < fillStart) return 0
+
+  const totalMs = new Date(wp.planEnd) - new Date(wp.planStart)
+  const elapsedMs = new Date(fillEnd) - new Date(wp.planStart)
+  if (totalMs <= 0) return 0
+
+  // 진한 부분의 시작점도 planStart 가 아닐 수 있지만,
+  // 디자인적으로 "왼쪽부터 채워지는" 형태가 자연스러우므로
+  // 시작점을 planStart 로 보고 fillEnd 까지만 채움.
+  const pct = Math.max(0, Math.min(100, (elapsedMs / totalMs) * 100))
+  return Math.round(pct * 10) / 10
+}
+
+// WorkPlanView와 동일하게 빨간 진행 점이 진행률/오늘 위치를 따라가도록 계산
+function workPlanProgressDotStyle(task) {
+  const wp = workPlanProgress(task)
+  const range = progressBarRange(task)
+  if (!wp || !range) return { display: 'none' }
+
+  const full = barStyle(wp.planStart, wp.planEnd)
+  const fill = barStyle(wp.planStart, range.end)
+  if (!full || !fill) return { display: 'none' }
+
+  const fullLeft = parseFloat(full.left)
+  const fullWidth = parseFloat(full.width)
+  const fillLeft = parseFloat(fill.left)
+  const fillWidth = parseFloat(fill.width)
+  const width = Math.max(0, Math.min(fullWidth, fillLeft + fillWidth - fullLeft))
+
+  if (!Number.isFinite(width) || width <= 0) return { display: 'none' }
+  return { left: `${Math.max(0, width - 4)}px` }
+}
 // 다이아몬드 버튼 누르면 토글 한 번에 접히고 열림
 function toggleAllGroups() {
-  const allOpen = Object.values(groupOpen.value).every(v => v)
-  Object.keys(groupOpen.value).forEach(k => (groupOpen.value[k] = !allOpen))
+  const allOpen = Object.values(groupOpen.value).every((v) => v)
+  Object.keys(groupOpen.value).forEach((k) => (groupOpen.value[k] = !allOpen))
   onlyMilestone.value = !onlyMilestone.value
 }
 
@@ -177,6 +397,25 @@ function fmtFileSize(b) {
 // AI 분석 결과 모달
 const aiAnalysisModalOpen = ref(false)
 
+// 마일스톤 칩/리스트 클릭 시 해당 항목 강조
+const highlightedMilestoneId = ref(null)
+
+// 오늘 날짜 (yyyy-MM-dd) — 템플릿에서 빨간 막대 진행/예정 구간 분기에 사용
+const todayIso = computed(() => new Date().toISOString().slice(0, 10))
+
+// 인라인 핸들러를 메서드로 추출 (포매터가 multi-line 으로 펼쳐도 안전하게)
+function toggleMilestoneHighlight(id) {
+  highlightedMilestoneId.value = highlightedMilestoneId.value === id ? null : id
+  selectedTaskId.value = null
+}
+function selectTask(id) {
+  selectedTaskId.value = id
+  highlightedMilestoneId.value = null
+}
+function clearMilestoneHighlight() {
+  highlightedMilestoneId.value = null
+}
+
 // ======================================================
 // 헬퍼
 // ======================================================
@@ -253,42 +492,6 @@ const groupedTasks = computed(() => {
   return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
 })
 
-// 진척률 - 공종별 (도넛차트용)
-const groupProgress = computed(() => {
-  // 공종 그룹별 plan/actual 평균
-  const map = new Map()
-  for (const t of aiTasks.value) {
-    if (!map.has(t.group)) map.set(t.group, { plan: 0, actual: 0, count: 0 })
-    const m = map.get(t.group)
-    // 데모: 간단히 가중치 기반 평균 진척률
-    m.plan += t.weight
-    m.actual += t.weight * (t.confidence / 100) // 데모 — 실제는 task.actualPct 등
-    m.count += 1
-  }
-  const totalWeight = aiTasks.value.reduce((s, t) => s + t.weight, 0) || 1
-  return Array.from(map.entries()).map(([group, v]) => {
-    // 그룹 내부 작업의 평균 진척률(%) — 0~100 스케일
-    const planPct = +(v.plan / v.count).toFixed(1) * 1
-    const actualPct = +(v.actual / v.count).toFixed(1) * 1
-    const diff = +(actualPct - planPct).toFixed(1)
-    return { group, plan: planPct, actual: actualPct, diff }
-  })
-})
-
-// 도넛차트 SVG arc path (0~100 → 360deg)
-function arcPath(percent, radius = 36, cx = 50, cy = 50) {
-  const p = Math.max(0, Math.min(100, percent))
-  if (p === 0) return ''
-  if (p >= 100) {
-    // 완전 원 (두 반원)
-    return `M ${cx} ${cy - radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy + radius} A ${radius} ${radius} 0 1 1 ${cx} ${cy - radius}`
-  }
-  const angle = (p / 100) * 2 * Math.PI - Math.PI / 2
-  const x = cx + radius * Math.cos(angle)
-  const y = cy + radius * Math.sin(angle)
-  const largeArc = p > 50 ? 1 : 0
-  return `M ${cx} ${cy - radius} A ${radius} ${radius} 0 ${largeArc} 1 ${x} ${y}`
-}
 
 // 검증 (확정 전 / 후 모두 화면에 노출)
 const validation = computed(() => {
@@ -327,12 +530,23 @@ const validation = computed(() => {
   return issues
 })
 
-const validationCounts = computed(() => ({
-  unreviewed: aiTasks.value.filter((t) => t.reviewStatus === '미검토').length,
-  pendingChanges: changeRequests.value.filter((c) => ['요청됨', '검토 중'].includes(c.status))
-    .length,
-  weightSum: aiTasks.value.reduce((a, t) => a + (Number(t.weight) || 0), 0),
-}))
+const validationCounts = computed(() => {
+  const today = new Date().toISOString().slice(0, 10)
+  // isDelayed 와 동일한 로직 (호이스팅 회피용 인라인)
+  const isDelayedInline = (t) => {
+    if (!t.start || !t.end) return false
+    if (today < t.start) return false
+    if (today > t.end && t.reviewStatus !== '승인') return true
+    return t.confidence < 85
+  }
+  return {
+    unreviewed: aiTasks.value.filter((t) => t.reviewStatus === '미검토').length,
+    delayed: aiTasks.value.filter(isDelayedInline).length,
+    pendingChanges: changeRequests.value.filter((c) => ['요청됨', '검토 중'].includes(c.status))
+      .length,
+    weightSum: aiTasks.value.reduce((a, t) => a + (Number(t.weight) || 0), 0),
+  }
+})
 
 // ======================================================
 // 간트차트 — 라인형
@@ -422,6 +636,78 @@ function barStyle(start, end) {
   return { left: `${left}px`, width: `${width - 4}px` }
 }
 
+function toDateOnly(value) {
+  if (!value) return null
+  return String(value).slice(0, 10)
+}
+
+function daysInclusive(start, end) {
+  const s = new Date(start)
+  const e = new Date(end)
+
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) {
+    return 0
+  }
+
+  return Math.floor((e - s) / 86400000) + 1
+}
+
+function getRawWeight(task) {
+  const raw = task?._src?.weightPct ?? task?.weight
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : 0
+}
+
+function calcPlannedProgressByToday(tasks) {
+  const today = new Date().toISOString().slice(0, 10)
+
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return 0
+  }
+
+  // 전체 보할 합계로 단위 판단
+  // 합계가 1 근처면 0.00726 같은 비율값
+  // 합계가 100 근처면 이미 퍼센트값
+  const rawWeightSum = tasks.reduce((sum, task) => {
+    return sum + getRawWeight(task)
+  }, 0)
+
+  const weightMultiplier = rawWeightSum <= 1.5 ? 100 : 1
+
+  const total = tasks.reduce((sum, task) => {
+    const start = toDateOnly(task.start)
+    const end = toDateOnly(task.end)
+    const weightPct = getRawWeight(task) * weightMultiplier
+
+    if (!start || !end || weightPct <= 0) {
+      return sum
+    }
+
+    if (today < start) {
+      return sum
+    }
+
+    if (today >= end) {
+      return sum + weightPct
+    }
+
+    const totalDays = daysInclusive(start, end)
+    const elapsedDays = daysInclusive(start, today)
+
+    if (totalDays <= 0) {
+      return sum
+    }
+
+    return sum + weightPct * (elapsedDays / totalDays)
+  }, 0)
+
+  console.log('보할 원본 합계:', rawWeightSum)
+  console.log('보할 변환 배수:', weightMultiplier)
+  console.log('계획 공정률 원본 계산값:', total)
+
+  return Math.floor(total)
+}
+
 // 오늘 라인
 const todayLineStyle = computed(() => {
   const today = new Date().toISOString().slice(0, 10)
@@ -469,10 +755,21 @@ function exitFirstSetup() {
   noDataYet.value = false
 }
 
-// 지연 작업 판단 (데모용 — 보할 진척과 오늘 비교)
+/**
+ * 지연 위험 판단.
+ *  - 시작 전 작업 (today < start) → 지연 아님
+ *  - 종료 후인데 검토 미완료 → 지연
+ *  - 진행 중 작업 → 신뢰도 < 85 면 지연 위험 (실제 진척률 컬럼이 추가되면 그걸로 교체)
+ */
 function isDelayed(task) {
+  if (!task.start || !task.end) return false
   const today = new Date().toISOString().slice(0, 10)
-  return task.start <= today && task.end >= today && task.confidence < 85
+  // 시작 전: 지연 아님
+  if (today < task.start) return false
+  // 종료 지났는데 아직 미완료(승인되지 않음) → 지연
+  if (today > task.end && task.reviewStatus !== '승인') return true
+  // 진행 중: 신뢰도 기반 임시 판단
+  return task.confidence < 85
 }
 
 // ======================================================
@@ -642,7 +939,7 @@ function submitChangeRequest() {
     id: Date.now(),
     requestedAt: new Date().toISOString().slice(0, 10),
     ...newChangeReq.value,
-    requester: currentRole.value === '공정 책임자' ? '오반장' : '관리자',
+    requester: '관리자',
     affectedTasks: [],
     milestoneImpact: cp ? '관련 마일스톤 영향 가능' : '없음',
     cpImpact: cp,
@@ -726,34 +1023,70 @@ function zoomOut() {
 }
 
 const isLoading = ref(false)
+const loadError = ref('')
+
+// 임시: 다중 현장 지원 시 라우트 params/쿼리에서 가져오도록 교체 예정
+const CURRENT_PROJECT_ID = 1
 
 async function loadGanttFromApi() {
-  // 스토어에 이미 데이터가 있으면 API 호출 안 함 (FirstDocumentUpload에서 넘어온 경우)
-  if (ganttStore.tasks.length > 0) {
+  // 1) 스토어에 이미 데이터가 있으면 그대로 사용 (FirstDocumentUpload 에서 넘어온 경우)
+  if (ganttStore.tasks && ganttStore.tasks.length > 0) {
     projectInfo.value = ganttStore.projectInfo ?? {}
     aiTasks.value = ganttStore.tasks ?? []
     milestones.value = ganttStore.milestones ?? []
-    const groups = [...new Set(aiTasks.value.map(t => t.group))]
-    groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
+    resetGroupOpenByCurrentTasks(aiTasks.value)
     return
   }
 
-  // 스토어에 데이터 없으면 API 호출
+  // 2) 스토어가 비어 있으면 (새로고침 등) 백엔드에서 다시 로드
   isLoading.value = true
+  loadError.value = ''
   try {
-    const res = await fetch('/work-plan?planType=연간')
-    const json = await res.json()
-    const apiList = json.data
+    const rows = await listTradeProcessesRaw({ projectId: CURRENT_PROJECT_ID })
 
-    const parsed = parseFromApi(apiList)
-    projectInfo.value = parsed.projectInfo
-    aiTasks.value = parsed.tasks
-    milestones.value = parsed.milestones
+    console.log(
+      'TradeProcess 원본 rows:',
+      rows.map((r) => ({
+        idx: r.idx,
+        tradeName: r.tradeName,
+        processName: r.processName,
+      })),
+    )
+    const plans = await fetchWorkPlansByProject(CURRENT_PROJECT_ID)
 
-    const groups = [...new Set(parsed.tasks.map(t => t.group))]
-    groupOpen.value = Object.fromEntries(groups.map(g => [g, true]))
+    console.log('WorkPlan 데이터:', plans)
+    console.log(
+      'WorkPlan tradeProcessId 목록:',
+      plans.map((p) => p.tradeProcessId),
+    )
+    if (!rows.length) {
+      // 데이터가 아예 없는 현장 — 일단 빈 상태로 두고 사용자가 등록 페이지에서 업로드하도록
+      projectInfo.value = {}
+      aiTasks.value = []
+      milestones.value = []
+      return
+    }
+
+    // master 키 하나로 묶어 buildGanttData 에 전달 (FirstDocumentUpload 와 동일한 매핑 경로)
+    const { tasks, milestones: ms, projectInfo: pi } = buildGanttData({ master: rows })
+
+    const tasksWithWorkPlans = attachWorkPlansToTasks(tasks, plans)
+
+    const plannedProgress = calcPlannedProgressByToday(tasksWithWorkPlans)
+
+    const updatedProjectInfo = {
+      ...pi,
+      plannedProgress,
+    }
+
+    projectInfo.value = updatedProjectInfo
+    aiTasks.value = tasksWithWorkPlans
+    milestones.value = ms
+
+    ganttStore.setData(tasksWithWorkPlans, ms, updatedProjectInfo)
   } catch (err) {
     console.error('공정표 로드 실패:', err)
+    loadError.value = err?.message || '공정표를 불러오지 못했습니다.'
   } finally {
     isLoading.value = false
   }
@@ -874,68 +1207,6 @@ onMounted(async () => {
           {{ projectInfo.projectName }} &nbsp | &nbsp {{ projectInfo.startDate }} ~
           {{ projectInfo.endDate }}
         </p>
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2">
-        <!-- 권한 데모 셀렉터 -->
-        <div
-          class="flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5"
-        >
-          <Users class="h-3.5 w-3.5 text-forena-400" />
-          <select
-            v-model="currentRole"
-            class="bg-transparent text-xs font-bold text-forena-700 outline-none"
-          >
-            <option v-for="r in ROLES" :key="r">{{ r }}</option>
-          </select>
-        </div>
-
-        <!-- 데모용: 최초 등록 화면 토글 -->
-        <button
-          v-if="!noDataYet"
-          @click="enterFirstSetup"
-          class="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-flare-300 bg-flare-50/40 px-2.5 py-1.5 text-[10px] font-bold text-flare-700 hover:bg-flare-50"
-          title="공정표 데이터가 없는 상태(최초 등록 화면)를 미리보기"
-        >
-          <FilePlus2 class="h-3 w-3" /> 최초 등록 화면
-        </button>
-
-        <button
-          class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-          @click="showUploadSection = true"
-        >
-          <Upload class="h-3.5 w-3.5 text-forena-400" /> 공정표 업로드
-        </button>
-
-        <button
-          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
-          @click="aiAnalysisModalOpen = true"
-        >
-          <BrainCircuit class="h-3.5 w-3.5 text-flare-600" />
-          AI 분석 실행
-        </button>
-
-        <button
-          v-if="!isConfirmed"
-          :disabled="!canConfirm"
-          class="inline-flex items-center gap-1.5 rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-forena-900 disabled:opacity-50"
-          @click="openConfirm"
-        >
-          <ShieldCheck class="h-3.5 w-3.5" /> 기준 공정표 확정
-        </button>
-
-        <button
-          v-else
-          class="inline-flex items-center gap-1.5 rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-forena-900"
-          @click="openChangeManagement"
-        >
-          <GitBranch class="h-3.5 w-3.5" /> 변경 요청 관리
-          <span
-            v-if="validationCounts.pendingChanges"
-            class="ml-1 rounded-full bg-rose-500 px-1.5 text-[10px] tabular-nums"
-            >{{ validationCounts.pendingChanges }}</span
-          >
-        </button>
       </div>
     </div>
 
@@ -1252,32 +1523,30 @@ onMounted(async () => {
           }}{{ Math.abs(projectInfo.actualProgress - projectInfo.plannedProgress) }}%
         </p>
       </div>
-      <!-- 지연 위험 / 미검토 — 경고성 -->
+      <!-- 지연 위험 — 경고성 -->
       <div
         class="rounded-2xl border p-4 shadow-card"
         :class="
-          validationCounts.unreviewed
+          validationCounts.delayed
             ? 'border-amber-200 bg-amber-50/40'
             : 'border-forena-100/90 bg-white/95'
         "
       >
         <p
           class="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider"
-          :class="validationCounts.unreviewed ? 'text-amber-700' : 'text-forena-500'"
+          :class="validationCounts.delayed ? 'text-amber-700' : 'text-forena-500'"
         >
-          <AlertTriangle v-if="validationCounts.unreviewed" class="h-3 w-3" />
-          지연 위험 / 미검토
+          <AlertTriangle v-if="validationCounts.delayed" class="h-3 w-3" />
+          지연 위험
         </p>
         <p
           class="mt-1.5 text-3xl font-bold tabular-nums"
-          :class="validationCounts.unreviewed ? 'text-amber-700' : 'text-forena-900'"
+          :class="validationCounts.delayed ? 'text-amber-700' : 'text-forena-900'"
         >
-          {{ validationCounts.unreviewed
+          {{ validationCounts.delayed
           }}<span class="text-sm font-normal text-slate-400 ml-1">건</span>
         </p>
-        <p class="mt-1 text-[10px] text-forena-400">
-          전체 {{ aiTasks.length }}건 · CP {{ aiTasks.filter((t) => t.isCritical).length }}건
-        </p>
+        <p class="mt-1 text-[10px] text-forena-400">전체 {{ aiTasks.length }}건</p>
       </div>
       <!-- 변경 요청 대기 — 경고성 -->
       <div
@@ -1599,10 +1868,7 @@ onMounted(async () => {
               <button
                 v-for="m in milestones"
                 :key="m.id"
-                @click="
-                  highlightedMilestoneId = highlightedMilestoneId === m.id ? null : m.id;
-                  selectedTaskId = null
-                "
+                @click="toggleMilestoneHighlight(m.id)"
                 class="group flex shrink-0 items-center gap-1.5 rounded-md border bg-white px-2 py-1 text-[10px] transition hover:border-flare-300"
                 :class="
                   highlightedMilestoneId === m.id
@@ -1666,10 +1932,7 @@ onMounted(async () => {
                     :class="
                       selectedTaskId === t.id ? 'bg-flare-50/60 border-l-2 border-l-flare-500' : ''
                     "
-                    @click="
-                      selectedTaskId = t.id;
-                      highlightedMilestoneId = null
-                    "
+                    @click="selectTask(t.id)"
                   >
                     <div class="flex items-center gap-1">
                       <span
@@ -1690,113 +1953,143 @@ onMounted(async () => {
             <!-- 우측: 차트 -->
             <div id="gantt-scroll" class="overflow-x-auto flex-1" @wheel.prevent="onGanttWheel">
               <div class="relative" :style="{ width: ganttPxWidth + 'px', minWidth: '100%' }">
-              <!-- 헤더 -->
-              <div class="sticky top-0 z-[5] flex h-9 border-b border-forena-200 bg-forena-50/30">
+                <!-- 헤더 -->
                 <div
-                  v-for="(h, i) in ganttHeader"
-                  :key="i"
-                  class="flex items-center justify-center border-r border-forena-100 text-[10px] font-bold text-forena-500"
-                  :style="{ width: h.days * cellW + 'px' }"
-                >
-                  {{ h.label }}
-                </div>
-              </div>
-
-              <!-- 본문 -->
-              <div class="relative">
-                <!-- 오늘 라인 -->
-                <div
-                  v-if="todayLineStyle"
-                  class="pointer-events-none absolute top-0 z-[3] h-full w-px bg-flare-500/70"
-                  :style="todayLineStyle"
+                  class="sticky top-0 z-[10] flex h-9 border-b border-forena-200 bg-white shadow-[0_1px_0_0_rgb(226,232,240)]"
                 >
                   <div
-                    class="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-flare-500 px-1 text-[8px] font-bold text-white"
+                    v-for="(h, i) in ganttHeader"
+                    :key="i"
+                    class="flex items-center justify-center border-r border-forena-100 text-[10px] font-bold text-forena-500"
+                    :style="{ width: h.days * cellW + 'px' }"
                   >
-                    오늘
+                    {{ h.label }}
                   </div>
                 </div>
 
-                <!-- 행: 그룹 헤더 라인 (해당 그룹의 마일스톤만 표시) + 작업 행 -->
-                <template v-for="(grp, gi) in groupedTasks" :key="`grow-${grp.group}`">
-                  <!-- 그룹 헤더 라인 -->
+                <!-- 본문 -->
+                <div class="relative">
+                  <!-- 오늘 라인 -->
                   <div
-                    class="relative h-9 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50"
+                    v-if="todayLineStyle"
+                    class="pointer-events-none absolute top-0 z-[3] h-full w-px bg-flare-500/70"
+                    :style="todayLineStyle"
                   >
-                    <!-- 이 그룹에 속한 마일스톤 -->
                     <div
-                      v-for="m in milestonesOfGroup(grp.group)"
-                      :key="`gms-${m.id}`"
-                      class="ms-marker pointer-events-auto absolute top-1/2 z-[4] -translate-y-1/2"
-                      :class="[
-                        isMilestoneSoon(m) ? 'ms-pulse' : '',
-                        highlightedMilestoneId === m.id ? 'ms-highlight' : '',
-                      ]"
-                      :style="{ left: dayOffset(m.date) * cellW + cellW / 2 - 8 + 'px' }"
-                      :title="`${m.name} · ${m.date} · ${m.relatedTask} · ${m.status}`"
-                      @click="
-                        highlightedMilestoneId = highlightedMilestoneId === m.id ? null : m.id
-                      "
+                      class="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-flare-500 px-1 text-[8px] font-bold text-white"
                     >
-                      <svg class="h-4 w-4 cursor-pointer drop-shadow-sm" viewBox="0 0 16 16">
-                        <path
-                          d="M8 1 L15 8 L8 15 L1 8 Z"
-                          :fill="milestoneFill(m)"
-                          :stroke="milestoneStroke(m)"
-                          stroke-width="1.5"
-                        />
-                      </svg>
+                      오늘
                     </div>
                   </div>
 
-                  <template v-if="groupOpen[grp.group]">
+                  <!-- 행: 그룹 헤더 라인 (해당 그룹의 마일스톤만 표시) + 작업 행 -->
+                  <template v-for="(grp, gi) in groupedTasks" :key="`grow-${grp.group}`">
+                    <!-- 그룹 헤더 라인 -->
                     <div
-                      v-for="t in grp.items"
-                      :key="`row-${t.id}`"
-                      class="relative flex h-12 border-b border-forena-50"
-                      :class="selectedTaskId === t.id ? 'bg-flare-50/40' : ''"
-                      @click="selectedTaskId = t.id"
+                      class="relative h-9 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50"
                     >
-                      <!-- 라인: 계획 (파란) -->
+                      <!-- 이 그룹에 속한 마일스톤 -->
                       <div
-                        v-if="barStyle(t.start, t.end)"
-                        class="absolute z-[2] flex items-center"
-                        :style="{ ...barStyle(t.start, t.end), top: '14px', height: '4px' }"
-                        :title="`계획: ${t.start} ~ ${t.end}`"
+                        v-for="m in milestonesOfGroup(grp.group)"
+                        :key="`gms-${m.id}`"
+                        class="ms-marker pointer-events-auto absolute top-1/2 z-[4] -translate-y-1/2"
+                        :class="[
+                          isMilestoneSoon(m) ? 'ms-pulse' : '',
+                          highlightedMilestoneId === m.id ? 'ms-highlight' : '',
+                        ]"
+                        :style="{ left: dayOffset(m.date) * cellW + cellW / 2 - 8 + 'px' }"
+                        :title="`${m.name} · ${m.date} · ${m.relatedTask} · ${m.status}`"
+                        @click="toggleMilestoneHighlight(m.id)"
                       >
-                        <span
-                          class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white"
-                          :class="t.isCritical ? 'h-3 w-3' : ''"
-                        ></span>
-                        <span
-                          class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white"
-                          :class="t.isCritical ? 'h-3 w-3' : ''"
-                        ></span>
-                        <span
-                          class="h-1 w-full rounded-full"
-                          :class="t.isCritical ? 'bg-blue-700 h-1.5' : 'bg-blue-600'"
-                        ></span>
-                      </div>
-                      <!-- 라인: 실제/지연 (빨간) - 데모 -->
-                      <div
-                        v-if="barStyle(t.start, t.end) && highlightDelayed && isDelayed(t)"
-                        class="absolute z-[2] flex items-center"
-                        :style="{ ...barStyle(t.start, t.end), top: '28px', height: '4px' }"
-                        :title="`지연 의심: ${t.name}`"
-                      >
-                        <span
-                          class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
-                        ></span>
-                        <span
-                          class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
-                        ></span>
-                        <span class="h-1 w-full rounded-full bg-rose-500"></span>
+                        <svg class="h-4 w-4 cursor-pointer drop-shadow-sm" viewBox="0 0 16 16">
+                          <path
+                            d="M8 1 L15 8 L8 15 L1 8 Z"
+                            :fill="milestoneFill(m)"
+                            :stroke="milestoneStroke(m)"
+                            stroke-width="1.5"
+                          />
+                        </svg>
                       </div>
                     </div>
+
+                    <template v-if="groupOpen[grp.group]">
+                      <div
+                        v-for="t in grp.items"
+                        :key="`row-${t.id}`"
+                        class="relative flex h-12 border-b border-forena-50"
+                        :class="selectedTaskId === t.id ? 'bg-flare-50/40' : ''"
+                        @click="selectedTaskId = t.id"
+                      >
+                        <!-- 라인: 계획 (파란) -->
+                        <div
+                          v-if="barStyle(t.start, t.end)"
+                          class="absolute z-[2] flex items-center"
+                          :style="{ ...barStyle(t.start, t.end), top: '14px', height: '4px' }"
+                          :title="`계획: ${t.start} ~ ${t.end}`"
+                        >
+                          <span
+                            class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white"
+                            :class="t.isCritical ? 'h-3 w-3' : ''"
+                          ></span>
+                          <span
+                            class="absolute -right-[3px] h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white"
+                            :class="t.isCritical ? 'h-3 w-3' : ''"
+                          ></span>
+                          <span
+                            class="h-1 w-full rounded-full"
+                            :class="t.isCritical ? 'bg-blue-700 h-1.5' : 'bg-blue-600'"
+                          ></span>
+                        </div>
+                        <!-- 라인: 연간 실행/진행 (WorkPlan 통합 빨간선) -->
+                        <template v-if="workPlanProgress(t)">
+                          <!-- 전체 계획 구간: 연한 빨강 (배경) -->
+                          <div
+                            v-if="
+                              barStyle(workPlanProgress(t).planStart, workPlanProgress(t).planEnd)
+                            "
+                            class="absolute z-[2] flex items-center"
+                            :style="{
+                              ...barStyle(
+                                workPlanProgress(t).planStart,
+                                workPlanProgress(t).planEnd,
+                              ),
+                              top: '28px',
+                              height: '4px',
+                            }"
+                            :title="`연간 계획: ${workPlanProgress(t).planStart} ~ ${workPlanProgress(t).planEnd}`"
+                          >
+                            <span
+                              class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-white"
+                            ></span>
+                            <span class="h-1 w-full rounded-full bg-rose-200"></span>
+                            <span
+                              class="absolute top-1/2 z-[3] h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-rose-500 ring-2 ring-white"
+                              :style="workPlanProgressDotStyle(t)"
+                            ></span>
+                          </div>
+
+                          <!-- 진행된 구간: 진한 빨강 (오버레이, 점 없음) -->
+                          <div
+                            v-if="
+                              progressBarRange(t) &&
+                              barStyle(progressBarRange(t).start, progressBarRange(t).end)
+                            "
+                            class="absolute z-[3] flex items-center"
+                            :style="{
+                              ...barStyle(progressBarRange(t).start, progressBarRange(t).end),
+                              top: '28px',
+                              height: '4px',
+                            }"
+                            :title="`진행됨: ${progressBarRange(t).start} ~ ${progressBarRange(t).end}`"
+                          >
+                            <span class="h-1 w-full rounded-full bg-rose-500"></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
                   </template>
-                </template>
+                </div>
               </div>
-            </div>
             </div>
           </div>
         </div>
@@ -1809,7 +2102,10 @@ onMounted(async () => {
             ><span class="h-1 w-5 rounded-full bg-blue-600" />계획선</span
           >
           <span class="inline-flex items-center gap-1.5"
-            ><span class="h-1 w-5 rounded-full bg-rose-500" />실제 / 지연</span
+            ><span class="h-1 w-5 rounded-full bg-rose-500" />실제 진행</span
+          >
+          <span class="inline-flex items-center gap-1.5"
+            ><span class="h-1 w-5 rounded-full bg-rose-200" />진행 예정</span
           >
           <span class="inline-flex items-center gap-1.5">
             <svg class="h-3 w-3" viewBox="0 0 12 12">
@@ -2172,282 +2468,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- 6. 공종별 진척률 (도넛차트) — 한 줄 3개씩 2줄                    -->
-    <!-- ============================================================ -->
-    <div
-      v-if="!noDataYet"
-      class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card"
-    >
-      <div class="mb-4 flex items-center gap-2 border-b border-forena-100 pb-3">
-        <BarChart3 class="h-4 w-4 text-flare-600" />
-        <h2 class="text-sm font-bold text-forena-900">공종별 진척률</h2>
-        <span class="text-[11px] text-forena-400">계획 vs 실제 — 도넛 차트</span>
-        <div class="ml-auto flex items-center gap-3 text-[10px] text-forena-500">
-          <span class="inline-flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-forena-400/60"></span>계획율
-          </span>
-          <span class="inline-flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-flare-500"></span>실제율
-          </span>
-        </div>
-      </div>
-      <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-        <div
-          v-for="g in groupProgress"
-          :key="g.group"
-          class="relative rounded-xl border bg-white p-4 transition hover:shadow-sm"
-          :class="g.diff < 0 ? 'border-rose-200 bg-rose-50/20' : 'border-forena-100'"
-        >
-          <!-- 상태 뱃지 -->
-          <span
-            class="absolute right-3 top-3 rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1"
-            :class="
-              g.diff < 0
-                ? 'bg-rose-50 text-rose-700 ring-rose-200'
-                : 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-            "
-          >
-            {{ g.diff < 0 ? '지연 위험' : '정상' }}
-          </span>
 
-          <p class="mb-2 text-sm font-bold text-forena-900">{{ g.group }}</p>
-
-          <!-- SVG 도넛 -->
-          <div class="flex items-center justify-center">
-            <svg viewBox="0 0 100 100" class="h-32 w-32">
-              <!-- 배경 트랙 -->
-              <circle cx="50" cy="50" r="36" fill="none" stroke="#f1f5f9" stroke-width="10" />
-              <!-- 계획율 (반투명 forena 톤) -->
-              <path
-                :d="arcPath(g.plan)"
-                fill="none"
-                stroke="#94a3b8"
-                stroke-opacity="0.55"
-                stroke-width="10"
-                stroke-linecap="round"
-              />
-              <!-- 실제율 (flare 색상, 위에 겹치게) -->
-              <path
-                :d="arcPath(g.actual)"
-                fill="none"
-                :stroke="g.diff < 0 ? '#f43f5e' : '#f59e0b'"
-                stroke-width="10"
-                stroke-linecap="round"
-              />
-              <!-- 중앙 실제율 텍스트 -->
-              <text
-                x="50"
-                y="48"
-                text-anchor="middle"
-                class="fill-forena-900"
-                font-size="16"
-                font-weight="700"
-              >
-                {{ g.actual }}%
-              </text>
-              <text x="50" y="62" text-anchor="middle" class="fill-forena-400" font-size="8">
-                실제율
-              </text>
-            </svg>
-          </div>
-
-          <!-- 하단 비교 -->
-          <div
-            class="mt-3 grid grid-cols-3 gap-1 rounded-lg bg-forena-50/60 p-2 text-center text-[11px]"
-          >
-            <div>
-              <p class="text-forena-500">계획</p>
-              <p class="font-bold tabular-nums text-forena-700">{{ g.plan }}%</p>
-            </div>
-            <div>
-              <p class="text-forena-500">실제</p>
-              <p
-                class="font-bold tabular-nums"
-                :class="g.diff < 0 ? 'text-rose-600' : 'text-emerald-600'"
-              >
-                {{ g.actual }}%
-              </p>
-            </div>
-            <div>
-              <p class="text-forena-500">차이</p>
-              <p
-                class="font-bold tabular-nums"
-                :class="g.diff < 0 ? 'text-rose-600' : 'text-emerald-600'"
-              >
-                {{ g.diff > 0 ? '+' : '' }}{{ g.diff }}%
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- 8. 마일스톤 관리 + 변경 이력                                    -->
-    <!-- ============================================================ -->
-    <div v-if="!noDataYet" class="grid gap-4 lg:grid-cols-12">
-      <!-- 마일스톤 관리 (간트 ↔ 표 연동) -->
-      <div
-        class="lg:col-span-7 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
-      >
-        <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-3">
-          <Diamond class="h-4 w-4 text-flare-600" />
-          <h2 class="text-sm font-bold text-forena-900">마일스톤 관리</h2>
-          <span class="text-[10px] text-forena-400"
-            >행을 클릭하면 간트차트의 해당 마일스톤이 강조됩니다</span
-          >
-          <button
-            v-if="highlightedMilestoneId"
-            @click="highlightedMilestoneId = null"
-            class="ml-auto rounded-md border border-forena-200 bg-white px-2 py-1 text-[10px] font-bold text-forena-600 hover:bg-forena-50"
-          >
-            강조 해제
-          </button>
-        </div>
-        <table class="w-full text-xs">
-          <thead class="bg-forena-50/60 text-[10px] font-bold uppercase text-forena-500">
-            <tr>
-              <th class="px-3 py-2.5 text-left">마일스톤</th>
-              <th class="px-3 py-2.5 text-left">기준일</th>
-              <th class="px-3 py-2.5 text-center">관련 공정</th>
-              <th class="px-3 py-2.5 text-center">상태</th>
-              <th class="px-3 py-2.5 text-center">영향도</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-forena-50">
-            <tr
-              v-for="m in milestones"
-              :key="m.id"
-              @click="highlightedMilestoneId = highlightedMilestoneId === m.id ? null : m.id"
-              class="cursor-pointer transition"
-              :class="[
-                m.status === '지연 위험'
-                  ? 'bg-rose-50/40 hover:bg-rose-50/70'
-                  : 'hover:bg-forena-50/40',
-                highlightedMilestoneId === m.id ? 'bg-flare-50/60 ring-1 ring-flare-200' : '',
-              ]"
-            >
-              <td class="px-3 py-2.5 font-semibold text-forena-800">
-                <div class="flex items-center gap-2">
-                  <!-- 다이아몬드 아이콘 (간트와 동일) -->
-                  <svg
-                    class="h-3.5 w-3.5 shrink-0"
-                    :class="isMilestoneSoon(m) ? 'ms-pulse' : ''"
-                    viewBox="0 0 12 12"
-                  >
-                    <path
-                      d="M6 1 L11 6 L6 11 L1 6 Z"
-                      :fill="milestoneFill(m)"
-                      :stroke="milestoneStroke(m)"
-                      stroke-width="1"
-                    />
-                  </svg>
-                  {{ m.name }}
-                </div>
-              </td>
-              <td class="px-3 py-2.5 tabular-nums text-slate-600">{{ m.date }}</td>
-              <td class="px-3 py-2.5 text-center text-slate-500">{{ m.relatedTask }}</td>
-              <td class="px-3 py-2.5">
-                <div class="flex items-center justify-center">
-                  <span
-                    class="rounded px-1.5 py-0.5 text-[10px] font-bold ring-1"
-                    :class="
-                      m.status === '완료'
-                        ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                        : m.status === '지연 위험'
-                          ? 'bg-rose-50 text-rose-700 ring-rose-200'
-                          : 'bg-blue-50 text-blue-700 ring-blue-200'
-                    "
-                  >
-                    {{ m.status }}
-                  </span>
-                </div>
-              </td>
-              <td class="px-3 py-2.5 text-center">
-                <span
-                  class="rounded px-1.5 py-0.5 text-[10px] font-bold"
-                  :class="
-                    m.impact === '고'
-                      ? 'bg-rose-50 text-rose-700'
-                      : m.impact === '중'
-                        ? 'bg-amber-50 text-amber-700'
-                        : 'bg-slate-100 text-slate-500'
-                  "
-                >
-                  {{ m.impact }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 변경 이력 (간격 확장 + 강조 뱃지) -->
-      <div
-        class="lg:col-span-5 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
-      >
-        <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-3">
-          <History class="h-4 w-4 text-flare-600" />
-          <h2 class="text-sm font-bold text-forena-900">변경 이력</h2>
-          <span class="ml-auto text-[10px] text-forena-400"
-            >최종 확정자: {{ projectInfo.finalApprover }}</span
-          >
-        </div>
-        <ul class="max-h-80 divide-y divide-forena-100 overflow-y-auto">
-          <li
-            v-for="log in changeLog"
-            :key="log.id"
-            class="px-5 py-4 transition hover:bg-forena-50/30"
-          >
-            <div class="flex items-start gap-3">
-              <!-- 액션 아이콘 -->
-              <div
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                :class="
-                  log.action === '승인' || log.action === '기준 공정표 확정'
-                    ? 'bg-emerald-50'
-                    : log.action === '반려'
-                      ? 'bg-rose-50'
-                      : log.action === '문서 등록'
-                        ? 'bg-flare-50'
-                        : 'bg-slate-50'
-                "
-              >
-                <CheckCircle2
-                  v-if="log.action === '승인' || log.action === '기준 공정표 확정'"
-                  class="h-4 w-4 text-emerald-600"
-                />
-                <ThumbsDown v-else-if="log.action === '반려'" class="h-4 w-4 text-rose-600" />
-                <Upload v-else-if="log.action === '문서 등록'" class="h-4 w-4 text-flare-600" />
-                <Pencil v-else class="h-4 w-4 text-slate-500" />
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <span
-                    class="rounded px-1.5 py-0.5 text-[10px] font-bold"
-                    :class="
-                      log.action === '승인' || log.action === '기준 공정표 확정'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : log.action === '반려'
-                          ? 'bg-rose-100 text-rose-700'
-                          : 'bg-slate-100 text-slate-600'
-                    "
-                  >
-                    {{ log.action }}
-                  </span>
-                  <span class="truncate text-xs font-bold text-forena-800">{{ log.target }}</span>
-                </div>
-                <p class="mt-1 truncate text-[11px] text-slate-600">{{ log.detail }}</p>
-                <p class="mt-1 text-[10px] tabular-nums text-forena-400">
-                  {{ log.who }} · {{ log.at }}
-                </p>
-              </div>
-            </div>
-          </li>
-        </ul>
-      </div>
-    </div>
 
     <!-- ============================================================ -->
     <!-- 모달: 기준 공정표 확정 — 검증 미리보기                          -->

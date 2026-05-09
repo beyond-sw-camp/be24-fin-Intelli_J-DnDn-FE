@@ -45,6 +45,46 @@ const uploadMenuRef = ref(null)
 const yearlyInputRef = ref(null)
 const monthlyInputRef = ref(null)
 
+// feat : 새 업로드 모달 상태 및 동적 공종 리스트
+const isUploadPopupOpen = ref(false)
+const uploadModalTrade = ref('')
+const uploadModalType = ref('연간')
+const mainTrades = ref([])
+
+// feat : 마일스톤 제외하고 공종 리스트 불러오기
+async function loadMainTrades() {
+  try {
+    const response = await fetchTradeProcessList({ projectId: selectedProjectId.value })
+    if (response && Array.isArray(response)) {
+      const uniqueTrades = [
+        ...new Set(
+          response
+            .filter((item) => !item.isMilestone && !item.milestone)
+            .map((item) => item.trade || item.tradeName),
+        ),
+      ].filter(Boolean)
+
+      mainTrades.value = uniqueTrades.length
+        ? uniqueTrades
+        : ['공통/가설', '토공사', '지정/기초', '골조공사', '건축마감', '기계/설비']
+      if (mainTrades.value.length > 0) uploadModalTrade.value = mainTrades.value[0]
+    }
+  } catch (error) {
+    mainTrades.value = ['공통/가설', '토공사', '지정/기초', '골조공사', '건축마감', '기계/설비']
+    uploadModalTrade.value = mainTrades.value[0]
+  }
+}
+
+// feat : 업로드 실행
+function triggerFileUpload() {
+  isUploadPopupOpen.value = false
+  if (uploadModalType.value === '연간') {
+    yearlyInputRef.value?.click()
+  } else {
+    monthlyInputRef.value?.click()
+  }
+}
+
 // 연장 정보 헬퍼 (planStore 기반)
 function extOf(p) {
   return planStore.extensions[p.id] ?? null
@@ -83,6 +123,35 @@ function workPlanStatus(plan) {
   return formatDateLocal(new Date()) >= plan.start ? '진행 중' : '진행 예정'
 }
 
+function isDateInRange(start, end, date = formatDateLocal(new Date())) {
+  if (!start || !end) return false
+  return start <= date && date <= end
+}
+
+function isWorkPlanInProgress(plan) {
+  return isDateInRange(plan?.start, effectiveEnd(plan))
+}
+
+function isYearlyProcessInProgress(item) {
+  if (isDateInRange(item?.baselineStart, item?.baselineEnd)) return true
+  return (item?.workPlans ?? []).some((plan) => isDateInRange(plan?.start, plan?.end))
+}
+
+function isMonthlyProcessInProgress(item) {
+  if (isDateInRange(item?.baselineStart, item?.baselineEnd)) return true
+  return (item?.details ?? []).some(
+    (detail) =>
+      isDateInRange(detail?.start, detail?.end) ||
+      isDateInRange(detail?.plannedStart, detail?.plannedEnd),
+  )
+}
+
+function isWorkPlanGroupInProgress(group) {
+  return (group?.items ?? []).some(
+    (item) => isYearlyProcessInProgress(item) || isMonthlyProcessInProgress(item),
+  )
+}
+
 // =========================
 // 주간 캘린더
 // =========================
@@ -104,6 +173,49 @@ function displayWeekStart(plan) {
   if (plan?.weekStart) return plan.weekStart
   if (!plan?.start) return '-'
   return formatDateLocal(getWeekStart(new Date(plan.start)))
+}
+
+function monthlyPlanFor(plan) {
+  const parentId = plan?.parentWorkPlanId
+  if (parentId) {
+    const byId = monthlyPlans.value.find((p) => String(p.id) === String(parentId))
+    if (byId) return byId
+  }
+
+  const parentName = String(plan?.parentWorkPlanName || '').trim()
+  if (parentName) {
+    const byName = monthlyPlans.value.find((p) => String(p.name || '').trim() === parentName)
+    if (byName) return byName
+  }
+
+  return null
+}
+
+function displayMonthlyPlanName(plan) {
+  return monthlyPlanFor(plan)?.name || plan?.parentWorkPlanName || '-'
+}
+
+function displayMonthlyPlanPeriod(plan) {
+  const monthlyPlan = monthlyPlanFor(plan)
+  if (!monthlyPlan?.start && !monthlyPlan?.end) return ''
+  return `${monthlyPlan.start || '-'} ~ ${monthlyPlan.end || '-'}`
+}
+
+function displayWorkTime(plan) {
+  if (plan?.workTime) return plan.workTime
+
+  const note = String(plan?.note || '')
+  const timeRange = '(\\d{1,2}:\\d{2})\\s*[~～]\\s*(\\d{1,2}:\\d{2})'
+  const changed = note.match(new RegExp(`작업시간\\s*:?\\s*${timeRange}\\s*(?:->|→)\\s*${timeRange}`))
+  if (changed) return `${changed[3]} ~ ${changed[4]}`
+
+  const bracket = note.match(new RegExp(`\\[작업시간\\]\\s*${timeRange}`))
+  if (bracket) return `${bracket[1]} ~ ${bracket[2]}`
+
+  const labeled = note.match(new RegExp(`작업시간\\s*:?\\s*${timeRange}`))
+  if (labeled) return `${labeled[1]} ~ ${labeled[2]}`
+
+  return '-'
 }
 
 const HOLIDAY_DATES = new Set([
@@ -686,13 +798,13 @@ async function submitWeeklyForm() {
     await submitWeeklyWorkPlan(payload)
 
     showWeeklyForm.value = false
-    alert(`${w.partner} (${w.manager}) 주간 계획서 ${w.items.length}건이 제출되었습니다.`)
+    alert(`${w.partner} (${w.manager}) 세부 계획서 ${w.items.length}건이 제출되었습니다.`)
 
     // 제출 후 목록 재조회 (서버에 저장된 새 plan들이 반영됨)
     await loadPlans()
   } catch (err) {
-    console.error('주간 계획서 제출 실패:', err)
-    alert(err.message || '주간 계획서 제출에 실패했습니다.')
+    console.error('세부 계획서 제출 실패:', err)
+    alert(err.message || '세부 계획서 제출에 실패했습니다.')
   }
 }
 function cancelWeeklyForm() {
@@ -718,7 +830,7 @@ async function loadPlans() {
       fetchWorkPlanList({ planType: '연간' }),
     ])
 
-    baselinePlans.value = baselineRes
+    baselinePlans.value = baselineRes.filter((b) => !baseIsMilestone(b))
     weeklyPlans.value = weeklyRes
     monthlyPlans.value = monthlyRes
     annualPlans.value = yearlyRes
@@ -736,10 +848,11 @@ watch([filterTrade, filterStatus], () => {
 })
 
 onMounted(() => {
-  document.addEventListener('mousedown', handleClickOutside)
-  loadPlans()
+  loadPlans() // 기존 계획 데이터 로드
+  loadMainTrades() // 신규 추가: 업로드용 공종 리스트 로드
 })
-onBeforeUnmount(() => document.removeEventListener('mousedown', handleClickOutside))
+
+onBeforeUnmount(() => {})
 
 function importAi() {
   alert('AI로 작업계획을 불러옵니다. (데모)')
@@ -750,7 +863,7 @@ function importAi() {
 // =========================
 const GANTT_DAY_W = 42
 const GANTT_MONTH_W = 108
-const NAME_COL_W = 240
+const NAME_COL_W = 280
 
 const today = new Date()
 const viewYear = ref(today.getFullYear())
@@ -998,8 +1111,8 @@ const todayLineStyle = computed(() => {
   return { left: `${left}px` }
 })
 
-const chartWidth = computed(() => monthMeta.value.daysInMonth * GANTT_DAY_W)
-const yearChartWidth = computed(() => 12 * GANTT_MONTH_W)
+const chartWidth = computed(() => `max(100%, ${monthMeta.value.daysInMonth * GANTT_DAY_W}px)`)
+const yearChartWidth = computed(() => `max(100%, ${12 * GANTT_MONTH_W}px)`)
 
 // 화면 상단/필터 바 — 활성 연장 개수
 const extensionCount = computed(() => Object.keys(planStore.extensions).length)
@@ -1047,6 +1160,9 @@ function buildGroups(plans) {
   const tradeMap = new Map()
 
   for (const b of baselinePlans.value) {
+    // 마일스톤은 연간 계획 행으로 보여주면 안 됨
+    if (baseIsMilestone(b)) continue
+
     if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
 
     const trade = baseTradeName(b)
@@ -1196,7 +1312,11 @@ function buildMonthlyGroups(plans) {
 
   // 1) baseline(trade_process) 기준으로 공종 → 공정 골격 생성
   for (const b of baselinePlans.value) {
+    // 마일스톤은 연간 계획 행으로 보여주면 안 됨
+    if (baseIsMilestone(b)) continue
+
     if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
+
     const trade = baseTradeName(b)
     const tpid = baseId(b)
     if (!tradeMap.has(trade)) tradeMap.set(trade, [])
@@ -1312,19 +1432,15 @@ watch(
   [yearlyGroups, monthlyGroups],
   () => {
     const all = [...yearlyGroups.value, ...monthlyGroups.value]
-    for (const g of all) {
-      if (groupOpen.value[g.group] === undefined) {
-        groupOpen.value[g.group] = true
-      }
-    }
-    // 월간 공정 펼침 상태 초기화 (기본: 펼쳐짐)
-    for (const g of monthlyGroups.value) {
-      for (const item of g.items) {
-        if (monthlyProcessOpen.value[item.id] === undefined) {
-          monthlyProcessOpen.value[item.id] = true
-        }
-      }
-    }
+
+    groupOpen.value = Object.fromEntries(all.map((g) => [g.group, isWorkPlanGroupInProgress(g)]))
+
+    // 월간 공정도 오늘 진행 중인 공정만 기본 펼침
+    monthlyProcessOpen.value = Object.fromEntries(
+      monthlyGroups.value.flatMap((g) =>
+        g.items.map((item) => [item.id, isMonthlyProcessInProgress(item)]),
+      ),
+    )
   },
   { immediate: true },
 )
@@ -1426,97 +1542,35 @@ function onClickWorkPlan(wp) {
           </button>
         </div>
 
-        <div class="relative" ref="uploadMenuRef">
-          <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-            @click="toggleUploadMenu"
-          >
-            <Upload class="h-3.5 w-3.5 text-forena-400" />
-            계획서 업로드
-            <ChevronDown
-              class="h-3 w-3 text-forena-400 transition-transform"
-              :class="showUploadMenu ? 'rotate-180' : ''"
-            />
-          </button>
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+          @click="isUploadPopupOpen = true"
+        >
+          <Upload class="h-3.5 w-3.5 text-forena-400" /> 계획서 업로드
+        </button>
 
-          <transition
-            enter-active-class="transition duration-100 ease-out"
-            enter-from-class="opacity-0 -translate-y-1"
-            enter-to-class="opacity-100 translate-y-0"
-            leave-active-class="transition duration-75 ease-in"
-            leave-from-class="opacity-100 translate-y-0"
-            leave-to-class="opacity-0 -translate-y-1"
-          >
-            <div
-              v-if="showUploadMenu"
-              class="absolute right-0 top-full z-20 mt-1.5 w-52 overflow-hidden rounded-lg border border-forena-200 bg-white shadow-lg"
-            >
-              <button
-                type="button"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
-                @click="pickYearly"
-              >
-                <CalendarRange class="h-4 w-4 shrink-0 text-flare-600" />
-                <div class="flex flex-col">
-                  <span>연간 계획서 업로드</span>
-                  <span class="text-[10px] font-normal text-slate-400">연간 공정 목표와 범위</span>
-                </div>
-              </button>
-              <div class="h-px bg-forena-100"></div>
-              <button
-                v-if="false"
-                type="button"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
-                @click="openWeeklyComposer"
-              >
-                <ClipboardList class="h-4 w-4 shrink-0 text-flare-600" />
-                <div class="flex flex-col">
-                  <span>주간 계획서 작성</span>
-                  <span class="text-[10px] font-normal text-slate-400"
-                    >협력사 담당자가 직접 입력 · 매주 작성</span
-                  >
-                </div>
-              </button>
-              <div class="h-px bg-forena-100"></div>
-              <button
-                type="button"
-                class="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-xs font-semibold text-forena-700 hover:bg-flare-50"
-                @click="pickMonthly"
-              >
-                <CalendarRange class="h-4 w-4 shrink-0 text-flare-600" />
-                <div class="flex flex-col">
-                  <span>월간 계획서 업로드</span>
-                  <span class="text-[10px] font-normal text-slate-400"
-                    >이번 달 공정 목표와 작업 범위 · 매월 작성</span
-                  >
-                </div>
-              </button>
-            </div>
-          </transition>
-
-          <input
-            ref="yearlyInputRef"
-            type="file"
-            class="sr-only"
-            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
-            @change="(e) => onFileChange(e, '연간')"
-          />
-          <input
-            ref="monthlyInputRef"
-            type="file"
-            class="sr-only"
-            accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
-            @change="(e) => onFileChange(e, '월간')"
-          />
-        </div>
+        <input
+          ref="yearlyInputRef"
+          type="file"
+          class="sr-only"
+          @change="(e) => onFileChange(e, '연간')"
+          accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+        />
+        <input
+          ref="monthlyInputRef"
+          type="file"
+          class="sr-only"
+          @change="(e) => onFileChange(e, '월간')"
+          accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg"
+        />
 
         <button
           type="button"
           class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
           @click="openWeeklyForm"
         >
-          <ClipboardList class="h-3.5 w-3.5 text-forena-400" /> 주간계획서 작성
+          <ClipboardList class="h-3.5 w-3.5 text-forena-400" /> 세부계획서 작성
         </button>
       </div>
     </div>
@@ -1688,7 +1742,7 @@ function onClickWorkPlan(wp) {
                 <div class="mb-3 flex items-center gap-1.5">
                   <ClipboardList class="h-3.5 w-3.5 text-flare-600" />
                   <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400"
-                    >주간 계획서 정보</span
+                    >세부 계획서 정보</span
                   >
                 </div>
                 <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1711,9 +1765,15 @@ function onClickWorkPlan(wp) {
                     </p>
                   </div>
                   <div class="rounded-lg bg-forena-50/60 px-3 py-2">
-                    <p class="text-[10px] font-bold text-forena-400">주 시작일</p>
-                    <p class="mt-1 text-sm font-semibold tabular-nums text-forena-900">
-                      {{ displayWeekStart(selectedPlan) }}
+                    <p class="text-[10px] font-bold text-forena-400">월간 세부계획</p>
+                    <p class="mt-1 text-sm font-semibold text-forena-900">
+                      {{ displayMonthlyPlanName(selectedPlan) }}
+                    </p>
+                    <p
+                      v-if="displayMonthlyPlanPeriod(selectedPlan)"
+                      class="mt-0.5 text-[11px] tabular-nums text-forena-500"
+                    >
+                      {{ displayMonthlyPlanPeriod(selectedPlan) }}
                     </p>
                   </div>
                 </div>
@@ -1746,7 +1806,9 @@ function onClickWorkPlan(wp) {
                 </div>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-3">
+              <!-- 🌟 여기서부터 교체 시작 🌟 -->
+              <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <!-- 1. 작업 위치 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <MapPin class="h-3.5 w-3.5 text-flare-600" />
@@ -1754,8 +1816,25 @@ function onClickWorkPlan(wp) {
                       >작업 위치</span
                     >
                   </div>
-                  <p class="text-sm font-semibold text-forena-900">{{ selectedPlan.location }}</p>
+                  <p class="text-sm font-semibold text-forena-900">
+                    {{ selectedPlan.location || '위치 미지정' }}
+                  </p>
                 </div>
+
+                <!-- 2. 작업 시간 -->
+                <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
+                  <div class="flex items-center gap-1.5 mb-2">
+                    <CalendarRange class="h-3.5 w-3.5 text-flare-600" />
+                    <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400"
+                      >작업 시간</span
+                    >
+                  </div>
+                  <p class="text-sm font-semibold tabular-nums text-forena-900">
+                    {{ displayWorkTime(selectedPlan) }}
+                  </p>
+                </div>
+
+                <!-- 3. 필요 인원 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <Users class="h-3.5 w-3.5 text-flare-600" />
@@ -1773,17 +1852,24 @@ function onClickWorkPlan(wp) {
                       <span class="tabular-nums text-forena-700">{{ w.count }}명</span>
                     </li>
                   </ul>
-                  <p v-else class="text-sm text-slate-400">해당 없음</p>
+                  <!-- 🔥 요청사항 반영: 해당 없음 대신 [공정명] N명 표시 -->
+                  <p v-else class="text-sm font-bold text-forena-900">
+                    <span class="text-flare-700 mr-1">[{{ selectedPlan.trade }}]</span>
+                    {{ selectedPlan.requiredCount || 0 }}명
+                  </p>
+
                   <div
                     v-if="selectedPlan.requiredCount"
                     class="mt-2 flex items-baseline justify-between border-t border-forena-100 pt-1.5"
                   >
                     <span class="text-[10px] font-bold uppercase text-forena-400">합계</span>
-                    <span class="text-xs font-bold tabular-nums text-flare-700">
-                      {{ selectedPlan.requiredCount }}명
-                    </span>
+                    <span class="text-xs font-bold tabular-nums text-flare-700"
+                      >{{ selectedPlan.requiredCount }}명</span
+                    >
                   </div>
                 </div>
+
+                <!-- 4. 필요 장비 -->
                 <div class="rounded-xl border border-forena-100 bg-forena-50/40 p-3.5">
                   <div class="flex items-center gap-1.5 mb-2">
                     <Wrench class="h-3.5 w-3.5 text-flare-600" />
@@ -1791,22 +1877,66 @@ function onClickWorkPlan(wp) {
                       >필요 장비</span
                     >
                   </div>
-                  <ul
-                    v-if="selectedPlan.equipment && selectedPlan.equipment.length"
-                    class="space-y-1"
+
+                  <!-- ✨ 여기에 찾으신 변수명(예: plan)을 넣으세요! ✨ -->
+                  <div v-if="plan?.equipmentDisplay" class="flex flex-wrap gap-2">
+                    <span class="text-xs font-semibold text-forena-700">{{
+                      plan.equipmentDisplay
+                    }}</span>
+                  </div>
+
+                  <div
+                    v-else-if="plan?.equipment && plan.equipment.length"
+                    class="flex flex-wrap gap-2"
                   >
-                    <li
-                      v-for="(eq, i) in selectedPlan.equipment"
-                      :key="i"
-                      class="flex items-baseline justify-between text-sm"
+                    <span
+                      v-for="(eq, idx) in plan.equipment"
+                      :key="idx"
+                      class="text-xs font-semibold text-forena-700"
                     >
-                      <span class="font-semibold text-forena-900">{{ eq.type }}</span>
-                      <span class="tabular-nums text-forena-700">{{ eq.count }}대</span>
-                    </li>
-                  </ul>
-                  <p v-else class="text-sm text-slate-400">해당 없음</p>
+                      {{ eq.type }} {{ eq.count }}대
+                    </span>
+                  </div>
+
+                  <div v-else class="text-[11px] text-slate-400 italic">
+                    등록된 장비 정보가 없습니다.
+                  </div>
                 </div>
               </div>
+
+              <!--  요청사항 반영: 하단 작업 상세 & 안전 유의사항 카드 영역 -->
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <!-- 작업 상세 내역 -->
+                <div class="rounded-xl border border-forena-100 bg-white p-4 shadow-sm">
+                  <p
+                    class="text-[10px] font-bold uppercase tracking-wide text-forena-400 mb-2.5 flex items-center gap-1.5"
+                  >
+                    <ClipboardList class="h-3.5 w-3.5 text-forena-500" /> 작업 상세 내역
+                  </p>
+                  <div class="min-h-[80px] rounded-lg bg-slate-50 p-3">
+                    <!-- 백엔드에서 받은 note 필드. 비어있으면 기본값 -->
+                    <p class="text-xs leading-relaxed text-forena-800 whitespace-pre-wrap">
+                      {{ selectedPlan.note || selectedPlan.name + ' 공정 진행' }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- 안전 유의사항 -->
+                <div class="rounded-xl border border-rose-100 bg-rose-50/30 p-4 shadow-sm">
+                  <p
+                    class="text-[10px] font-bold uppercase tracking-wide text-rose-500 mb-2.5 flex items-center gap-1.5"
+                  >
+                    <AlertTriangle class="h-3.5 w-3.5 text-rose-500" /> 안전 유의사항
+                  </p>
+                  <div class="min-h-[80px] rounded-lg bg-white p-3 border border-rose-100">
+                    <p class="text-xs leading-relaxed text-rose-800 whitespace-pre-wrap">
+                      추락/낙하/화재 등 위험요인 사전 점검 및 안전조치 철저. (지시서 및 일일 TBM
+                      준수)
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <!-- 🌟 여기까지 교체 끝 🌟 -->
             </template>
           </div>
         </template>
@@ -2090,13 +2220,12 @@ function onClickWorkPlan(wp) {
               </div>
 
               <!-- 우측: 차트 (공종 헤더 라인 + 공정 행마다 파란선 + 빨간 실행/진행선들) -->
-              <div class="relative" :style="{ width: yearChartWidth + 'px' }">
+              <div class="relative flex-1 w-full min-w-[1000px]" :style="{ width: yearChartWidth }">
                 <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
                   <div
                     v-for="m in yearMeta.months"
                     :key="m.month"
-                    class="flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
-                    :style="{ width: GANTT_MONTH_W + 'px' }"
+                    class="flex-1 flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
                     :class="m.isCurrent ? 'bg-flare-50 text-flare-700' : 'text-forena-500'"
                   >
                     {{ m.label }}
@@ -2277,8 +2406,7 @@ function onClickWorkPlan(wp) {
                                   : '기준 공정 종료일'
                               "
                             >
-                              <span class="inline-block h-1.5 w-1.5 rotate-45 bg-rose-500"></span>
-                              마일스톤 {{ item.milestoneDate }}
+                              종료 예정일 {{ item.milestoneDate }}
                             </span>
                             <span v-else class="italic text-slate-300">마일스톤 없음</span>
                           </p>
@@ -2321,14 +2449,13 @@ function onClickWorkPlan(wp) {
               </div>
 
               <!-- 우측: 차트 -->
-              <div class="relative" :style="{ width: chartWidth + 'px' }">
+              <div class="relative flex-1 w-full min-w-[1000px]" :style="{ width: chartWidth }">
                 <!-- 날짜 헤더 -->
                 <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
                   <div
                     v-for="d in monthMeta.days"
                     :key="d.date"
-                    class="flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
-                    :style="{ width: GANTT_DAY_W + 'px' }"
+                    class="flex-1 flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
                     :class="monthlyDayHeaderClass(d)"
                   >
                     {{ d.day }}
@@ -2359,8 +2486,7 @@ function onClickWorkPlan(wp) {
                           <div
                             v-for="d in monthMeta.days"
                             :key="d.date"
-                            class="border-r border-forena-50"
-                            :style="{ width: GANTT_DAY_W + 'px' }"
+                            class="flex-1 border-r border-forena-50"
                             :class="monthlyDayCellClass(d)"
                           ></div>
 
@@ -2719,7 +2845,7 @@ function onClickWorkPlan(wp) {
                 <ClipboardList class="h-5 w-5 text-flare-600" />
               </div>
               <div>
-                <p class="text-base font-bold text-forena-900">주간 계획서 작성</p>
+                <p class="text-base font-bold text-forena-900">세부 계획서 작성</p>
                 <p class="mt-0.5 text-xs text-forena-500">
                   협력사 담당자가 직접 작성합니다. 일자별
                   <span class="font-bold text-flare-700">공정명·작업구역·인력·장비</span>는 모두
@@ -3029,6 +3155,82 @@ function onClickWorkPlan(wp) {
                 계획서 제출
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+    <transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="isUploadPopupOpen"
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      >
+        <div
+          class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+          @click="isUploadPopupOpen = false"
+        ></div>
+
+        <div class="relative w-full max-w-md overflow-hidden rounded-xl bg-white shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+            <h3 class="text-sm font-bold text-slate-800">계획서 업로드 설정</h3>
+            <button @click="isUploadPopupOpen = false" class="rounded-lg p-1 hover:bg-slate-100">
+              <X class="h-4 w-4 text-slate-400" />
+            </button>
+          </div>
+
+          <div class="space-y-5 p-6">
+            <div class="space-y-2">
+              <label class="text-[11px] font-bold text-slate-500">공종 선택</label>
+              <select
+                v-model="uploadModalTrade"
+                class="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-flare-500 focus:outline-none"
+              >
+                <option v-for="trade in mainTrades" :key="trade" :value="trade">{{ trade }}</option>
+              </select>
+            </div>
+
+            <div class="space-y-2">
+              <label class="text-[11px] font-bold text-slate-500">계획 종류</label>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  @click="uploadModalType = '연간'"
+                  :class="
+                    uploadModalType === '연간'
+                      ? 'border-flare-500 bg-flare-50 text-flare-700'
+                      : 'border-slate-200 bg-white text-slate-600'
+                  "
+                  class="rounded-lg border py-3 text-xs font-semibold transition-all"
+                >
+                  연간 계획서
+                </button>
+                <button
+                  @click="uploadModalType = '월간'"
+                  :class="
+                    uploadModalType === '월간'
+                      ? 'border-flare-500 bg-flare-50 text-flare-700'
+                      : 'border-slate-200 bg-white text-slate-600'
+                  "
+                  class="rounded-lg border py-3 text-xs font-semibold transition-all"
+                >
+                  월간 계획서
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-slate-50 px-6 py-4">
+            <button
+              @click="triggerFileUpload"
+              class="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 py-3 text-xs font-bold text-white hover:bg-slate-800"
+            >
+              계획서 업로드 <ArrowRight class="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
       </div>

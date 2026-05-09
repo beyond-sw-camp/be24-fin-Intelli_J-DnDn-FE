@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import {
   Upload,
   Search,
@@ -38,11 +38,10 @@ const L = {
   statTotal: '전체 문서',
   statHq: '본사 문서',
   statPartner: '협력사 문서',
-  statPending: '검토 대기',
   unit: '건',
 
   searchPh: '문서코드, 파일명, 협력사명 검색',
-  excel: '엑셀 다운로드',
+  excel: '종합 공사일보 PDF 다운로드',
   upload: '문서 업로드',
   filterLabel: '유형 필터',
   resetFilter: '필터 초기화',
@@ -59,7 +58,6 @@ const L = {
   colDocType: '문서 유형',
   colFileName: '파일명',
   colOrigin: '작성 주체',
-  colDocDate: '문서 일자',
   colUploadDate: '업로드 일자',
   colUploader: '업로드자',
   colStatus: '상태',
@@ -71,7 +69,6 @@ const L = {
   originPartner: '협력사',
 
   statusApproved: '승인',
-  statusPending: '검토 대기',
   statusRejected: '반려',
   statusDraft: '임시저장',
 
@@ -79,7 +76,6 @@ const L = {
 
   drawerTitle: '문서 업로드',
   labelDocType: '문서 유형 *',
-  labelDocDate: '문서 일자 *',
   labelOrigin: '작성 주체 *',
   labelPartnerName: '협력사명 *',
   labelPartnerSelect: '협력사를 선택하세요',
@@ -98,11 +94,6 @@ const L = {
 
 /* ───── 문서 유형 목록 ───── */
 const docTypes = [
-  L.tabWorkInstruction,
-  L.tabDailyReport,
-  L.tabMasterSchedule,
-  L.tabMilestone,
-  L.tabSubSchedule,
   L.tabConstructionPlan,
 ]
 
@@ -129,6 +120,7 @@ const partnerList = [
 
 /* ───── 문서 목록 (DB에서 로드) ───── */
 const documents = ref([])
+const pinnedDocuments = ref([])   // 고정 영역 데이터
 
 /* ═══════════════════════════════════════════════════════════════
  * 백엔드 → 프론트 필드 매핑
@@ -146,29 +138,35 @@ const DOC_TYPE_MAP = {
 }
 
 function mapApiToFront(apiDoc) {
+  // DTO 필드: fileName → 파일명 추출
   const fileName = apiDoc.fileName || ''
   const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : ''
-  const createdAt = apiDoc.createAt || apiDoc.createdAt || ''
-  const dateOnly = createdAt ? createdAt.substring(0, 10) : ''
 
-  // origin이 없으면 'hq'를 기본값으로 (백엔드에서 오면 그 값 그대로)
-  const origin = apiDoc.origin ?? 'hq'
+  // DTO 필드: createAt → 업로드 일자 (YYYY-MM-DD 형식으로 변환)
+  const createAt = apiDoc.createAt || ''
+  const uploadDate = createAt ? createAt.substring(0, 10) : ''
+
+  // DTO 필드: isPartner (true: 협력사, false: 본사) → origin 변환
+  const isPartner = apiDoc.isPartner ?? false
+  const origin = isPartner ? 'partner' : 'hq'
+
+  // DTO 필드: affiliationName → partnerName (협력사일 때만)
+  const affiliationName = apiDoc.affiliationName || ''
+  const partnerName = isPartner ? affiliationName : null
 
   return {
-    id:          apiDoc.idx        ?? apiDoc.id       ?? Date.now(),
-    docCode:     apiDoc.docCode    ?? '',
+    id:          apiDoc.idx        ?? Date.now(),
+    docCode:     '',  // DTO에 없음 - 백엔드에서 추가 예정이면 여기 수정
     docType:     DOC_TYPE_MAP[apiDoc.docType] ?? apiDoc.docType ?? '',
     fileName:    fileName,
     fileExt:     ext,
-    fileUrl:     apiDoc.fileUrl    ?? '',
+    fileUrl:     '',  // DTO에 없음 - 필요하면 백엔드에서 추가
     origin:      origin,
-    partnerName: apiDoc.partnerName ?? null,
-    docDate:     apiDoc.docDate    ?? dateOnly,
-    uploadDate:  apiDoc.uploadDate ?? dateOnly,
-    uploader:    apiDoc.uploader   ?? '',
-    status:      apiDoc.status     ?? '검토 대기',   // ← 없으면 '검토 대기' 기본값
-    version:     apiDoc.version    ?? '',
-    fileSize:    apiDoc.fileSize   ?? '',
+    partnerName: partnerName,
+    uploadDate:  uploadDate,
+    uploader:    apiDoc.name       ?? '',  // DTO 필드: name → 업로드자
+    version:     'v1.0',       // DTO에 없으므로 기본값
+    fileSize:    '',           // DTO에 없으므로 비워둠
   }
 }
 
@@ -186,15 +184,25 @@ async function fetchDocuments() {
   isLoading.value = true
   apiError.value = ''
   try {
-    const res = await fetch(`${API_BASE}/document-management/1`)
+    // 백엔드는 page를 0부터 시작 → currentPage(1부터) - 1
+    const page = currentPage.value - 1
+    const size = rowsPerPage.value
+
+    const res = await fetch(
+        `${API_BASE}/document-management/${currentProjectId.value}?page=${page}&size=${size}`
+    )
     const json = await res.json()
     console.log('[API 응답]', json)
 
     if (json.success && json.data) {
-      const list = Array.isArray(json.data) ? json.data : [json.data]
-      documents.value = mapApiListToFront(list)
+      // 페이징 응답: { content: [...], totalElements, totalPages, ... }
+      documents.value = mapApiListToFront(json.data.content)
+      totalElementsFromServer.value = json.data.totalElements
+      totalPagesFromServer.value = json.data.totalPages
     } else {
       documents.value = []
+      totalElementsFromServer.value = 0
+      totalPagesFromServer.value = 0
     }
   } catch (e) {
     apiError.value = '서버 연결 실패 — 데이터를 불러올 수 없습니다.'
@@ -205,8 +213,29 @@ async function fetchDocuments() {
   }
 }
 
+// 고정 영역(공정표 현황) 데이터 가져오기
+async function fetchPinnedSchedules() {
+  try {
+    const res = await fetch(
+        `${API_BASE}/document-management/${currentProjectId.value}/pinned`
+    )
+    const json = await res.json()
+    console.log('[고정 영역 응답]', json)
+
+    if (json.success && json.data) {
+      pinnedDocuments.value = mapApiListToFront(json.data)
+    } else {
+      pinnedDocuments.value = []
+    }
+  } catch (e) {
+    console.warn('[Pinned] API fetch failed:', e)
+    pinnedDocuments.value = []
+  }
+}
+
 onMounted(() => {
   fetchDocuments()
+  fetchPinnedSchedules()
 })
 
 /* ───── 상태 관리 ───── */
@@ -217,8 +246,18 @@ const isSubmitting = ref(false)
 const selectedRows = ref(new Set())
 const sortField = ref('uploadDate')
 const sortDir = ref('desc')
+
 const currentPage = ref(1)
 const rowsPerPage = ref(10)
+const totalElementsFromServer = ref(0)
+const totalPagesFromServer = ref(0)
+
+
+// 페이지 또는 페이지당 개수 변경 시 다시 불러오기
+watch([currentPage, rowsPerPage], () => {
+  fetchDocuments()
+})
+
 
 // 공정표 3종: 위쪽 고정 섹션에만 표시, 아래 테이블 탭에서는 제외
 const SCHEDULE_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
@@ -229,7 +268,6 @@ const tabs = [L.tabAll, ...TABLE_DOC_TYPES]
 /* ───── 새 문서 업로드 폼 ───── */
 const newDoc = ref({
   docType: '',
-  docDate: '',
   origin: 'hq',
   partnerName: '',
   version: 'v1.0',
@@ -243,7 +281,6 @@ const summary = computed(() => ({
   total: documents.value.length,
   hq: documents.value.filter((d) => d.origin === 'hq').length,
   partner: documents.value.filter((d) => d.origin === 'partner').length,
-  pending: documents.value.filter((d) => d.status === '검토 대기').length,
 }))
 
 /* ───── 아래 테이블 전용: 공정표 3종 제외 ───── */
@@ -279,6 +316,11 @@ const filteredDocuments = computed(() => {
     })
   }
 
+  // 협력사 필터 (공종별 시공계획서 탭에서만)
+  if (showPartnerFilter.value && partnerFilter.value) {
+    result = result.filter((d) => d.partnerName === partnerFilter.value)
+  }
+
   result.sort((a, b) => {
     const aVal = a[sortField.value] || ''
     const bVal = b[sortField.value] || ''
@@ -289,15 +331,16 @@ const filteredDocuments = computed(() => {
   return result
 })
 
-/* ───── 페이지네이션 ───── */
-const totalPages = computed(() => Math.ceil(filteredDocuments.value.length / rowsPerPage.value))
-const paginatedDocuments = computed(() => {
-  const start = (currentPage.value - 1) * rowsPerPage.value
-  return filteredDocuments.value.slice(start, start + rowsPerPage.value)
-})
-const pageStart = computed(() => (currentPage.value - 1) * rowsPerPage.value + 1)
+/* ───── 페이지네이션 (서버 페이징 기준) ───── */
+const totalPages = computed(() => totalPagesFromServer.value)
+const paginatedDocuments = computed(() => filteredDocuments.value)  // 그대로 사용 (서버에서 이미 잘라옴)
+const pageStart = computed(() =>
+    totalElementsFromServer.value === 0
+        ? 0
+        : (currentPage.value - 1) * rowsPerPage.value + 1
+)
 const pageEnd = computed(() =>
-    Math.min(currentPage.value * rowsPerPage.value, filteredDocuments.value.length),
+    Math.min(currentPage.value * rowsPerPage.value, totalElementsFromServer.value)
 )
 
 /* ───── 핸들러 ───── */
@@ -353,8 +396,19 @@ const onDocTypeChange = () => {
   }
 }
 
-const submitUpload = () => {
-  if (!newDoc.value.docType || !newDoc.value.docDate || !newDoc.value.file) {
+/* ── 프론트 라벨 → 백엔드 enum 역매핑 ── */
+const DOC_TYPE_REVERSE_MAP = {
+  '마스터 공정표':       'MASTER',
+  '마일스톤 공정표':     'MILESTONE',
+  '보할 공정표':         'WEIGHT',
+  '공종별 시공계획서':   'TRADE_PLAN',
+}
+
+/* ───── 현재 프로젝트 ID (실제로는 라우터 파라미터나 store에서 가져올 것) ───── */
+const currentProjectId = ref(1)   // TODO: 실제 프로젝트 ID로 교체
+
+const submitUpload = async () => {
+  if (!newDoc.value.docType || !newDoc.value.file) {
     alert(L.alertFields)
     return
   }
@@ -364,42 +418,58 @@ const submitUpload = () => {
   }
 
   isSubmitting.value = true
-  setTimeout(() => {
-    const prefixMap = {
-      [L.tabWorkInstruction]:  'WI',
-      [L.tabDailyReport]:      'DR',
-      [L.tabMasterSchedule]:   'MS',
-      [L.tabMilestone]:        'ML',
-      [L.tabSubSchedule]:      'SS',
-      [L.tabConstructionPlan]: 'TP',
-    }
-    const prefix = prefixMap[newDoc.value.docType] || 'DC'
-    const dateStr = newDoc.value.docDate.replace(/-/g, '').substring(2)
-    const seq = String(documents.value.length + 1).padStart(3, '0')
 
-    documents.value.unshift({
-      id: Date.now(),
-      docCode: `${prefix}-${newDoc.value.docDate.substring(0, 4)}-${dateStr.substring(2)}-${seq}`,
-      docType: newDoc.value.docType,
-      fileName: newDoc.value.fileName,
-      fileExt: newDoc.value.fileName.split('.').pop().toLowerCase(),
-      origin: newDoc.value.origin,
-      partnerName: newDoc.value.origin === 'partner' ? newDoc.value.partnerName : null,
-      docDate: newDoc.value.docDate,
-      uploadDate: new Date().toISOString().substring(0, 10),
-      uploader: '김현장',
-      status: '검토 대기',
-      version: newDoc.value.version || 'v1.0',
-      fileSize: `${(Math.random() * 9 + 1).toFixed(1)} MB`,
+  try {
+    const formData = new FormData()
+
+    // ★ 추가: projectId (백엔드 필수 파라미터)
+    formData.append('projectId', currentProjectId.value)
+
+    // file: 파일
+    formData.append('file', newDoc.value.file)
+
+    // docType: MASTER, MILESTONE, WEIGHT, TRADE_PLAN
+    formData.append('docType', DOC_TYPE_REVERSE_MAP[newDoc.value.docType] || newDoc.value.docType)
+
+    // isPartner: true(협력사) / false(본사)
+    formData.append('isPartner', newDoc.value.origin === 'partner')
+
+    // affiliationName: 본사 or 협력사명
+    const affiliationName = newDoc.value.origin === 'hq' ? '본사' : newDoc.value.partnerName
+    formData.append('affiliationName', affiliationName)
+
+    // name: 작성자 이름 (추후 로그인 정보에서 가져올 것)
+    formData.append('name', '김현장')
+
+    // ※ docName 제거: 백엔드는 file.getOriginalFilename()으로 자동 추출
+
+    const res = await fetch(`${API_BASE}/document-management/upload`, {
+      method: 'POST',
+      body: formData,
+      // ※ Content-Type 은 직접 설정하지 않습니다.
+      //    FormData 사용 시 브라우저가 boundary 까지 포함해 자동으로 설정해줍니다.
     })
 
-    isSubmitting.value = false
+    const json = await res.json()
+
+    if (!res.ok || !json.success) {
+      // 백엔드의 친절한 에러 메시지 표시
+      throw new Error(json.message || `업로드 실패: ${res.status}`)
+    }
+
+    console.log('[업로드 응답]', json)
+
+    // 업로드 성공 후 1페이지로 이동 + 목록 새로고침
+    currentPage.value = 1
+    await fetchDocuments()
+    await fetchPinnedSchedules()
+
     showUploadDrawer.value = false
     alert(L.alertOk)
 
+    // 폼 초기화
     newDoc.value = {
       docType: '',
-      docDate: '',
       origin: 'hq',
       partnerName: '',
       version: 'v1.0',
@@ -407,7 +477,41 @@ const submitUpload = () => {
       file: null,
       fileName: '',
     }
-  }, 800)
+  } catch (e) {
+    console.error('[업로드 오류]', e)
+    alert(`업로드 중 오류가 발생했습니다.\n${e.message}`)
+  } finally {
+    isSubmitting.value = false
+  }
+}
+
+/* ───── 파일 다운로드 ───── */
+const downloadFile = async (id, fileName) => {
+  try {
+    const res = await fetch(`${API_BASE}/document-management/download/${id}`)
+
+    if (!res.ok) {
+      throw new Error(`다운로드 실패: ${res.status}`)
+    }
+
+    // 응답을 Blob(바이너리)으로 받기
+    const blob = await res.blob()
+
+    // 임시 다운로드 링크 생성 후 자동 클릭
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName || 'download'
+    document.body.appendChild(a)
+    a.click()
+
+    // 정리
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+  } catch (e) {
+    console.error('[다운로드 오류]', e)
+    alert(`다운로드 중 오류가 발생했습니다.\n${e.message}`)
+  }
 }
 
 /* ───── 날짜 필터 (작업지시서·작업일보 탭 전용) ───── */
@@ -416,6 +520,15 @@ const dateFilterEnd = ref('')
 
 const DATE_FILTER_TABS = [L.tabWorkInstruction, L.tabDailyReport]
 const showDateFilter = computed(() => DATE_FILTER_TABS.includes(currentTab.value))
+
+/* ───── 협력사 필터 (공종별 시공계획서 탭 전용) ───── */
+const partnerFilter = ref('')
+const showPartnerFilter = computed(() => currentTab.value === L.tabConstructionPlan)
+
+const clearPartnerFilter = () => {
+  partnerFilter.value = ''
+  currentPage.value = 1
+}
 
 const applyQuickDate = (preset) => {
   const today = new Date()
@@ -480,7 +593,7 @@ const PINNED_TYPES = [L.tabMasterSchedule, L.tabMilestone, L.tabSubSchedule]
 
 const pinnedSchedules = computed(() =>
     PINNED_TYPES.map((type) => {
-      const latest = documents.value
+      const latest = pinnedDocuments.value
           .filter((d) => d.docType === type)
           .sort((a, b) => (b.docDate > a.docDate ? 1 : -1))[0] ?? null
       return { type, doc: latest }
@@ -493,7 +606,6 @@ const pinnedSchedules = computed(() =>
 const pinnedStatusClass = (status) => {
   if (!status) return ''
   if (status === '승인')      return 'text-emerald-600 bg-emerald-50 ring-1 ring-emerald-200/80'
-  if (status === '검토 대기') return 'text-amber-600 bg-amber-50 ring-1 ring-amber-200/80'
   if (status === '반려')      return 'text-rose-600 bg-rose-50 ring-1 ring-rose-200/80'
   return 'text-slate-500 bg-slate-50 ring-1 ring-slate-200/80'
 }
@@ -525,8 +637,6 @@ const fileIconColor = (ext) => {
 const statusBadge = (status) => {
   if (status === '승인')
     return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80'
-  if (status === '검토 대기')
-    return 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/80'
   if (status === '반려')
     return 'bg-rose-50 text-rose-700 ring-1 ring-rose-200/80'
   return 'bg-slate-100 text-slate-600 ring-1 ring-slate-200/80'
@@ -534,7 +644,6 @@ const statusBadge = (status) => {
 
 const statusIcon = (status) => {
   if (status === '승인') return CircleCheck
-  if (status === '검토 대기') return Clock
   if (status === '반려') return AlertTriangle
   return File
 }
@@ -587,7 +696,7 @@ const docTypeBadgeClass = (type) => {
     </div>
 
     <!-- ═══ 통계 카드 ═══ -->
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 ">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ">
       <!-- 전체 -->
       <article
           class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
@@ -644,23 +753,6 @@ const docTypeBadgeClass = (type) => {
           <span class="text-sm font-medium text-slate-400">{{ L.unit }}</span>
         </div>
       </article>
-
-      <!-- 검토 대기 -->
-      <article
-          class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-amber-100/80 bg-gradient-to-br from-amber-50/80 to-white/90 p-5 shadow-card"
-      >
-        <div class="absolute right-0 top-0 h-24 w-24 rounded-bl-full bg-amber-200/20" />
-        <div class="relative z-10 flex items-start justify-between">
-          <h3 class="text-sm font-semibold text-amber-900">{{ L.statPending }}</h3>
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
-            <Clock class="h-4 w-4" />
-          </span>
-        </div>
-        <div class="relative z-10 flex items-baseline gap-1">
-          <span class="text-3xl font-light tabular-nums text-forena-900">{{ summary.pending }}</span>
-          <span class="text-sm font-medium text-slate-400">{{ L.unit }}</span>
-        </div>
-      </article>
     </div>
 
     <!-- ═══ 고정 공정표 섹션 ═══ -->
@@ -673,35 +765,35 @@ const docTypeBadgeClass = (type) => {
         <span class="text-[11px] text-slate-400">— 유형별 최신 1건 고정</span>
       </div>
       <!-- 리스트 헤더 -->
-      <div class="grid grid-cols-[180px_1fr_130px_110px_110px_72px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
-        <span>문서 유형</span>
-        <span>파일명</span>
-        <span>문서 코드</span>
-        <span>문서 일자</span>
-        <span>업로드 일자</span>
+      <div class="grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">
+        <span class="text-left">문서 유형</span>
+        <span class="text-left">파일명</span>
+        <span class="text-center">문서 코드</span>
+        <span class="text-center">업로드 일자</span>
         <span class="text-center">액션</span>
       </div>
+
       <!-- 리스트 행 -->
       <div
           v-for="item in pinnedSchedules"
           :key="item.type"
-          class="group grid grid-cols-[180px_1fr_130px_110px_110px_72px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
+          class="group grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
       >
         <!-- 문서 유형 -->
-        <div class="flex items-center gap-2">
-          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-forena-50 text-forena-500">
+        <div class="flex items-center gap-2 text-left">
+          <span class="flex h-6 w-6 shrink-0 items-center text-center justify-center rounded-lg bg-forena-50 text-forena-500">
             <FileText class="h-3.5 w-3.5" />
           </span>
           <span class="text-xs font-bold text-forena-800">{{ item.type }}</span>
         </div>
 
         <!-- 파일명 (없을 때) -->
-        <div v-if="!item.doc" class="flex items-center gap-1.5 text-[11px] text-slate-400">
+        <div v-if="!item.doc" class="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
           <span class="italic">등록된 문서 없음</span>
         </div>
 
         <!-- 파일명 (있을 때) -->
-        <div v-else class="flex min-w-0 items-center gap-2 pr-4">
+        <div v-else class="flex min-w-0 items-center  gap-2 pr-4">
           <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md" :class="fileIconColor(item.doc.fileExt)">
             <component :is="fileIcon(item.doc.fileExt)" class="h-3 w-3" />
           </span>
@@ -712,24 +804,22 @@ const docTypeBadgeClass = (type) => {
         </div>
 
         <!-- 문서 코드 -->
-        <span class="font-mono text-[11px] font-semibold text-forena-600">{{ item.doc?.docCode ?? '—' }}</span>
-
-        <!-- 문서 일자 -->
-        <span class="text-xs text-slate-600">{{ item.doc ? formatDate(item.doc.docDate) : '—' }}</span>
+        <span class="text-center font-mono text-[11px] font-semibold text-forena-600">{{ item.doc?.docCode ?? '—' }}</span>
 
         <!-- 업로드 일자 -->
-        <span class="text-xs text-slate-500">{{ item.doc ? formatDate(item.doc.uploadDate) : '—' }}</span>
+        <span class="text-center text-xs text-slate-500">{{ item.doc ? formatDate(item.doc.uploadDate) : '—' }}</span>
 
         <!-- 액션 -->
         <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
-          <button v-if="item.doc" type="button"
-                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-flare-700" title="다운로드">
-            <Download class="h-3.5 w-3.5" />
-          </button>
           <button type="button"
                   class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
                   title="목록 보기" @click="jumpToTab(item.type)">
-            <Eye class="h-3.5 w-3.5" />
+            <Eye class="h-5 w-5" />
+          </button>
+          <button v-if="item.doc" type="button"
+                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700" title="다운로드"
+                  @click="downloadFile(item.doc.id, item.doc.fileName)">
+            <Download class="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -740,7 +830,7 @@ const docTypeBadgeClass = (type) => {
         class="relative overflow-hidden rounded-2xl border border-white/90 bg-white/90 shadow-card backdrop-blur-sm"
     >
       <div
-          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 to-flare-400 opacity-90"
+          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 text-center to-flare-400 opacity-90"
       />
 
       <!-- 검색 + 필터 바 -->
@@ -785,7 +875,7 @@ const docTypeBadgeClass = (type) => {
               ? 'bg-forena-500 text-white shadow-sm'
               : 'text-slate-500 hover:bg-forena-50 hover:text-forena-700'
           "
-            @click="currentTab = tab; currentPage = 1; clearDateFilter()"
+            @click="currentTab = tab; currentPage = 1; clearDateFilter(); clearPartnerFilter()"
         >
           {{ tab }}
         </button>
@@ -857,12 +947,38 @@ const docTypeBadgeClass = (type) => {
         </button>
       </div>
 
+      <!-- 협력사 필터 (공종별 시공계획서 탭 전용) -->
+      <div
+          v-if="showPartnerFilter"
+          class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
+      >
+        <Handshake class="h-3.5 w-3.5 shrink-0 text-forena-400" />
+        <span class="text-[11px] font-bold text-forena-500 shrink-0">협력사 필터</span>
+        <select
+            v-model="partnerFilter"
+            class="rounded-lg border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+            @change="currentPage = 1"
+        >
+          <option value="">전체</option>
+          <option v-for="pn in partnerList" :key="pn" :value="pn">{{ pn }}</option>
+        </select>
+        <button
+            v-if="partnerFilter"
+            type="button"
+            class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
+            @click="clearPartnerFilter"
+        >
+          <X class="h-3 w-3" />
+          초기화
+        </button>
+      </div>
+
       <!-- 테이블 -->
       <div class="overflow-x-auto">
         <table class="w-full min-w-[960px] text-left text-sm whitespace-nowrap">
           <thead class="border-b border-forena-100 bg-forena-50/60 text-[11px] font-bold uppercase tracking-wider text-forena-500">
           <tr>
-            <th class="w-10 px-4 py-3.5">
+            <th class="w-10 px-4 py-3.5 items-center text-center">
               <input
                   type="checkbox"
                   class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
@@ -871,36 +987,27 @@ const docTypeBadgeClass = (type) => {
               />
             </th>
             <th
-                class="cursor-pointer px-4 py-3.5 font-semibold select-none"
+                class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
                 @click="toggleSort('docCode')"
             >
-                <span class="flex items-center gap-1">
+                <span class="flex items-center justify-center gap-1">
                   {{ L.colDocCode }}
                   <ArrowUpDown class="h-3 w-3 text-slate-400" />
                 </span>
             </th>
-            <th class="px-4 py-3.5 font-semibold">{{ L.colDocType }}</th>
-            <th class="px-4 py-3.5 font-semibold">{{ L.colFileName }}</th>
-            <th class="px-4 py-3.5 font-semibold">{{ L.colOrigin }}</th>
+            <th class="px-4 py-3.5 font-semibold text-center">{{ L.colDocType }}</th>
+            <th class="px-4 py-3.5 font-semibold text-left">{{ L.colFileName }}</th>
+            <th class="px-4 py-3.5 font-semibold text-left">{{ L.colOrigin }}</th>
             <th
-                class="cursor-pointer px-4 py-3.5 font-semibold select-none"
-                @click="toggleSort('docDate')"
-            >
-                <span class="flex items-center gap-1">
-                  {{ L.colDocDate }}
-                  <ArrowUpDown class="h-3 w-3 text-slate-400" />
-                </span>
-            </th>
-            <th
-                class="cursor-pointer px-4 py-3.5 font-semibold select-none"
+                class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
                 @click="toggleSort('uploadDate')"
             >
-                <span class="flex items-center gap-1">
+                <span class="flex items-center justify-center gap-1">
                   {{ L.colUploadDate }}
                   <ArrowUpDown class="h-3 w-3 text-slate-400" />
                 </span>
             </th>
-            <th class="px-4 py-3.5 font-semibold">{{ L.colUploader }}</th>
+            <th class="px-4 py-3.5 font-semibold text-center">{{ L.colUploader }}</th>
             <th class="w-20 px-4 py-3.5 text-center font-semibold">{{ L.colActions }}</th>
           </tr>
           </thead>
@@ -918,7 +1025,7 @@ const docTypeBadgeClass = (type) => {
               :class="{ 'bg-forena-50/30': selectedRows.has(doc.id) }"
           >
             <!-- 체크 -->
-            <td class="px-4 py-3.5">
+            <td class="px-4 py-3.5 text-center">
               <input
                   type="checkbox"
                   class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
@@ -928,12 +1035,12 @@ const docTypeBadgeClass = (type) => {
             </td>
 
             <!-- 문서 코드 -->
-            <td class="px-4 py-3.5">
+            <td class="px-4 py-3.5 text-center">
               <span class="font-mono text-xs font-semibold text-forena-700">{{ doc.docCode }}</span>
             </td>
 
             <!-- 문서 유형 -->
-            <td class="px-4 py-3.5">
+            <td class="px-4 py-3.5 text-center">
                 <span
                     class="inline-flex rounded-lg px-2 py-0.5 text-[11px] font-bold ring-1"
                     :class="docTypeBadgeClass(doc.docType)"
@@ -976,18 +1083,13 @@ const docTypeBadgeClass = (type) => {
               </div>
             </td>
 
-            <!-- 문서 일자 -->
-            <td class="px-4 py-3.5 text-xs text-slate-600">
-              {{ formatDate(doc.docDate) }}
-            </td>
-
             <!-- 업로드 일자 -->
-            <td class="px-4 py-3.5 text-xs text-slate-500">
+            <td class="px-4 py-3.5 text-center text-xs text-slate-500">
               {{ formatDate(doc.uploadDate) }}
             </td>
 
             <!-- 업로드자 -->
-            <td class="px-4 py-3.5 text-xs text-slate-600">{{ doc.uploader }}</td>
+            <td class="px-4 py-3.5 text-center text-xs text-slate-600">{{ doc.uploader }}</td>
 
             <!-- 액션 -->
             <td class="px-4 py-3.5 text-center">
@@ -997,14 +1099,15 @@ const docTypeBadgeClass = (type) => {
                     class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
                     title="미리보기"
                 >
-                  <Eye class="h-3.5 w-3.5" />
+                  <Eye class="h-5 w-5" />
                 </button>
                 <button
                     type="button"
-                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-flare-700"
+                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
                     title="다운로드"
+                    @click="downloadFile(doc.id, doc.fileName)"
                 >
-                  <Download class="h-3.5 w-3.5" />
+                  <Download class="h-5 w-5" />
                 </button>
               </div>
             </td>
@@ -1014,11 +1117,11 @@ const docTypeBadgeClass = (type) => {
       </div>
 
       <!-- 페이지네이션 -->
-      <div class="flex flex-col items-center justify-between gap-3 border-t border-forena-50 px-6 py-4 sm:flex-row">
+      <div class="flex flex-col items-center justify-between gap-3 border-t border-forena-50 px-6 py-2 sm:flex-row">
         <p class="text-xs text-slate-500">
           {{
             L.pageInfo
-                .replace('{total}', filteredDocuments.length)
+                .replace('{total}', totalElementsFromServer)
                 .replace('{start}', pageStart)
                 .replace('{end}', pageEnd)
           }}
@@ -1026,7 +1129,7 @@ const docTypeBadgeClass = (type) => {
         <div class="flex items-center gap-1">
           <button
               type="button"
-              class="rounded-lg border border-forena-200 p-2 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
               :disabled="currentPage <= 1"
               @click="currentPage--"
           >
@@ -1035,7 +1138,7 @@ const docTypeBadgeClass = (type) => {
           <template v-for="p in totalPages" :key="p">
             <button
                 type="button"
-                class="h-8 w-8 rounded-lg text-xs font-bold transition"
+                class="h-6 w-6 rounded-lg text-xs font-bold transition"
                 :class="
                 p === currentPage
                   ? 'bg-forena-500 text-white shadow-sm'
@@ -1048,7 +1151,7 @@ const docTypeBadgeClass = (type) => {
           </template>
           <button
               type="button"
-              class="rounded-lg border border-forena-200 p-2 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
               :disabled="currentPage >= totalPages"
               @click="currentPage++"
           >
@@ -1128,16 +1231,6 @@ const docTypeBadgeClass = (type) => {
               </select>
             </div>
 
-            <!-- 문서 일자 -->
-            <div>
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelDocDate }}</label>
-              <input
-                  v-model="newDoc.docDate"
-                  type="date"
-                  class="w-full rounded-xl border border-forena-200 px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              />
-            </div>
-
             <!-- 작성 주체 -->
             <div>
               <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelOrigin }}</label>
@@ -1188,16 +1281,7 @@ const docTypeBadgeClass = (type) => {
             </div>
 
             <!-- 버전 + 비고 -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelVersion }}</label>
-                <input
-                    v-model="newDoc.version"
-                    type="text"
-                    placeholder="v1.0"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                />
-              </div>
+            <div>
               <div>
                 <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelMemo }}</label>
                 <input
