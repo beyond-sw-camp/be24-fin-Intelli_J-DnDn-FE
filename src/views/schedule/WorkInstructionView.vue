@@ -498,6 +498,76 @@ function cloneOrder(o) {
   }
 }
 
+const DEFAULT_WORK_TIME = '07:00 ~ 17:00'
+const DEFAULT_SAFETY_TEXT =
+  '추락/낙하/화재 등 위험요인 사전 점검 및 안전조치 철저. (지시서 및 일일 TBM 준수)'
+
+const WORK_TIME_SECTION_LABELS = ['작업시간', '작업 시간', '?묒뾽?쒓컙']
+const SAFETY_SECTION_LABELS = ['안전사항', '안전 사항', '안전 유의사항', '?덉쟾?ы빆']
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function sectionPattern(labels) {
+  return labels.map(escapeRegExp).join('|')
+}
+
+function parseInstructionContent(content = '') {
+  const text = String(content || '').replace(/\r\n/g, '\n').trim()
+  const workTimePattern = sectionPattern(WORK_TIME_SECTION_LABELS)
+  const safetyPattern = sectionPattern(SAFETY_SECTION_LABELS)
+  const workTimeMatch = text.match(
+    new RegExp(
+      `\\[\\s*(?:${workTimePattern})\\s*\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[\\s*(?:${safetyPattern})\\s*\\]|$)`,
+    ),
+  )
+  const safetyMatch = text.match(
+    new RegExp(`\\[\\s*(?:${safetyPattern})\\s*\\]\\s*([\\s\\S]*)$`),
+  )
+  const metaIndexes = [workTimeMatch?.index, safetyMatch?.index].filter(
+    (index) => Number.isInteger(index) && index >= 0,
+  )
+  const workDetail = metaIndexes.length ? text.slice(0, Math.min(...metaIndexes)).trim() : text
+
+  return {
+    workDetail,
+    workTime: workTimeMatch?.[1]?.trim() || '',
+    safety: safetyMatch?.[1]?.trim() || '',
+  }
+}
+
+function buildInstructionFields(order) {
+  const parsed = parseInstructionContent(order.workDetail)
+  const workDetail = parsed.workDetail || String(order.workDetail || '').trim()
+  const safety = String(order.safety || parsed.safety || DEFAULT_SAFETY_TEXT).trim()
+
+  return {
+    instructionContent: workDetail,
+    workDetail,
+    workTime: order.workTime,
+    safetyContent: safety,
+  }
+}
+
+function resolveWorkPlanWorkTime(plan) {
+  if (plan?.workTime) return plan.workTime
+
+  const note = String(plan?.note || '')
+  const timeRange = '(\\d{1,2}:\\d{2})\\s*[~～]\\s*(\\d{1,2}:\\d{2})'
+  const label = '(?:작업\\s*시간|작업시간)'
+  const changed = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}\\s*(?:->|→)\\s*${timeRange}`))
+  if (changed) return `${changed[3]} ~ ${changed[4]}`
+
+  const bracket = note.match(new RegExp(`\\[${label}\\]\\s*${timeRange}`))
+  if (bracket) return `${bracket[1]} ~ ${bracket[2]}`
+
+  const labeled = note.match(new RegExp(`${label}\\s*:?\\s*${timeRange}`))
+  if (labeled) return `${labeled[1]} ~ ${labeled[2]}`
+
+  return DEFAULT_WORK_TIME
+}
+
 // 🔥 수정된 작업 리스트 먼저 불러오는 함수
 async function openCreate() {
   const targetDate = filterDate.value
@@ -547,14 +617,16 @@ async function selectTaskForOrder(task) {
   editing.value.workPlanId = task.idx || task.id
   editing.value.location = task.location || ''
   editing.value.workers = task.requiredCount || 0
-  editing.value.workTime = '07:00 ~ 17:00'
+  editing.value.workTime = resolveWorkPlanWorkTime(task)
   editing.value.workDetail = task.name + (task.note ? '\n' + task.note : '')
+  editing.value.safety = DEFAULT_SAFETY_TEXT
 
   draftAutoFilled.value = {
     location: true,
     workTime: true,
     workers: true,
     workDetail: true,
+    safety: true,
     equipment: true,
   }
 
@@ -716,6 +788,8 @@ async function submitOrder() {
     equipments: equipmentList,
   }
 
+  Object.assign(requestPayload, buildInstructionFields(r))
+
   try {
     if (isNew.value) {
       requestPayload.statusCode = 'OPEN'
@@ -802,6 +876,7 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
           }
         }),
       }
+      Object.assign(requestPayload, buildInstructionFields(order))
       await updateWorkOrder(rawId, requestPayload)
     }
 
@@ -893,6 +968,11 @@ async function fetchWorkOrders() {
         time = subParts[0] ? subParts[0].trim() : ''
         if (subParts.length > 1) safetyText = subParts[1].trim()
       }
+      const parsedContent = parseInstructionContent(dto.instructionContent || '')
+      detail = dto.workDetail || parsedContent.workDetail
+      time = dto.workTime || parsedContent.workTime || time
+      safetyText = dto.safetyContent || parsedContent.safety || safetyText
+
       return {
         id: `WO-${dto.idx}`,
         date: dto.dueDate,
