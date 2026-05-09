@@ -6,7 +6,25 @@ import { parseGanttJSON } from '@/utils/ganttParser.js'
 import { useGanttStore } from '@/stores/ganttStore.js'
 import { uploadAndExtractSchedule, updateTradeProcess } from '@/api/masterSchedule.js'
 import { buildGanttData, isTaskDirty, taskToReqBody } from '@/utils/scheduleMapper.js'
-const ganttStore = useGanttStore()
+import FirstDocumentUploadCards from '@/components/schedule/firstDocumentUpload/FirstDocumentUploadCards.vue'
+import FirstDocumentValidationModal from '@/components/schedule/firstDocumentUpload/FirstDocumentValidationModal.vue'
+import FirstDocumentGanttPreviewModal from '@/components/schedule/firstDocumentUpload/FirstDocumentGanttPreviewModal.vue'
+import {
+  BrainCircuit,
+  CheckCircle2,
+  FileSpreadsheet,
+  Flag,
+  Layers,
+  RefreshCw,
+  ChevronRight,
+  ArrowRight,
+  Info,
+  Trash2,
+  FileWarning,
+  Loader2,
+  BarChart3,
+  CalendarRange,
+} from 'lucide-vue-next'
 
 // =====================================================
 // Props
@@ -20,39 +38,7 @@ const props = defineProps({
   },
 })
 
-import {
-  Upload,
-  FileText,
-  BrainCircuit,
-  CheckCircle2,
-  AlertTriangle,
-  FileSpreadsheet,
-  Flag,
-  Layers,
-  X,
-  Eye,
-  Download,
-  RefreshCw,
-  ChevronRight,
-  ArrowRight,
-  Clock,
-  Users,
-  ShieldCheck,
-  Info,
-  FilePlus2,
-  Trash2,
-  FileWarning,
-  Loader2,
-  BarChart3,
-  Calendar,
-  AlertCircle,
-  CalendarRange,
-  ZoomIn,
-  ZoomOut,
-  Locate,
-  Diamond,
-  Pencil,
-} from 'lucide-vue-next'
+const ganttStore = useGanttStore()
 
 // =====================================================
 // 상수
@@ -127,7 +113,6 @@ const validationErrors = ref([])
 
 // 간트차트 미리보기 모달
 const ganttPreviewModal = ref(false)
-const ganttZoom = ref(1)
 
 // =====================================================
 // 헬퍼
@@ -275,31 +260,6 @@ async function runAnalysis(typeKey) {
         }
       },
     })
-
-    // 응답: TradeProcessDto.Res[] (axios 인터셉터가 BaseResponse.data 까서 반환)
-    // ─── 진단 로그 (보할 단위, 마일스톤 group 확인용) ─────────────
-    console.group(`[분석 결과 ${typeKey}]`)
-    console.log('총 행 수:', tradeProcesses.length)
-    console.log('첫 3건 샘플:', tradeProcesses.slice(0, 3))
-    console.log(
-      '마일스톤(isMilestone=true):',
-      tradeProcesses
-        .filter((r) => r.isMilestone)
-        .map((r) => ({
-          idx: r.idx,
-          tradeName: r.tradeName,
-          processName: r.processName,
-          plannedStart: r.plannedStart,
-          plannedEnd: r.plannedEnd,
-        })),
-    )
-    console.log(
-      'weightPct 분포:',
-      tradeProcesses.map((r) => r.weightPct).filter((v) => v != null),
-    )
-    console.log('tradeName 종류:', [...new Set(tradeProcesses.map((r) => r.tradeName))])
-    console.groupEnd()
-    // ────────────────────────────────────────────────────────────
 
     u.status = 'done'
     u.progress = 100
@@ -461,9 +421,6 @@ const ganttTasks = ref([])
 const ganttMilestones = ref([])
 const ganttProjectInfo = ref(null)
 
-// 인라인 편집 상태
-const editingTaskId = ref(null)
-const editDraft = ref(null)
 // 확정 시 일괄 저장 진행 중 플래그
 const savingChanges = ref(false)
 const saveError = ref('')
@@ -484,126 +441,6 @@ function rebuildGanttFromResults() {
   ganttProjectInfo.value = projectInfo
 }
 
-const projStart = computed(() => projectMeta.value.startDate || '2025-03-01')
-const projEnd = computed(() => projectMeta.value.endDate || '2026-09-30')
-const projTotalDays = computed(() => {
-  const a = new Date(projStart.value),
-    b = new Date(projEnd.value)
-  return Math.max(1, Math.round((b - a) / 86400000) + 1)
-})
-
-function dayOffset(dateStr) {
-  const a = new Date(projStart.value),
-    b = new Date(dateStr)
-  return Math.max(0, Math.round((b - a) / 86400000))
-}
-function rangeDays(s, e) {
-  return Math.max(1, Math.round((new Date(e) - new Date(s)) / 86400000) + 1)
-}
-
-const cellW = computed(() => 3 * ganttZoom.value)
-const ganttPxWidth = computed(() => projTotalDays.value * cellW.value)
-
-// 월별 헤더
-const ganttHeader = computed(() => {
-  const out = []
-  const a = new Date(projStart.value)
-  const last = new Date(projEnd.value)
-  let cur = new Date(a.getFullYear(), a.getMonth(), 1)
-  while (cur <= last) {
-    const next = new Date(cur.getFullYear(), cur.getMonth() + 1, 0)
-    const start = cur < a ? a : cur
-    const end = next > last ? last : next
-    out.push({
-      label: `${cur.getFullYear()}.${String(cur.getMonth() + 1).padStart(2, '0')}`,
-      days: Math.round((end - start) / 86400000) + 1,
-    })
-    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1)
-  }
-  return out
-})
-
-function barStyle(start, end) {
-  if (!start || !end) return null
-  const left = dayOffset(start) * cellW.value
-  const width = rangeDays(start, end) * cellW.value
-  return { left: `${left}px`, width: `${width - 2}px` }
-}
-
-const todayLineStyle = computed(() => {
-  const today = new Date().toISOString().slice(0, 10)
-  if (today < projStart.value || today > projEnd.value) return null
-  return { left: `${dayOffset(today) * cellW.value + cellW.value / 2}px` }
-})
-
-function milestoneFill(m) {
-  if (m.status === '완료') return '#10b981'
-  if (m.status === '지연 위험') return '#f43f5e'
-  return '#3b82f6'
-}
-function milestoneStroke(m) {
-  if (m.status === '완료') return '#047857'
-  if (m.status === '지연 위험') return '#be123c'
-  return '#1d4ed8'
-}
-
-const confidenceClass = (n) =>
-  n >= 90 ? 'text-emerald-600' : n >= 80 ? 'text-forena-600' : 'text-amber-600'
-
-// 그룹별 태스크 묶기
-const groupedGanttTasks = computed(() => {
-  const map = new Map()
-  for (const t of ganttTasks.value) {
-    if (!map.has(t.group)) map.set(t.group, [])
-    map.get(t.group).push(t)
-  }
-  return Array.from(map.entries()).map(([group, items]) => ({ group, items }))
-})
-
-// 변경된 항목 수 (확정 버튼 옆 표시용)
-const dirtyCount = computed(() => ganttTasks.value.filter(isTaskDirty).length)
-
-// =====================================================
-// 인라인 편집 (미리보기 모달 안에서)
-// =====================================================
-function startEdit(task) {
-  editingTaskId.value = task.id
-  editDraft.value = {
-    name: task.name,
-    group: task.group,
-    start: task.start,
-    end: task.end,
-    weight: task.weight,
-  }
-}
-
-function cancelEdit() {
-  editingTaskId.value = null
-  editDraft.value = null
-}
-
-function commitEdit(task) {
-  if (!editDraft.value) return
-  // 날짜 역전 방지
-  if (editDraft.value.start && editDraft.value.end && editDraft.value.start > editDraft.value.end) {
-    alert('종료일은 시작일보다 같거나 늦어야 합니다.')
-    return
-  }
-  task.name = editDraft.value.name?.trim() || task.name
-  task.group = editDraft.value.group?.trim() || task.group
-  task.start = editDraft.value.start
-  task.end = editDraft.value.end
-  // 보할 소수점 둘째자리 반올림 (mapper 정책과 일치)
-  const w = Number(editDraft.value.weight)
-  task.weight = Number.isFinite(w) ? Math.round(w * 100) / 100 : 0
-  task.reviewStatus = '검토 중'
-
-  cancelEdit()
-}
-
-// =====================================================
-// 확정 → 변경분 일괄 PUT → store 저장 → 라우팅
-// =====================================================
 async function confirmAndNavigate() {
   saveError.value = ''
 
@@ -671,13 +508,6 @@ async function confirmAndNavigate() {
   // 3) 라우팅
   ganttPreviewModal.value = false
   router.push('/site/schedule')
-}
-
-function zoomIn() {
-  ganttZoom.value = Math.min(2.0, +(ganttZoom.value + 0.2).toFixed(1))
-}
-function zoomOut() {
-  ganttZoom.value = Math.max(0.5, +(ganttZoom.value - 0.2).toFixed(1))
 }
 </script>
 
@@ -1036,273 +866,18 @@ function zoomOut() {
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- 문서 업로드 카드 4종                                            -->
-    <!-- ============================================================ -->
-    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-      <div
-        v-for="dt in DOC_TYPES"
-        :key="dt.key"
-        class="overflow-hidden rounded-2xl border bg-white/95 shadow-card flex flex-col transition"
-        :class="uploads[dt.key].fileName ? 'border-forena-100/90' : 'border-rose-200'"
-      >
-        <!-- 카드 헤더 -->
-        <div
-          class="flex items-center gap-2.5 border-b border-forena-100 px-4 py-3"
-          :class="colorMap[dt.color].bg"
-        >
-          <div
-            class="flex h-8 w-8 items-center justify-center rounded-xl"
-            :class="
-              dt.color === 'blue'
-                ? 'bg-sky-100'
-                : dt.color === 'amber'
-                  ? 'bg-amber-100'
-                  : dt.color === 'violet'
-                    ? 'bg-violet-100'
-                    : 'bg-emerald-100'
-            "
-          >
-            <FileSpreadsheet
-              v-if="dt.icon === 'spreadsheet'"
-              class="h-4 w-4"
-              :class="colorMap[dt.color].icon"
-            />
-            <Flag v-else-if="dt.icon === 'flag'" class="h-4 w-4" :class="colorMap[dt.color].icon" />
-            <Layers v-else class="h-4 w-4" :class="colorMap[dt.color].icon" />
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-1.5">
-              <p class="text-sm font-bold text-forena-900">{{ dt.label }}</p>
-              <span
-                v-if="dt.required"
-                class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
-                >필수</span
-              >
-              <span
-                v-else
-                class="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500"
-                >선택</span
-              >
-            </div>
-          </div>
-          <span
-            class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-            :class="getStatusClass(uploads[dt.key].status)"
-          >
-            {{ getStatusLabel(uploads[dt.key].status) }}
-          </span>
-        </div>
-
-        <div class="flex flex-1 flex-col p-4 gap-3">
-          <p class="text-[11px] leading-relaxed text-forena-500">{{ dt.desc }}</p>
-
-          <!-- 업로드 영역 -->
-          <div
-            v-if="!uploads[dt.key].fileName"
-            class="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-6 text-center transition cursor-pointer"
-            :class="colorMap[dt.color].dragBorder"
-            @dragover="onDragOver"
-            @drop="(e) => onDrop(dt.key, e)"
-          >
-            <Upload class="h-6 w-6 mb-1.5" :class="colorMap[dt.color].icon" />
-            <p class="text-xs font-semibold text-forena-700">파일을 끌어다 놓거나</p>
-            <label
-              class="mt-2 cursor-pointer rounded-lg px-3 py-1.5 text-[11px] font-bold text-white transition"
-              :class="
-                dt.color === 'blue'
-                  ? 'bg-sky-600 hover:bg-sky-700'
-                  : dt.color === 'amber'
-                    ? 'bg-amber-600 hover:bg-amber-700'
-                    : dt.color === 'violet'
-                      ? 'bg-violet-600 hover:bg-violet-700'
-                      : 'bg-emerald-600 hover:bg-emerald-700'
-              "
-            >
-              파일 선택
-              <input
-                type="file"
-                class="sr-only"
-                :accept="dt.acceptedFormats.join(',')"
-                @change="(e) => onFileSelect(dt.key, e)"
-              />
-            </label>
-            <p class="mt-2 text-[11px] text-forena-400">{{ dt.acceptedFormats.join(' · ') }}</p>
-          </div>
-
-          <!-- 파일 등록 후 -->
-          <div v-else class="rounded-xl border border-forena-100 bg-forena-50/30 p-3">
-            <div class="flex items-center gap-2 mb-2">
-              <FileText class="h-4 w-4 text-forena-500 shrink-0" />
-              <p class="flex-1 min-w-0 truncate text-xs font-semibold text-forena-800">
-                {{ uploads[dt.key].fileName }}
-              </p>
-              <button
-                @click="removeFile(dt.key)"
-                class="rounded p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-              >
-                <X class="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <!-- 프로그레스 바 -->
-            <div v-if="['uploading', 'analyzing'].includes(uploads[dt.key].status)" class="mb-2">
-              <div class="flex items-center justify-between mb-1 text-[10px] text-forena-500">
-                <span>{{
-                  uploads[dt.key].status === 'uploading' ? '업로드 중…' : 'AI 분석 중…'
-                }}</span>
-                <span class="tabular-nums font-bold"
-                  >{{ Math.round(uploads[dt.key].progress) }}%</span
-                >
-              </div>
-              <div class="h-1.5 overflow-hidden rounded-full bg-forena-100">
-                <div
-                  class="h-full rounded-full transition-all duration-300"
-                  :class="
-                    dt.color === 'blue'
-                      ? 'bg-sky-500'
-                      : dt.color === 'amber'
-                        ? 'bg-amber-500'
-                        : dt.color === 'violet'
-                          ? 'bg-violet-500'
-                          : 'bg-emerald-500'
-                  "
-                  :style="{ width: uploads[dt.key].progress + '%' }"
-                />
-              </div>
-            </div>
-
-            <!-- 완료 결과 요약 -->
-            <div
-              v-if="uploads[dt.key].status === 'done' && uploads[dt.key].result"
-              class="grid grid-cols-2 gap-1.5 text-[10px]"
-            >
-              <template v-if="dt.key === 'master'">
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">추출 작업</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.tasks }}건</p>
-                </div>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">CP 공정</p>
-                  <p class="font-bold text-rose-700">{{ uploads[dt.key].result.cpTasks }}건</p>
-                </div>
-                <div
-                  class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between"
-                >
-                  <span class="text-forena-400">AI 신뢰도</span>
-                  <span
-                    class="font-bold"
-                    :class="
-                      uploads[dt.key].result.confidence >= 90
-                        ? 'text-emerald-600'
-                        : 'text-amber-600'
-                    "
-                  >
-                    {{ uploads[dt.key].result.confidence }}%
-                  </span>
-                </div>
-              </template>
-              <template v-else-if="dt.key === 'milestone'">
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">마일스톤</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.milestones }}개</p>
-                </div>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">AI 신뢰도</p>
-                  <p class="font-bold text-emerald-600">{{ uploads[dt.key].result.confidence }}%</p>
-                </div>
-              </template>
-              <template v-else-if="dt.key === 'trade'">
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">공종 수</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.trades }}종</p>
-                </div>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">세부 작업</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.tasks }}건</p>
-                </div>
-                <div
-                  class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between"
-                >
-                  <span class="text-forena-400">AI 신뢰도</span>
-                  <span class="font-bold text-amber-600"
-                    >{{ uploads[dt.key].result.confidence }}%</span
-                  >
-                </div>
-              </template>
-              <template v-else-if="dt.key === 'bohal'">
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">추출 작업</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.tasks }}건</p>
-                </div>
-                <div class="rounded bg-white px-2 py-1 text-center">
-                  <p class="text-forena-400">공종 수</p>
-                  <p class="font-bold text-forena-800">{{ uploads[dt.key].result.trades }}종</p>
-                </div>
-                <div
-                  class="col-span-2 rounded bg-white px-2 py-1 flex items-center justify-between"
-                >
-                  <span class="text-forena-400">기간 추정</span>
-                  <span class="font-bold text-violet-700 text-[10px] tabular-nums">
-                    {{ uploads[dt.key].result.dateRange || '—' }}
-                  </span>
-                </div>
-              </template>
-            </div>
-
-            <!-- 오류 -->
-            <div
-              v-if="uploads[dt.key].status === 'error'"
-              class="rounded bg-rose-50 px-2 py-1.5 text-[11px] text-rose-700"
-            >
-              {{ uploads[dt.key].error || '분석 중 오류가 발생했습니다.' }}
-            </div>
-
-            <!-- 액션 버튼 -->
-            <div class="flex gap-1.5 mt-2">
-              <button
-                v-if="uploads[dt.key].status === 'idle'"
-                @click="runAnalysis(dt.key)"
-                class="flex flex-1 items-center justify-center gap-1 rounded-lg py-1.5 text-[11px] font-bold text-white"
-                :class="
-                  dt.color === 'blue'
-                    ? 'bg-sky-600 hover:bg-sky-700'
-                    : dt.color === 'amber'
-                      ? 'bg-amber-600 hover:bg-amber-700'
-                      : dt.color === 'violet'
-                        ? 'bg-violet-600 hover:bg-violet-700'
-                        : 'bg-emerald-600 hover:bg-emerald-700'
-                "
-              >
-                <BrainCircuit class="h-3 w-3" /> AI 분석 실행
-              </button>
-              <button
-                v-if="uploads[dt.key].status === 'done'"
-                @click="runAnalysis(dt.key)"
-                class="flex items-center justify-center gap-1 rounded-lg border border-forena-200 bg-white px-2 py-1.5 text-[11px] font-bold text-forena-600 hover:bg-forena-50"
-              >
-                <RefreshCw class="h-3 w-3" /> 재분석
-              </button>
-            </div>
-          </div>
-
-          <!-- AI 기능 설명 -->
-          <div class="mt-auto">
-            <p class="text-[10px] font-bold uppercase text-forena-400 mb-1.5">AI 분석 항목</p>
-            <div class="flex flex-col gap-1">
-              <div
-                v-for="cap in dt.aiCapabilities"
-                :key="cap"
-                class="flex items-center gap-1.5 text-[11px] text-forena-600"
-              >
-                <span class="h-1 w-1 shrink-0 rounded-full" :class="colorMap[dt.color].dot"></span>
-                {{ cap }}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <FirstDocumentUploadCards
+      :doc-types="DOC_TYPES"
+      :uploads="uploads"
+      :color-map="colorMap"
+      :get-status-label="getStatusLabel"
+      :get-status-class="getStatusClass"
+      @drag-over="onDragOver"
+      @drop-file="onDrop"
+      @file-select="onFileSelect"
+      @remove-file="removeFile"
+      @run-analysis="runAnalysis"
+    />
 
     <!-- ============================================================ -->
     <!-- 하단 CTA: AI 공정표 생성하기                                    -->
@@ -1329,395 +904,22 @@ function zoomOut() {
       </div>
     </div>
 
-    <!-- ============================================================ -->
-    <!-- 모달: 유효성 검사 오류                                          -->
-    <!-- ============================================================ -->
-    <div
-      v-if="validationModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-      @click.self="validationModal = false"
-    >
-      <div class="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <!-- 헤더 -->
-        <div class="flex items-center gap-3 border-b border-forena-100 bg-amber-50 px-5 py-4">
-          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100">
-            <AlertCircle class="h-5 w-5 text-amber-600" />
-          </div>
-          <div>
-            <h3 class="text-sm font-bold text-forena-900">입력 내용을 확인해주세요</h3>
-            <p class="text-[11px] text-amber-700">
-              {{ validationErrors.length }}가지 항목이 누락되었습니다.
-            </p>
-          </div>
-          <button
-            @click="validationModal = false"
-            class="ml-auto rounded-lg p-1 hover:bg-amber-100"
-          >
-            <X class="h-4 w-4 text-slate-400" />
-          </button>
-        </div>
+    <FirstDocumentValidationModal
+      :show="validationModal"
+      :errors="validationErrors"
+      @close="validationModal = false"
+    />
 
-        <!-- 오류 목록 -->
-        <div class="p-5">
-          <ul class="space-y-2">
-            <li
-              v-for="(err, i) in validationErrors"
-              :key="i"
-              class="flex items-start gap-3 rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-3"
-            >
-              <span
-                class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-rose-100 text-[10px] font-bold text-rose-600"
-              >
-                {{ i + 1 }}
-              </span>
-              <div class="min-w-0">
-                <p class="text-[11px] font-bold text-rose-700">{{ err.field }}</p>
-                <p class="text-[11px] text-rose-600">{{ err.msg }}</p>
-              </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
-
-    <!-- ============================================================ -->
-    <!-- 모달: 간트차트 미리보기                                          -->
-    <!-- ============================================================ -->
-    <div
-      v-if="ganttPreviewModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
-      @click.self="ganttPreviewModal = false"
-    >
-      <div
-        class="flex w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-        style="max-height: 92vh"
-      >
-        <!-- 모달 헤더 -->
-        <div
-          class="flex flex-wrap items-center justify-between gap-3 border-b border-forena-100 bg-gradient-to-r from-forena-50 to-white px-6 py-4"
-        >
-          <div class="flex items-center gap-3">
-            <div
-              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-flare-100"
-            >
-              <CalendarRange class="h-5 w-5 text-flare-600" />
-            </div>
-            <div>
-              <h3 class="text-sm font-bold text-forena-900">AI 생성 공정표 미리보기</h3>
-              <p class="text-[11px] text-forena-500">
-                {{ projectMeta.siteName }} · {{ projectMeta.startDate }} ~ {{ projectMeta.endDate }}
-              </p>
-            </div>
-          </div>
-
-          <!-- AI 분석 요약 뱃지 -->
-          <div class="flex flex-wrap gap-2">
-            <span
-              class="rounded-lg bg-forena-100 px-2.5 py-1 text-[11px] font-bold text-forena-700"
-            >
-              전체 {{ ganttTasks.length }}개 공정
-            </span>
-            <span
-              class="rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-200"
-            >
-              마일스톤 {{ ganttMilestones.length }}개
-            </span>
-            <span
-              v-if="ganttProjectInfo"
-              class="rounded-lg bg-flare-50 px-2.5 py-1 text-[11px] font-bold text-flare-700 ring-1 ring-flare-200"
-              :title="'100% 권장'"
-            >
-              보할 합계 {{ ganttProjectInfo.weightSum }}%
-            </span>
-          </div>
-
-          <button @click="ganttPreviewModal = false" class="rounded-lg p-1.5 hover:bg-forena-100">
-            <X class="h-4 w-4 text-slate-400 hover:text-forena-700" />
-          </button>
-        </div>
-
-        <!-- 안내 배너 -->
-        <div class="flex items-start gap-2 border-b border-forena-100 bg-flare-50/50 px-6 py-3">
-          <BrainCircuit class="h-4 w-4 shrink-0 text-flare-600 mt-0.5" />
-          <p class="text-[11px] leading-relaxed text-flare-800">
-            AI가 업로드된 문서를 분석하여 공정표를 생성했습니다. 좌측 공정명에
-            <Pencil class="inline h-3 w-3 mx-0.5" />아이콘을 눌러 직접 수정할 수 있으며,
-            <strong>공정표 확정하기</strong>를 누르면 변경 사항이 일괄 저장됩니다. 확정 이후에도
-            변경 요청을 통해 수정이 가능합니다.
-          </p>
-        </div>
-
-        <!-- 줌 컨트롤 -->
-        <div class="flex items-center gap-2 border-b border-forena-100 bg-white px-6 py-2">
-          <Diamond class="h-3.5 w-3.5 text-flare-600" />
-          <span class="text-[11px] font-bold text-forena-700 mr-2">마일스톤</span>
-          <div class="flex gap-1.5 mr-4">
-            <span
-              v-for="m in ganttMilestones"
-              :key="m.id"
-              class="flex items-center gap-1 rounded-md border border-forena-100 bg-white px-2 py-0.5 text-[10px] font-bold text-forena-700"
-            >
-              <svg class="h-2.5 w-2.5" viewBox="0 0 12 12">
-                <path
-                  d="M6 1 L11 6 L6 11 L1 6 Z"
-                  :fill="milestoneFill(m)"
-                  :stroke="milestoneStroke(m)"
-                  stroke-width="1"
-                />
-              </svg>
-              {{ m.name }}
-              <span class="tabular-nums text-slate-400">{{ m.date.slice(5) }}</span>
-            </span>
-          </div>
-          <div class="ml-auto flex items-center gap-1.5">
-            <div class="flex overflow-hidden rounded-lg border border-forena-200 bg-white">
-              <button @click="zoomOut" class="p-1.5 hover:bg-forena-50">
-                <ZoomOut class="h-3.5 w-3.5 text-forena-600" />
-              </button>
-              <span
-                class="border-x border-forena-200 px-2 text-[10px] font-bold tabular-nums text-forena-600 leading-[28px]"
-                >{{ ganttZoom }}x</span
-              >
-              <button @click="zoomIn" class="p-1.5 hover:bg-forena-50">
-                <ZoomIn class="h-3.5 w-3.5 text-forena-600" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 간트차트 본체 -->
-        <div id="gantt-scroll" class="overflow-x-auto">
-          <div class="flex min-w-full">
-            <!-- 좌측 고정: 작업명 -->
-            <div class="sticky left-0 z-10 w-44 shrink-0 border-r border-forena-200 bg-white">
-              <div
-                class="flex h-9 items-center border-b border-forena-200 bg-forena-50/60 px-4 text-[10px] font-bold text-forena-500"
-              >
-                공정명 / 공종
-              </div>
-              <template v-for="grp in groupedGanttTasks" :key="grp.group">
-                <!-- 공종 헤더 -->
-                <div
-                  class="flex h-9 items-center gap-1.5 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50 px-3 text-[11px] font-bold text-forena-800"
-                >
-                  <Layers class="h-3 w-3 text-flare-600" />
-                  <span>{{ grp.group }}</span>
-                  <span
-                    class="ml-auto rounded bg-white/70 px-1.5 py-0.5 text-[9px] tabular-nums text-forena-500"
-                    >{{ grp.items.length }}</span
-                  >
-                </div>
-                <!-- 각 작업 -->
-                <div
-                  v-for="t in grp.items"
-                  :key="t.id"
-                  class="group/task relative flex h-12 flex-col justify-center border-b border-forena-50 px-4 hover:bg-forena-50/60"
-                >
-                  <!-- 보기 모드 -->
-                  <template v-if="editingTaskId !== t.id">
-                    <div class="flex items-center gap-1">
-                      <span
-                        v-if="t.isCritical"
-                        class="rounded bg-rose-100 px-1 py-0.5 text-[8px] font-bold text-rose-700"
-                        >CP</span
-                      >
-                      <p class="truncate text-xs font-semibold text-forena-800">{{ t.name }}</p>
-                      <span
-                        v-if="isTaskDirty(t)"
-                        class="ml-auto rounded bg-flare-100 px-1 py-0.5 text-[8px] font-bold text-flare-700"
-                        title="변경됨"
-                        >수정</span
-                      >
-                      <button
-                        @click.stop="startEdit(t)"
-                        class="opacity-0 group-hover/task:opacity-100 ml-1 rounded p-0.5 text-forena-400 hover:bg-forena-100 hover:text-forena-700 transition"
-                        title="편집"
-                      >
-                        <Pencil class="h-3 w-3" />
-                      </button>
-                    </div>
-                    <p class="truncate text-[10px] text-slate-400">
-                      보할 {{ t.weight }}% · 신뢰도
-                      <span :class="confidenceClass(t.confidence)">{{ t.confidence }}%</span>
-                    </p>
-                  </template>
-
-                  <!-- 편집 모드 -->
-                  <template v-else>
-                    <input
-                      v-model="editDraft.name"
-                      class="rounded border border-flare-300 px-1.5 py-0.5 text-[11px] font-semibold text-forena-800 outline-none focus:border-flare-500"
-                      placeholder="공정명"
-                    />
-                    <div class="mt-0.5 flex items-center gap-1">
-                      <input
-                        v-model="editDraft.start"
-                        type="date"
-                        class="w-[88px] rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
-                      />
-                      <span class="text-[9px] text-forena-400">~</span>
-                      <input
-                        v-model="editDraft.end"
-                        type="date"
-                        class="w-[88px] rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
-                      />
-                      <input
-                        v-model.number="editDraft.weight"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        class="w-12 rounded border border-forena-200 px-1 py-0.5 text-[9px] text-forena-700 outline-none"
-                        title="보할율"
-                      />
-                      <span class="text-[9px] text-forena-400">%</span>
-                      <button
-                        @click.stop="commitEdit(t)"
-                        class="ml-auto rounded bg-emerald-600 px-1.5 py-0.5 text-[9px] font-bold text-white hover:bg-emerald-700"
-                      >
-                        저장
-                      </button>
-                      <button
-                        @click.stop="cancelEdit"
-                        class="rounded border border-forena-200 px-1.5 py-0.5 text-[9px] font-bold text-forena-600 hover:bg-forena-50"
-                      >
-                        취소
-                      </button>
-                    </div>
-                  </template>
-                </div>
-              </template>
-            </div>
-
-            <!-- 우측: 차트 -->
-            <div class="relative" :style="{ width: ganttPxWidth + 'px' }">
-              <!-- 월 헤더 -->
-              <div class="sticky top-0 z-[5] flex h-9 border-b border-forena-200 bg-forena-50/30">
-                <div
-                  v-for="(h, i) in ganttHeader"
-                  :key="i"
-                  class="flex items-center justify-center border-r border-forena-100 text-[10px] font-bold text-forena-500"
-                  :style="{ width: h.days * cellW + 'px' }"
-                >
-                  {{ h.label }}
-                </div>
-              </div>
-
-              <!-- 차트 행 -->
-              <div class="relative">
-                <!-- 오늘 라인 -->
-                <div
-                  v-if="todayLineStyle"
-                  class="pointer-events-none absolute top-0 z-[3] h-full w-px bg-flare-500/70"
-                  :style="todayLineStyle"
-                >
-                  <div
-                    class="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-flare-500 px-1 text-[8px] font-bold text-white"
-                  >
-                    오늘
-                  </div>
-                </div>
-
-                <template v-for="grp in groupedGanttTasks" :key="`grow-${grp.group}`">
-                  <!-- 그룹 헤더 행 (마일스톤 표시) -->
-                  <div
-                    class="relative h-9 border-b border-forena-200 bg-gradient-to-r from-forena-100 to-forena-50"
-                  >
-                    <div
-                      v-for="m in ganttMilestones.filter((ms) =>
-                        ganttTasks.find((t) => t.group === grp.group && t.isCritical),
-                      )"
-                      :key="`ms-${m.id}-${grp.group}`"
-                      class="pointer-events-auto absolute top-1/2 z-[4] -translate-y-1/2"
-                      :style="{ left: dayOffset(m.date) * cellW + cellW / 2 - 8 + 'px' }"
-                      :title="`${m.name} · ${m.date}`"
-                    ></div>
-                  </div>
-                  <!-- 작업 행 -->
-                  <div
-                    v-for="t in grp.items"
-                    :key="`row-${t.id}`"
-                    class="relative flex h-12 border-b border-forena-50"
-                  >
-                    <!-- 계획 바 -->
-                    <div
-                      v-if="barStyle(t.start, t.end)"
-                      class="absolute z-[2] flex items-center"
-                      :style="{ ...barStyle(t.start, t.end), top: '18px', height: '6px' }"
-                    >
-                      <span
-                        class="absolute -left-[3px] h-2.5 w-2.5 rounded-full ring-2 ring-white"
-                        :class="t.isCritical ? 'bg-rose-600 h-3 w-3' : 'bg-blue-600'"
-                      ></span>
-                      <span
-                        class="absolute -right-[3px] h-2.5 w-2.5 rounded-full ring-2 ring-white"
-                        :class="t.isCritical ? 'bg-rose-600 h-3 w-3' : 'bg-blue-600'"
-                      ></span>
-                      <span
-                        class="h-full w-full rounded-full"
-                        :class="t.isCritical ? 'bg-rose-500' : 'bg-blue-500'"
-                      ></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 범례 -->
-        <div
-          class="flex flex-wrap items-center gap-4 border-t border-forena-100 bg-forena-50/40 px-6 py-2 text-[10px] text-slate-600"
-        >
-          <span class="inline-flex items-center gap-1.5"
-            ><span class="h-1.5 w-5 rounded-full bg-rose-500" />CP 공정</span
-          >
-          <span class="inline-flex items-center gap-1.5"
-            ><span class="h-1.5 w-5 rounded-full bg-blue-500" />일반 공정</span
-          >
-          <span class="inline-flex items-center gap-1.5"
-            ><span class="h-3 w-px bg-flare-500" />오늘</span
-          >
-          <span class="ml-auto text-forena-400">가로 스크롤하여 전체 일정 확인</span>
-        </div>
-
-        <!-- 모달 푸터 -->
-        <div
-          class="flex items-center justify-between border-t border-forena-200 bg-white px-6 py-4"
-        >
-          <div class="flex flex-col gap-1 text-[11px] text-forena-500">
-            <div>
-              <CheckCircle2 class="inline h-3.5 w-3.5 text-emerald-500 mr-1" />
-              공정표 확정 후에도 변경 요청을 통해 수정이 가능합니다.
-            </div>
-            <div v-if="dirtyCount > 0" class="text-flare-700 font-bold">
-              수정된 공정 {{ dirtyCount }}건이 확정 시 저장됩니다.
-            </div>
-            <div v-if="saveError" class="text-rose-700 font-bold">
-              <AlertCircle class="inline h-3.5 w-3.5 mr-1" />
-              {{ saveError }}
-            </div>
-          </div>
-          <div class="flex gap-2">
-            <button
-              @click="ganttPreviewModal = false"
-              :disabled="savingChanges"
-              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              다시 검토하기
-            </button>
-            <button
-              @click="confirmAndNavigate"
-              :disabled="savingChanges"
-              class="inline-flex items-center gap-2 rounded-lg bg-forena-800 px-5 py-2 text-xs font-bold text-white hover:bg-forena-900 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              <Loader2 v-if="savingChanges" class="h-3.5 w-3.5 animate-spin" />
-              <ShieldCheck v-else class="h-3.5 w-3.5" />
-              {{ savingChanges ? '저장 중...' : '공정표 확정하기' }}
-              <ArrowRight v-if="!savingChanges" class="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <FirstDocumentGanttPreviewModal
+      :show="ganttPreviewModal"
+      :project-meta="projectMeta"
+      :tasks="ganttTasks"
+      :milestones="ganttMilestones"
+      :project-info="ganttProjectInfo"
+      :saving-changes="savingChanges"
+      :save-error="saveError"
+      @close="ganttPreviewModal = false"
+      @confirm="confirmAndNavigate"
+    />
   </div>
 </template>
