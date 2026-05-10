@@ -38,6 +38,12 @@ api.interceptors.response.use(
     return body
   },
   (error) => {
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      return Promise.reject(
+        new Error('권한이 없습니다. 데모 계정이 아니라 실제 서버 계정으로 다시 로그인해 주세요.'),
+      )
+    }
+
     const message =
       error.response?.data?.message ||
       error.response?.data?.error ||

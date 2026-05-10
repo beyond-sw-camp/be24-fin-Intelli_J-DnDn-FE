@@ -9,6 +9,7 @@ import {
   isWorkPlanGroupInProgress,
   workPlanStatus,
 } from '@/utils/schedule/workPlan.js'
+import { tradeMatches } from '@/utils/authScope'
 
 export function useWorkPlanGantt({
   baselinePlans,
@@ -96,7 +97,7 @@ export function useWorkPlanGantt({
     let r = [...baselinePlans.value, ...monthlyPlans.value]
 
     if (filterTrade.value) {
-      r = r.filter((p) => p.trade === filterTrade.value)
+      r = r.filter((p) => tradeMatches(p.trade, filterTrade.value))
     }
 
     if (filterStatus.value) {
@@ -110,7 +111,7 @@ export function useWorkPlanGantt({
     let r = [...baselinePlans.value, ...annualPlans.value]
 
     if (filterTrade.value) {
-      r = r.filter((p) => p.trade === filterTrade.value)
+      r = r.filter((p) => tradeMatches(p.trade, filterTrade.value))
     }
 
     if (filterStatus.value) {
@@ -184,16 +185,17 @@ export function useWorkPlanGantt({
     const e = endStr > lastDate ? lastDate : endStr
     const sm = Number(s.slice(5, 7))
     const em = Number(e.slice(5, 7))
-    const span = Math.max(1, em - sm + 1)
     const startDay = Number(s.slice(8, 10))
     const endDay = Number(e.slice(8, 10))
     const startMonthDays = new Date(year, sm, 0).getDate()
     const endMonthDays = new Date(year, em, 0).getDate()
-    const leftOffset = ((startDay - 1) / startMonthDays) * GANTT_MONTH_W
-    const rightTrim = ((endMonthDays - endDay) / endMonthDays) * GANTT_MONTH_W
+    const leftMonthOffset = (startDay - 1) / startMonthDays
+    const rightMonthOffset = endDay / endMonthDays
+    const leftPct = (((sm - 1) + leftMonthOffset) / 12) * 100
+    const rightPct = (((em - 1) + rightMonthOffset) / 12) * 100
     return {
-      left: `${(sm - 1) * GANTT_MONTH_W + leftOffset + 4}px`,
-      width: `${span * GANTT_MONTH_W - leftOffset - rightTrim - 8}px`,
+      left: `${leftPct}%`,
+      width: `${Math.max(0.2, rightPct - leftPct)}%`,
     }
   }
 
@@ -243,18 +245,17 @@ export function useWorkPlanGantt({
     const fillLeft = parseFloat(fill.left)
     const fillWidth = parseFloat(fill.width)
     const width = Math.max(0, Math.min(fullWidth, fillLeft + fillWidth - fullLeft))
+    const pct = fullWidth > 0 ? (width / fullWidth) * 100 : 0
 
-    return { width: `${width}px` }
+    return { width: `${Math.max(0, Math.min(100, pct))}%` }
   }
 
   function progressDotStyle(p, styleFn) {
     const widthValue = progressBarStyle(p, styleFn).width
-    const width = widthValue.endsWith('%')
-      ? (parseFloat(widthValue) / 100) * parseFloat(styleFn(p.start, p.end)?.width || 0)
-      : parseFloat(widthValue)
+    const width = parseFloat(widthValue)
 
     if (!Number.isFinite(width) || width <= 0) return { display: 'none' }
-    return { left: `${Math.max(0, width - 4)}px` }
+    return { left: `calc(${Math.max(0, Math.min(100, width))}% - 4px)` }
   }
 
   // 오늘 라인

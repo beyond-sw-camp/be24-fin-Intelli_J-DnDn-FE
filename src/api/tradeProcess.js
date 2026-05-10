@@ -37,9 +37,10 @@ export const fetchTradeProcessList = async (params = {}) => {
  * @param {string}        [params.tradeName]  공종 필터 (선택)
  * @returns {Promise<Array>}
  */
-export const listTradeProcessesRaw = async ({ projectId, tradeName } = {}) => {
+export const listTradeProcessesRaw = async ({ projectId, tradeName, includeAllTrades = false } = {}) => {
   const params = { projectId }
   if (tradeName) params.tradeName = tradeName
+  if (includeAllTrades) params.includeAllTrades = true
   const dtos = await api.get(PATH, { params })
   return Array.isArray(dtos) ? dtos : []
 }

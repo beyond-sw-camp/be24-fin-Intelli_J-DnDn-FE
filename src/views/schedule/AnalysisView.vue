@@ -28,14 +28,23 @@ import RejectRequestModal from '@/components/schedule/analysis/RejectRequestModa
 import TaskDetailModal from '@/components/schedule/analysis/TaskDetailModal.vue'
 import ScheduleChangeTab from '@/components/schedule/analysis/ScheduleChangeTab.vue'
 import { ShieldCheck, UserCog, ClipboardList, BarChart3, Activity, Layers } from 'lucide-vue-next'
+import { useAuthStore } from '@/stores/authStore'
+import { tradeMatches, useAuthScope } from '@/utils/authScope'
 
 // 권한
+const auth = useAuthStore()
+const { isTradeScope, assignedTrade } = useAuthScope(auth)
+const canSwitchAuthority = computed(() => auth.isAdminRole)
 const currentTrade = ref('all')
 
 const isSupervisor = computed(() => currentTrade.value === 'all')
 
 // 대표 공종 단위로 권한 선택
 const tradeAuthorityOptions = computed(() => {
+  if (isTradeScope.value && assignedTrade.value) {
+    return [{ id: `trade:${assignedTrade.value}`, name: assignedTrade.value }]
+  }
+
   const names = new Set()
   processes.value.forEach((p) => {
     const tradeName = inferRepresentativeTradeName(p)
@@ -63,6 +72,17 @@ const selectedTradeId = ref(null)
 const filterProcess = ref('전체')
 const filterStatus = ref('전체')
 const filterRisk = ref('전체')
+
+watch(
+  [isTradeScope, assignedTrade],
+  () => {
+    currentTrade.value = isTradeScope.value && assignedTrade.value ? assignedTrade.value : 'all'
+    selectedTradeId.value = null
+    filterProcess.value = '전체'
+  },
+  { immediate: true },
+)
+
 watch([currentTrade, filterProcess], () => {
   if (processes.value.length > 0) {
     loadDelayRiskTasks()
@@ -117,8 +137,12 @@ const errorMessage = ref('')
 
 async function loadWorkPlanDetails() {
   const [monthlyRes, weeklyRes] = await Promise.all([
-    api.get('/work-plan', { params: { planType: '월간' } }).catch(() => ({ data: [] })),
-    api.get('/work-plan', { params: { planType: '주간' } }).catch(() => ({ data: [] })),
+    api
+      .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '월간' } })
+      .catch(() => ({ data: [] })),
+    api
+      .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '주간' } })
+      .catch(() => ({ data: [] })),
   ])
 
   monthlyWorkPlans.value = normalizeListResponse(monthlyRes)
@@ -222,7 +246,7 @@ async function loadDelayRiskTasks() {
     }),
   )
   delayTasks.value = processName
-    ? mappedTasks.filter((task) => task.process === processName)
+    ? mappedTasks.filter((task) => tradeMatches(task.process, processName))
     : mappedTasks
 
   if (!selectedTaskId.value && delayTasks.value.length > 0) {
@@ -284,7 +308,7 @@ onMounted(() => {
 // 화면 표시용 필터
 function passProcessFilter(name) {
   if (filterProcess.value === '전체') return true
-  return name === filterProcess.value
+  return tradeMatches(name, filterProcess.value)
 }
 function passStatusFilter(status) {
   if (filterStatus.value === '전체') return true
@@ -299,7 +323,7 @@ const visibleProcesses = computed(() => {
   let r = processes.value
   if (!isSupervisor.value) {
     const myName = currentTradeItem.value?.name
-    r = myName ? r.filter((p) => inferRepresentativeTradeName(p) === myName) : []
+    r = myName ? r.filter((p) => tradeMatches(inferRepresentativeTradeName(p), myName)) : []
   } else {
     r = r.filter((p) => passProcessFilter(inferRepresentativeTradeName(p)))
   }
@@ -312,7 +336,7 @@ const visibleTasks = computed(() => {
   let r = delayTasks.value.filter((t) => t.risk !== '낮음')
   if (!isSupervisor.value) {
     const myName = currentTradeItem.value?.name
-    r = myName ? r.filter((t) => t.process === myName) : []
+    r = myName ? r.filter((t) => tradeMatches(t.process, myName)) : []
   } else {
     r = r.filter((t) => passProcessFilter(t.process))
   }
@@ -324,7 +348,7 @@ const visibleRequests = computed(() => {
   let r = changeRequests.value
   if (!isSupervisor.value) {
     const myName = currentTradeItem.value?.name
-    r = myName ? r.filter((req) => req.process === myName) : []
+    r = myName ? r.filter((req) => tradeMatches(req.process, myName)) : []
   } else {
     r = r.filter((req) => passProcessFilter(req.process))
   }
@@ -335,7 +359,7 @@ const visibleHistory = computed(() => {
   let r = changeHistory.value
   if (!isSupervisor.value) {
     const myName = currentTradeItem.value?.name
-    r = myName ? r.filter((h) => h.process === myName) : []
+    r = myName ? r.filter((h) => tradeMatches(h.process, myName)) : []
   } else {
     r = r.filter((h) => passProcessFilter(h.process))
   }
@@ -432,6 +456,7 @@ const riskColor = (r) =>
           <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">공종</span>
           <select
             v-model="currentTrade"
+            :disabled="!canSwitchAuthority"
             class="cursor-pointer rounded-r-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white outline-none transition hover:bg-forena-900"
           >
             <option value="all">현장 총 책임자 (전체)</option>

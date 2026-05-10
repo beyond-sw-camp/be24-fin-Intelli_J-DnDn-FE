@@ -1,9 +1,12 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 import router from '@/router/index.js'
 import { parseGanttJSON } from '@/utils/ganttParser.js'
 import { useGanttStore } from '@/stores/ganttStore.js'
+import { useAuthStore } from '@/stores/authStore.js'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
+import { getProject, getProjectList } from '@/api/project.js'
 import { uploadAndExtractSchedule, updateTradeProcess } from '@/api/masterSchedule.js'
 import { buildGanttData, isTaskDirty, taskToReqBody } from '@/utils/scheduleMapper.js'
 import FirstDocumentUploadCards from '@/components/schedule/firstDocumentUpload/FirstDocumentUploadCards.vue'
@@ -39,6 +42,12 @@ const props = defineProps({
 })
 
 const ganttStore = useGanttStore()
+const authStore = useAuthStore()
+const { currentProjectId } = useCurrentProject(props.projectId)
+const resolvedProjectId = ref(null)
+const activeProjectId = computed(
+  () => resolvedProjectId.value ?? authStore.projectId ?? currentProjectId.value,
+)
 
 // =====================================================
 // 상수
@@ -97,12 +106,14 @@ const uploads = ref({
 })
 
 const projectMeta = ref({
-  siteName: '강남 복합개발 1공구',
-  projectName: '강남 복합개발 1공구 신축공사',
-  startDate: '2025-01-01',
-  endDate: '2027-01-31',
-  manager: '박현수',
+  siteName: '',
+  location: '',
+  startDate: '',
+  endDate: '',
+  manager: authStore.userName || '',
 })
+const projectMetaLoading = ref(false)
+const projectMetaError = ref('')
 
 const currentStep = ref(1)
 const analyzeAll = ref(false)
@@ -117,6 +128,94 @@ const ganttPreviewModal = ref(false)
 // =====================================================
 // 헬퍼
 // =====================================================
+function toDateInputValue(value) {
+  return value ? String(value).slice(0, 10) : ''
+}
+
+function parseProjectLabel(name) {
+  const raw = String(name || '').trim()
+  const match = /^\s*\[(?<code>[^\]]+)\]\s*(?<displayName>.+)$/.exec(raw)
+  if (!match?.groups) {
+    return { code: '', displayName: raw }
+  }
+  return {
+    code: match.groups.code.trim(),
+    displayName: match.groups.displayName.trim(),
+  }
+}
+
+function siteCodeMatches(project, siteCode) {
+  const expected = String(siteCode || '').trim().toUpperCase()
+  if (!expected) return false
+  return parseProjectLabel(project?.name).code.toUpperCase() === expected
+}
+
+function applyProjectMeta(project) {
+  const displayName = parseProjectLabel(project?.name).displayName
+  const projectId = Number(project?.idx)
+  if (Number.isFinite(projectId) && projectId > 0) {
+    resolvedProjectId.value = projectId
+    if (!authStore.projectId) authStore.setProjectId(projectId)
+  }
+
+  projectMeta.value = {
+    siteName: displayName,
+    location: String(project?.location || '').trim(),
+    startDate: toDateInputValue(project?.startDate),
+    endDate: toDateInputValue(project?.endDate),
+    manager: authStore.userName || projectMeta.value.manager || '',
+  }
+}
+
+async function resolveProjectForCurrentUser(projectId) {
+  if (!authStore.projectId && authStore.siteCode) {
+    const projects = await getProjectList()
+    const matched = projects.find((project) => siteCodeMatches(project, authStore.siteCode))
+    if (matched) return matched
+  }
+  return await getProject(projectId)
+}
+
+let projectMetaRequestSeq = 0
+
+async function loadProjectMeta(projectId) {
+  if (!projectId) return
+  const seq = ++projectMetaRequestSeq
+  projectMetaLoading.value = true
+  projectMetaError.value = ''
+  try {
+    const project = await resolveProjectForCurrentUser(projectId)
+    if (seq !== projectMetaRequestSeq) return
+    applyProjectMeta(project)
+  } catch (e) {
+    if (seq !== projectMetaRequestSeq) return
+    projectMetaError.value = e?.message || '현장 정보를 불러오지 못했습니다.'
+    if (!projectMeta.value.manager && authStore.userName) {
+      projectMeta.value.manager = authStore.userName
+    }
+  } finally {
+    if (seq === projectMetaRequestSeq) {
+      projectMetaLoading.value = false
+    }
+  }
+}
+
+watch(
+  () => [currentProjectId.value, authStore.projectId, authStore.siteCode],
+  () => loadProjectMeta(activeProjectId.value),
+  { immediate: true },
+)
+
+watch(
+  () => authStore.userName,
+  (name) => {
+    if (name && !projectMeta.value.manager) {
+      projectMeta.value.manager = name
+    }
+  },
+  { immediate: true },
+)
+
 const colorMap = {
   blue: {
     bg: 'bg-sky-50',
@@ -158,6 +257,27 @@ const colorMap = {
 
 const hasAnyUpload = computed(() => Object.values(uploads.value).some((u) => u.fileName))
 const hasMaster = computed(() => !!uploads.value.master.fileName)
+const isAnalyzingAny = computed(() =>
+  Object.values(uploads.value).some((u) => ['uploading', 'analyzing'].includes(u.status)),
+)
+const isProjectMetaComplete = computed(
+  () =>
+    projectMeta.value.siteName.trim() &&
+    projectMeta.value.location.trim() &&
+    projectMeta.value.startDate &&
+    projectMeta.value.endDate &&
+    projectMeta.value.manager.trim(),
+)
+const canStartScheduleGeneration = computed(
+  () => isProjectMetaComplete.value && hasMaster.value && !isAnalyzingAny.value,
+)
+const generationReadyMessage = computed(() => {
+  if (!isProjectMetaComplete.value) return '프로젝트 기본 정보를 먼저 확인해주세요.'
+  if (!hasMaster.value) return '마스터 공정표를 업로드해주세요.'
+  if (isAnalyzingAny.value) return 'AI 분석이 끝난 뒤 공정표를 생성할 수 있습니다.'
+  if (uploads.value.master.status === 'done') return '마스터 공정표 분석 결과로 공정표를 생성할 수 있습니다.'
+  return '버튼을 누르면 등록된 마스터 공정표를 먼저 분석한 뒤 공정표를 생성합니다.'
+})
 
 const allDone = computed(() =>
   Object.values(uploads.value)
@@ -198,6 +318,8 @@ function onFileSelect(typeKey, event) {
   uploads.value[typeKey].fileName = f.name
   uploads.value[typeKey].status = 'idle'
   uploads.value[typeKey].error = ''
+  uploads.value[typeKey].result = null
+  if (typeKey === 'master') resetOptionalAnalysisResultsAfterMasterChange()
   event.target.value = ''
 }
 
@@ -210,6 +332,8 @@ function onDrop(typeKey, event) {
   uploads.value[typeKey].fileName = f.name
   uploads.value[typeKey].status = 'idle'
   uploads.value[typeKey].error = ''
+  uploads.value[typeKey].result = null
+  if (typeKey === 'master') resetOptionalAnalysisResultsAfterMasterChange()
 }
 function onDragOver(event) {
   event.preventDefault()
@@ -227,6 +351,18 @@ function removeFile(typeKey) {
   }
 }
 
+function resetOptionalAnalysisResultsAfterMasterChange() {
+  for (const dt of DOC_TYPES) {
+    if (dt.key === 'master') continue
+    const upload = uploads.value[dt.key]
+    if (!upload.fileName) continue
+    upload.status = 'idle'
+    upload.progress = 0
+    upload.result = null
+    upload.error = ''
+  }
+}
+
 // AI 분석 실행 — 백엔드 업로드 + OpenAI 추출 호출
 async function runAnalysis(typeKey) {
   const u = uploads.value[typeKey]
@@ -240,6 +376,8 @@ async function runAnalysis(typeKey) {
     return
   }
 
+  if (typeKey === 'master') resetOptionalAnalysisResultsAfterMasterChange()
+
   u.status = 'uploading'
   u.progress = 0
   u.error = ''
@@ -247,7 +385,7 @@ async function runAnalysis(typeKey) {
 
   try {
     const tradeProcesses = await uploadAndExtractSchedule({
-      projectId: props.projectId,
+      projectId: activeProjectId.value,
       docType: docType.label, // 한글 라벨 그대로 전달
       file: u.file,
       onUploadProgress: (percent) => {
@@ -356,8 +494,8 @@ function handleReviewClick() {
   // 프로젝트 기본 정보 검사
   if (!projectMeta.value.siteName.trim())
     errors.push({ field: '현장명', msg: '현장명을 입력해주세요.' })
-  if (!projectMeta.value.projectName.trim())
-    errors.push({ field: '공사명', msg: '공사명을 입력해주세요.' })
+  if (!projectMeta.value.location.trim())
+    errors.push({ field: '공사 위치', msg: '공사 위치를 입력해주세요.' })
   if (!projectMeta.value.startDate)
     errors.push({ field: '공사 시작일', msg: '공사 시작일을 선택해주세요.' })
   if (!projectMeta.value.endDate)
@@ -379,6 +517,13 @@ function handleReviewClick() {
   //   다른 3종(마일스톤/공종별/보할)은 본 운영 시 필수로 전환 예정.
   if (!uploads.value.master.fileName)
     errors.push({ field: '마스터 공정표', msg: '마스터 공정표 파일을 업로드해주세요.' })
+  if (uploads.value.master.status === 'error')
+    errors.push({
+      field: '마스터 공정표',
+      msg: uploads.value.master.error || '마스터 공정표 분석에 실패했습니다. 다시 분석해주세요.',
+    })
+  if (['uploading', 'analyzing'].includes(uploads.value.master.status))
+    errors.push({ field: '마스터 공정표', msg: '마스터 공정표 분석이 끝난 뒤 다시 시도해주세요.' })
 
   if (errors.length > 0) {
     validationErrors.value = errors
@@ -399,16 +544,14 @@ function handleReviewClick() {
       )
       if (allComplete) {
         clearInterval(checkDone)
-        rebuildGanttFromResults()
-        ganttPreviewModal.value = true
+        openGanttPreviewFromResults()
       }
     }, 500)
     return
   }
 
   // 이미 분석 완료된 경우 바로 모달 오픈
-  rebuildGanttFromResults()
-  ganttPreviewModal.value = true
+  openGanttPreviewFromResults()
 }
 
 // =====================================================
@@ -439,6 +582,22 @@ function rebuildGanttFromResults() {
   ganttTasks.value = tasks
   ganttMilestones.value = milestones
   ganttProjectInfo.value = projectInfo
+}
+
+function openGanttPreviewFromResults() {
+  rebuildGanttFromResults()
+  if (!ganttTasks.value.length) {
+    validationErrors.value = [
+      {
+        field: 'AI 추출 결과',
+        msg: '마스터 공정표에서 공정 항목을 찾지 못했습니다. 파일 내용을 확인하거나 다시 분석해주세요.',
+      },
+    ]
+    validationModal.value = true
+    return false
+  }
+  ganttPreviewModal.value = true
+  return true
 }
 
 async function confirmAndNavigate() {
@@ -495,7 +654,8 @@ async function confirmAndNavigate() {
   const projectInfoForStore = {
     ...(ganttProjectInfo.value ?? {}),
     siteName: projectMeta.value.siteName,
-    projectName: projectMeta.value.projectName || ganttProjectInfo.value?.projectName || '공정표',
+    projectName: projectMeta.value.siteName || ganttProjectInfo.value?.projectName || '공정표',
+    location: projectMeta.value.location,
     finalApprover: projectMeta.value.manager,
     // 사용자가 입력한 공사 기간이 있으면 우선 사용
     startDate: projectMeta.value.startDate || ganttProjectInfo.value?.startDate,
@@ -507,7 +667,8 @@ async function confirmAndNavigate() {
 
   // 3) 라우팅
   ganttPreviewModal.value = false
-  router.push('/site/schedule')
+  authStore.markInitialUploadComplete()
+  router.push({ path: '/site/schedule', query: { projectId: String(activeProjectId.value) } })
 }
 </script>
 
@@ -572,7 +733,7 @@ async function confirmAndNavigate() {
           <p class="text-sm font-bold text-forena-900 mb-1">공정표 문서 등록 안내</p>
           <div class="text-[11px] leading-relaxed text-forena-600 space-y-1">
             <p>
-              ① <strong>프로젝트 기본 정보</strong>(현장명, 공사명, 공사 기간, 책임자)를 먼저
+              ① <strong>프로젝트 기본 정보</strong>(현장명, 공사 위치, 공사 기간, 책임자)를 먼저
               입력해주세요.
             </p>
             <p>
@@ -601,6 +762,12 @@ async function confirmAndNavigate() {
           <BarChart3 class="h-4 w-4 text-flare-600" />
           <h2 class="text-sm font-bold text-forena-900">프로젝트 기본 정보</h2>
           <span class="ml-1 text-[11px] text-forena-400">필수 항목을 모두 입력해주세요</span>
+          <span v-if="projectMetaLoading" class="ml-auto text-[11px] font-semibold text-forena-500">
+            현장 정보 불러오는 중
+          </span>
+          <span v-else-if="projectMetaError" class="ml-auto text-[11px] font-semibold text-rose-500">
+            {{ projectMetaError }}
+          </span>
         </div>
         <div class="grid gap-3 p-5 pt-4 sm:grid-cols-2 lg:grid-cols-3">
           <!-- 현장명 -->
@@ -612,7 +779,6 @@ async function confirmAndNavigate() {
               v-model="projectMeta.siteName"
               type="text"
               placeholder="예) 강남 복합개발 1공구"
-              value="강남 복합개발 1공구"
               :class="[
                 'mt-1 w-full rounded-lg border px-2.5 py-2 text-xs text-forena-800 outline-none transition',
                 !projectMeta.siteName.trim()
@@ -621,19 +787,18 @@ async function confirmAndNavigate() {
               ]"
             />
           </div>
-          <!-- 공사명 -->
+          <!-- 공사 위치 -->
           <div class="sm:col-span-1 lg:col-span-2">
             <label class="text-[10px] font-bold uppercase text-forena-400">
-              공사명 <span class="text-rose-500">*</span>
+              공사 위치 <span class="text-rose-500">*</span>
             </label>
             <input
-              v-model="projectMeta.projectName"
+              v-model="projectMeta.location"
               type="text"
-              placeholder="예) 강남 복합개발 1공구 신축공사"
-              value="강남 복합개발 1공구 신축공사"
+              placeholder="예) 서울 강남구 삼성동 123"
               :class="[
                 'mt-1 w-full rounded-lg border px-2.5 py-2 text-xs text-forena-800 outline-none transition',
-                !projectMeta.projectName.trim()
+                !projectMeta.location.trim()
                   ? 'border-forena-200 focus:border-flare-400'
                   : 'border-emerald-300 bg-emerald-50/30 focus:border-emerald-400',
               ]"
@@ -647,7 +812,6 @@ async function confirmAndNavigate() {
             <input
               v-model="projectMeta.startDate"
               type="date"
-              value="2025-01-01"
               :class="[
                 'mt-1 w-full rounded-lg border px-2.5 py-2 text-xs text-forena-800 outline-none transition',
                 !projectMeta.startDate
@@ -664,7 +828,6 @@ async function confirmAndNavigate() {
             <input
               v-model="projectMeta.endDate"
               type="date"
-              value="2027-01-31"
               :class="[
                 'mt-1 w-full rounded-lg border px-2.5 py-2 text-xs text-forena-800 outline-none transition',
                 !projectMeta.endDate
@@ -682,7 +845,6 @@ async function confirmAndNavigate() {
               v-model="projectMeta.manager"
               type="text"
               placeholder="예) 박현수"
-              value="박현수"
               :class="[
                 'mt-1 w-full rounded-lg border px-2.5 py-2 text-xs text-forena-800 outline-none transition',
                 !projectMeta.manager.trim()
@@ -698,7 +860,7 @@ async function confirmAndNavigate() {
             <span
               :class="
                 projectMeta.siteName &&
-                projectMeta.projectName &&
+                projectMeta.location &&
                 projectMeta.startDate &&
                 projectMeta.endDate &&
                 projectMeta.manager
@@ -709,7 +871,7 @@ async function confirmAndNavigate() {
               <CheckCircle2
                 v-if="
                   projectMeta.siteName &&
-                  projectMeta.projectName &&
+                  projectMeta.location &&
                   projectMeta.startDate &&
                   projectMeta.endDate &&
                   projectMeta.manager
@@ -718,7 +880,7 @@ async function confirmAndNavigate() {
               />
               {{
                 projectMeta.siteName &&
-                projectMeta.projectName &&
+                projectMeta.location &&
                 projectMeta.startDate &&
                 projectMeta.endDate &&
                 projectMeta.manager
@@ -887,15 +1049,13 @@ async function confirmAndNavigate() {
     >
       <div class="flex flex-wrap items-center justify-between gap-4">
         <div class="text-white">
-          <p class="text-base font-bold">준비가 완료되면 AI 공정표를 생성해보세요</p>
-          <p class="mt-1 text-xs text-forena-300">
-            기본 정보와 3가지 문서가 모두 등록되어야 AI 분석이 시작됩니다. 빠진 항목이 있으면
-            안내해드립니다.
-          </p>
+          <p class="text-base font-bold">마스터 공정표로 AI 공정표를 생성해보세요</p>
+          <p class="mt-1 text-xs text-forena-300">{{ generationReadyMessage }}</p>
         </div>
         <button
+          :disabled="!canStartScheduleGeneration"
           @click="handleReviewClick"
-          class="inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-bold text-forena-900 shadow-md hover:bg-forena-50 transition"
+          class="inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-bold text-forena-900 shadow-md transition hover:bg-forena-50 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:shadow-none"
         >
           <CalendarRange class="h-4 w-4 text-flare-600" />
           AI 공정표 생성하기
