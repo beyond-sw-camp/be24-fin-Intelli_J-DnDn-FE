@@ -5,7 +5,15 @@ const ADMIN_ACCOUNTS = '/admin/accounts'
 
 /**
  * 로그인 — AuthController POST /auth/login
- * @param {{ loginId: string, password: string }} body
+ * @param {{
+ *   loginId: string,
+ *   password: string,
+ *   loginMode?: 'SITE'|'ADMIN',
+ *   siteProjectId?: number|null,
+ * }} body
+ *  - {@code loginMode} 가 있으면 백엔드에서 탭(현장/관리자) ↔ 계정 권한 일치를 검증한다.
+ *  - {@code siteProjectId} 가 있으면 현장 로그인 시 사용자가 선택한 현장이 계정의 배정 현장과
+ *    동일한지 백엔드에서 추가 검증한다.
  * @returns {Promise<{ accessToken: string, userIdx: number, projectId?: number|null, name: string, role: string, siteCode?: string|null, trade?: string|null }>}
  */
 export async function postAuthLogin(body) {

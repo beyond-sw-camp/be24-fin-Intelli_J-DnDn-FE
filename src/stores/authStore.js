@@ -106,9 +106,7 @@ export function pathAllowedForRole(userRole, fullPath) {
   const role = normalizeUserRole(userRole)
 
   if (role === USER_ROLE.ADMIN) {
-    return (
-      path.startsWith('/site/') || path.startsWith('/hr/') || path.startsWith('/system/')
-    )
+    return path.startsWith('/site/') || path.startsWith('/hr/') || path.startsWith('/system/')
   }
 
   if (role === USER_ROLE.HEADQUARTOR) {
@@ -273,7 +271,7 @@ export const useAuthStore = defineStore('auth', () => {
   function loginDemo(userId, password) {
     const id = (userId || '').trim()
     const pw = (password || '').trim()
-    if (id === 'admin' && pw === 'admin') {
+    if (id === 'admin' && (pw === 'Admin1234!' || pw === 'admin')) {
       localStorage.removeItem('accessToken')
       userRole.value = USER_ROLE.ADMIN
       loginId.value = 'admin'
@@ -284,6 +282,30 @@ export const useAuthStore = defineStore('auth', () => {
       trade.value = ''
       stayOnLogin.value = false
       isUpload.value = false
+      isAuthenticated.value = true
+      persistAuth()
+      return true
+    }
+    if (id === 'hq' && pw === 'Hq1234567!') {
+      localStorage.removeItem('accessToken')
+      userRole.value = USER_ROLE.HEADQUARTOR
+      loginId.value = 'hq'
+      userName.value = '데모 본사'
+      userIdx.value = null
+      stayOnLogin.value = false
+      isUpload.value = false
+      isAuthenticated.value = true
+      persistAuth()
+      return true
+    }
+    if (id === 'gn-a-dir' && pw === 'Dummy1234!') {
+      localStorage.removeItem('accessToken')
+      userRole.value = USER_ROLE.SITE_DIRECTOR
+      loginId.value = 'gn-a-dir'
+      userName.value = '데모 현장 총책임'
+      userIdx.value = null
+      stayOnLogin.value = false
+      isUpload.value = true
       isAuthenticated.value = true
       persistAuth()
       return true
