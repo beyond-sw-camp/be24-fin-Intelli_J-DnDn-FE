@@ -175,14 +175,14 @@ watch(monthlyForecast, (weeks) => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
+  <div class="flex min-h-full flex-col gap-4 pb-8">
     <WeatherControlHeader
       :report-date="reportDate"
       :source-label="sourceLabel"
       @update:report-date="updateReportDate"
     />
 
-    <div class="grid gap-4 xl:grid-cols-[540px_minmax(0,1fr)] xl:items-stretch">
+    <div class="grid shrink-0 gap-4 xl:grid-cols-[520px_minmax(0,1fr)] xl:items-stretch">
       <div class="flex h-full flex-col gap-4">
         <WeatherSummaryCards
           :today="today"
@@ -207,9 +207,10 @@ watch(monthlyForecast, (weeks) => {
       <WeatherRiskPanel :plan-risks="planRisks" :equipment-risks="equipmentRisks" />
     </div>
 
-    <WeatherThreeDayForecast :days="threeDayForecast" :location-label="locationLabel" />
+    <WeatherThreeDayForecast class="shrink-0" :days="threeDayForecast" :location-label="locationLabel" />
 
     <WeatherForecastTabs
+      class="shrink-0"
       :forecast-tab="forecastTab"
       :selected-month-week-id="selectedMonthWeekId"
       :weekly-forecast="weeklyForecast"

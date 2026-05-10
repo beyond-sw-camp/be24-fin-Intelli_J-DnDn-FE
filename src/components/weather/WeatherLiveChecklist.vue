@@ -36,7 +36,7 @@ function getLevelBadgeClass(level) {
 </script>
 
 <template>
-  <article class="relative flex h-[360px] flex-col overflow-hidden rounded-2xl border border-rose-200/90 bg-gradient-to-br from-rose-50/90 via-white to-orange-50/40 p-4 shadow-card ring-1 ring-rose-100/70">
+  <article class="relative flex h-[300px] flex-col overflow-hidden rounded-2xl border border-rose-200/90 bg-gradient-to-br from-rose-50/90 via-white to-orange-50/40 p-4 shadow-card ring-1 ring-rose-100/70">
     <span class="pointer-events-none absolute left-0 top-0 h-full w-1.5 bg-gradient-to-b from-rose-400 to-orange-400" />
     <div class="flex items-start justify-between gap-2.5">
       <div class="flex min-w-0 flex-1 items-start gap-2.5 pl-2">
@@ -53,15 +53,15 @@ function getLevelBadgeClass(level) {
       </span>
     </div>
 
-    <div v-if="loading" class="mt-4 rounded-xl border border-rose-100 bg-white px-5 py-4 text-[15px] font-medium text-slate-600">
+    <div v-if="loading" class="mt-3 rounded-xl border border-rose-100 bg-white px-5 py-4 text-[15px] font-medium text-slate-600">
       기상 관제 데이터를 불러오는 중입니다...
     </div>
 
-    <ul v-else-if="actions.length > 0" class="mt-4 flex-1 space-y-2 overflow-y-auto pr-1">
+    <ul v-else-if="actions.length > 0" class="mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
       <li
         v-for="action in actions"
         :key="action.id"
-        class="flex items-start gap-3 rounded-xl border border-rose-200/80 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+        class="flex items-start gap-3 rounded-xl border border-rose-200/80 bg-white p-2.5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
       >
         <div
           class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
@@ -98,7 +98,7 @@ function getLevelBadgeClass(level) {
 
     <div
       v-else
-      class="mt-4 flex flex-1 flex-col items-center justify-center rounded-xl border border-emerald-200/60 bg-white px-5 py-6"
+      class="mt-3 flex flex-1 flex-col items-center justify-center rounded-xl border border-emerald-200/60 bg-white px-5 py-6"
     >
       <CheckCircle2 class="h-6 w-6 text-emerald-500" />
       <p class="mt-2 text-[14px] font-bold text-emerald-700">즉시 조치할 항목이 없습니다</p>

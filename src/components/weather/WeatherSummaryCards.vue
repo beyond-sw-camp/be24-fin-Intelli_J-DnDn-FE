@@ -48,7 +48,7 @@ defineProps({
 
 <template>
   <div class="grid auto-rows-fr gap-4 sm:grid-cols-2">
-    <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-forena-100/90 bg-white/95 p-5 shadow-card">
+    <article class="flex h-full min-h-[136px] flex-col rounded-2xl border border-forena-100/90 bg-white/95 p-4 shadow-card">
       <div class="flex items-start justify-between gap-3">
         <div class="flex items-center gap-2">
           <Thermometer class="h-4 w-4 shrink-0 text-forena-400" />
@@ -58,7 +58,7 @@ defineProps({
           위험 {{ riskLevel.label }}
         </span>
       </div>
-      <p class="mt-3 text-2xl font-bold tabular-nums text-forena-900">
+      <p class="mt-2 text-2xl font-bold tabular-nums text-forena-900">
         {{ today?.headlineTemp || '--°C / --°C' }}
       </p>
       <p class="mt-2 text-sm leading-relaxed text-slate-600">
@@ -66,7 +66,7 @@ defineProps({
       </p>
     </article>
 
-    <article :class="`flex h-full min-h-[160px] flex-col rounded-2xl p-5 shadow-card transition-colors duration-500 ${windTone.color}`">
+    <article :class="`flex h-full min-h-[136px] flex-col rounded-2xl p-4 shadow-card transition-colors duration-500 ${windTone.color}`">
       <div class="flex items-center gap-2">
         <Wind :class="`h-4 w-4 ${windTone.iconColor}`" />
         <p :class="`text-[11px] font-bold tracking-wide ${windTone.labelColor}`">{{ WEATHER_CONTROL_TEXT.demoWeek }}</p>
@@ -84,15 +84,15 @@ defineProps({
       </p>
     </article>
 
-    <article class="flex h-full min-h-[160px] flex-col rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50 to-cyan-50 p-5 shadow-card">
+    <article class="flex h-full min-h-[136px] flex-col rounded-2xl border border-sky-100/90 bg-gradient-to-br from-sky-50 to-cyan-50 p-4 shadow-card">
       <div class="flex items-center gap-2">
         <Droplets class="h-4 w-4 text-sky-500" />
         <p class="text-[11px] font-bold tracking-wide text-sky-800">{{ WEATHER_CONTROL_TEXT.demoRain }}</p>
       </div>
-      <p class="mt-3 text-3xl font-extrabold tracking-tight text-sky-900 tabular-nums">
+      <p class="mt-2 text-3xl font-extrabold tracking-tight text-sky-900 tabular-nums">
         {{ rainPercent }}%
       </p>
-      <div class="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+      <div class="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
         <div
           class="h-full rounded-full transition-all duration-500"
           :class="rainBarClass"
@@ -104,14 +104,14 @@ defineProps({
       </p>
     </article>
 
-    <article :class="`flex h-full min-h-[160px] flex-col rounded-2xl p-5 shadow-card transition-colors duration-500 border ${fineDustTone.card}`">
+    <article :class="`flex h-full min-h-[136px] flex-col rounded-2xl p-4 shadow-card transition-colors duration-500 border ${fineDustTone.card}`">
       <div class="flex items-center gap-2">
         <Eye :class="`h-4 w-4 ${fineDustTone.icon}`" />
         <p :class="`text-[11px] font-bold tracking-wide ${fineDustTone.title}`">
           {{ WEATHER_CONTROL_TEXT.fineDustTitle }}
         </p>
       </div>
-      <p :class="`mt-3 text-3xl font-extrabold tracking-tight tabular-nums transition-colors duration-500 ${fineDustTone.value}`">
+      <p :class="`mt-2 text-3xl font-extrabold tracking-tight tabular-nums transition-colors duration-500 ${fineDustTone.value}`">
         {{ fineDustValue != null ? fineDustValue : '—' }}<span v-if="fineDustValue != null" class="text-base font-bold">㎍/㎥</span>
       </p>
       <p :class="`mt-2 text-sm leading-relaxed transition-colors duration-500 ${fineDustTone.desc}`">

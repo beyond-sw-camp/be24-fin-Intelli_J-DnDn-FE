@@ -123,7 +123,7 @@ function endPan() {
 </script>
 
 <template>
-  <div class="lg:col-span-2 relative flex min-h-[640px] flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card">
+  <div class="lg:col-span-2 relative flex h-[var(--gate-panel-height)] min-h-0 flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card">
     <div class="absolute right-4 top-4 z-20 flex flex-wrap items-center gap-2">
       <button
         type="button"
@@ -189,7 +189,7 @@ function endPan() {
 
     <div
       ref="mapViewportRef"
-      class="h-full min-h-[640px] overflow-auto bg-slate-100/70"
+      class="h-full min-h-0 overflow-auto bg-slate-100/70"
       :class="mapCursorClass"
       @mousedown="startPan"
       @mousemove="movePan"
