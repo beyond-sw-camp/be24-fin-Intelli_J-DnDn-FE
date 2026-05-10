@@ -43,9 +43,14 @@ const toPlan = (dto) => {
     end: dto.endDate,
     actualStart: dto.actualStart || null,
     effectiveEnd: dto.effectiveEnd || dto.endDate || null,
-    actualPct: dto.actualPct ?? dto.actualProgress ?? null,
-    progressPct: dto.progressPct ?? dto.progress ?? null,
-    processProgress: dto.processProgress ?? null,
+    actualPct:
+      dto.actualPct ??
+      dto.actualProgressPct ??
+      dto.monthlyProgressPct ??
+      dto.actualProgress ??
+      null,
+    progressPct: dto.progressPct ?? dto.progress ?? dto.actualProgressPct ?? null,
+    processProgress: dto.processProgress ?? dto.actualProgressPct ?? null,
     requiredCount: dto.requiredCount ?? 0,
     workers: normalizeStringList(dto.workers),
     equipment: normalizeStringList(dto.equipment),
