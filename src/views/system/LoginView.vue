@@ -366,14 +366,12 @@ const pageBackground = computed(() => `url(${bgImage})`)
 
 const postLoginPath = () => (authStore.initialUploadRequired ? '/site/upload' : '/site/dashboard')
 
-/** 로그인 직후 라우터 query — useCurrentProject 의 siteId / projectId */
+/** 로그인 직후 라우터 query — useCurrentProject 가 읽는 projectId 단일 키만 전달 */
 function loginRouteQuery() {
   const query = {}
   const pid = authStore.projectId
   if (pid != null && pid !== '') {
-    const id = String(pid)
-    query.siteId = id
-    query.projectId = id
+    query.projectId = String(pid)
   }
   return query
 }
@@ -385,6 +383,16 @@ const SITE_ROLES = [
   USER_ROLE.SECTION_SUPERVISOR,
 ]
 const ADMIN_ROLES = [USER_ROLE.ADMIN, USER_ROLE.HEADQUARTOR]
+
+/** 백엔드 LoginMode enum 과 매칭 */
+const backendLoginMode = () => (loginMode.value === 'admin' ? 'ADMIN' : 'SITE')
+
+/**
+ * 데모(로컬) 로그인 시 권한 검증.
+ * 백엔드를 못 탔을 때만 동작 — 따라서 정상 운영에서는 백엔드 검증이 1차이다.
+ */
+const isDemoRoleAllowed = (role) =>
+  loginMode.value === 'admin' ? ADMIN_ROLES.includes(role) : SITE_ROLES.includes(role)
 
 const setMode = (mode) => {
   if (mode === loginMode.value) return
@@ -424,14 +432,38 @@ const handleLogin = async () => {
 
   let didLogin = false
   try {
-    const res = await postAuthLogin({ loginId: loginIdInput, password: passwordInput })
+    // 1차: 서버 인증 — 자격 증명 + 탭(loginMode) ↔ 권한 + 선택 현장(siteProjectId)
+    // 일치 여부를 모두 백엔드에서 검증한다.
+    const res = await postAuthLogin({
+      loginId: loginIdInput,
+      password: passwordInput,
+      loginMode: backendLoginMode(),
+      siteProjectId:
+        loginMode.value === 'site' && selectedProjectId.value != null
+          ? selectedProjectId.value
+          : null,
+    })
     authStore.applyLoginSuccess(res, {
       stayOnLogin: false,
       loginId: loginIdInput,
     })
     didLogin = true
-  } catch (_) {
+  } catch (err) {
+    // 서버가 응답을 돌려줬다면(자격 오류 / 권한 미일치 등) 그 메시지를 그대로 표시하고 종료.
+    // 데모(로컬) 폴백은 네트워크 오류처럼 응답 자체가 없는 경우에만 사용한다.
+    if (err?.responseAvailable) {
+      errorMessage.value = err?.message || '로그인에 실패했습니다.'
+      return
+    }
     if (authStore.loginDemo(loginIdInput, passwordInput)) {
+      if (!isDemoRoleAllowed(authStore.userRole)) {
+        authStore.logout()
+        errorMessage.value =
+          loginMode.value === 'admin'
+            ? '관리자 로그인은 본사 또는 시스템 관리자 계정만 사용할 수 있습니다.'
+            : '현장 로그인은 현장 권한 계정만 사용할 수 있습니다.'
+        return
+      }
       didLogin = true
     }
   }
@@ -443,20 +475,6 @@ const handleLogin = async () => {
 
   if (loginMode.value === 'site' && selectedProjectId.value != null) {
     authStore.setProjectId(selectedProjectId.value)
-  }
-
-  const role = authStore.userRole
-
-  if (loginMode.value === 'site' && !SITE_ROLES.includes(role)) {
-    authStore.logout()
-    errorMessage.value = '현장 로그인은 현장 권한 계정만 사용할 수 있습니다.'
-    return
-  }
-
-  if (loginMode.value === 'admin' && !ADMIN_ROLES.includes(role)) {
-    authStore.logout()
-    errorMessage.value = '관리자 로그인은 본사 또는 시스템 관리자 계정만 사용할 수 있습니다.'
-    return
   }
 
   if (authStore.stayOnLogin) {
@@ -837,6 +855,8 @@ input {
   flex: 1;
   align-content: start;
   min-height: 0;
+  /* hover 시 카드가 1px 떠오르므로 윗행이 잘리지 않도록 살짝 여백 + scroll 패딩 */
+  padding-top: 3px;
   overflow-y: auto;
 }
 .site-card {
