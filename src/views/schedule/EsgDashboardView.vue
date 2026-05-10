@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -28,26 +29,34 @@ import { getGateEquipments } from '@/api/workOrder.js'
 import { fetchWorkPlansByProject } from '@/api/workplan.js'
 import { fetchWorkerList } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
+import EsgDailySummaryTable from '@/components/esg/EsgDailySummaryTable.vue'
+import EsgGrowthPanel from '@/components/esg/EsgGrowthPanel.vue'
+import EsgHeroSection from '@/components/esg/EsgHeroSection.vue'
+import EsgMissionSafetySection from '@/components/esg/EsgMissionSafetySection.vue'
+import EsgScoreBreakdownPanel from '@/components/esg/EsgScoreBreakdownPanel.vue'
+import EsgSiteRankingPanel from '@/components/esg/EsgSiteRankingPanel.vue'
+import { LEVEL_THRESHOLDS, resolveLevel } from '@/utils/esg/esgScoreCalculator.js'
 import {
   buildDashboardZones,
   buildEsgBreakdown,
   buildMissions,
-  buildProjectSiteItems,
-  buildSnapshotPayload,
   buildZoneMetricCards,
   calculateOperatingRiskCount,
+} from '@/utils/esg/esgDashboardMapper.js'
+import {
+  buildProjectSiteItems,
+  buildSnapshotPayload,
   calculateSafetyDays,
-  LEVEL_THRESHOLDS,
-  resolveLevel,
-} from '@/utils/esgDashboardMapper.js'
+} from '@/utils/esg/esgSnapshotMapper.js'
 
 const authStore = useAuthStore()
+const route = useRoute()
 
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
 const lastUpdatedAt = ref('')
 const dashboard = ref(null)
-const selectedProjectId = ref(authStore.projectId ?? null)
+const selectedProjectId = ref(resolveInitialProjectId())
 const selectedZoneId = ref('')
 const activeEsgKey = ref('E')
 let refreshTimer = null
@@ -56,6 +65,9 @@ const projects = ref([])
 const backendRankings = ref([])
 const backendCurrentProject = ref(null)
 const backendCurrentSnapshot = ref(null)
+const backendCurrentZoneSnapshots = ref([])
+const backendTodaySnapshot = ref(null)
+const backendMetricInputs = ref([])
 const sites = ref([])
 
 const equipmentsData = ref([])
@@ -72,6 +84,17 @@ const currentProject = computed(() => {
     ?? null
 })
 const currentProjectId = computed(() => currentProject.value?.idx ?? selectedProjectId.value ?? null)
+const todayDateText = computed(() => getTodayDateText())
+const reportDateState = computed(() => {
+  if (reportDate.value < todayDateText.value) return 'past'
+  if (reportDate.value > todayDateText.value) return 'future'
+  return 'today'
+})
+const isPastReportDate = computed(() => reportDateState.value === 'past')
+const isFutureReportDate = computed(() => reportDateState.value === 'future')
+const displayCurrentSnapshot = computed(() => {
+  return isFutureReportDate.value ? backendTodaySnapshot.value : backendCurrentSnapshot.value
+})
 
 const weatherToday = computed(() => dashboard.value?.today ?? null)
 const weatherAnalysis = computed(() => dashboard.value?.analysis ?? null)
@@ -92,7 +115,11 @@ const gateEquipmentsForCurrentProject = computed(() => {
       return String(equipment.siteIdx) === String(currentProjectId.value)
     }
 
-    return authStore.projectId != null
+    if (authStore.projectId != null && currentProjectId.value != null) {
+      return String(authStore.projectId) === String(currentProjectId.value)
+    }
+
+    return false
   })
 })
 
@@ -132,10 +159,21 @@ const dashboardContext = computed(() => ({
   staffingWorkers: staffingWorkersData.value,
   safetyDays: safetyDays.value,
   currentProjectId: currentProjectId.value,
+  metricInputs: backendMetricInputs.value,
 }))
 
 const siteZones = computed(() => {
-  return buildDashboardZones(filteredEquipments.value, dashboardContext.value)
+  if (isPastReportDate.value && backendCurrentZoneSnapshots.value.length) {
+    return buildSnapshotZones(backendCurrentZoneSnapshots.value)
+  }
+
+  const zones = buildDashboardZones(filteredEquipments.value, dashboardContext.value)
+
+  if (isFutureReportDate.value) {
+    return zones.map((zone) => zeroizeZoneScore(zone))
+  }
+
+  return zones
 })
 
 const selectedZone = computed(() => {
@@ -159,18 +197,37 @@ const esgBreakdown = computed(() => {
 
 const currentSiteSummary = computed(() => {
   const zones = siteZones.value
-  if (!zones.length) {
+  const snapshot = displayCurrentSnapshot.value
+
+  if (isFutureReportDate.value && snapshot) {
     return {
-      score: backendCurrentSnapshot.value?.totalScore ?? 0,
-      level: resolveLevel(backendCurrentSnapshot.value?.totalScore ?? 0),
-      carbon: backendCurrentSnapshot.value?.carbonKg ?? 0,
-      powerSaving: backendCurrentSnapshot.value?.powerSavingKwh ?? 0,
-      riskCount: backendCurrentSnapshot.value?.riskCount ?? 0,
-      missionRate: backendCurrentSnapshot.value?.missionRate ?? 0,
+      score: snapshot.totalScore ?? 0,
+      level: snapshot.level ?? resolveLevel(snapshot.totalScore ?? 0),
+      carbon: snapshot.carbonKg ?? 0,
+      powerSaving: snapshot.powerSavingKwh ?? 0,
+      riskCount: snapshot.riskCount ?? 0,
+      missionRate: snapshot.missionRate ?? 0,
     }
   }
 
-  const avgScore = Math.round((zones.reduce((sum, zone) => sum + zone.score, 0) / zones.length) * 10) / 10
+  if (!zones.length) {
+    return {
+      score: snapshot?.totalScore ?? 0,
+      level: snapshot?.level ?? resolveLevel(snapshot?.totalScore ?? 0),
+      carbon: snapshot?.carbonKg ?? 0,
+      powerSaving: snapshot?.powerSavingKwh ?? 0,
+      riskCount: snapshot?.riskCount ?? 0,
+      missionRate: snapshot?.missionRate ?? 0,
+    }
+  }
+
+  const workZones = zones.filter((zone) => zone.zoneType === 'work')
+  const supportZones = zones.filter((zone) => zone.zoneType !== 'work')
+  const scoreTargets = workZones.length ? workZones : supportZones
+  const avgScore = scoreTargets.length
+    ? Math.round((scoreTargets.reduce((sum, zone) => sum + zone.score, 0) / scoreTargets.length) * 10) / 10
+    : 0
+
   return {
     score: avgScore,
     level: resolveLevel(avgScore),
@@ -190,24 +247,27 @@ const currentSite = computed(() => {
     name: backendCurrentProject.value?.name ?? fallback?.name ?? currentProject.value?.name ?? '현장명 미지정',
     shortName: fallback?.shortName ?? backendCurrentProject.value?.name ?? '현장',
     address: backendCurrentProject.value?.location ?? fallback?.address ?? currentProject.value?.location ?? '',
-    snapshotSaved: backendCurrentSnapshot.value?.snapshotSaved ?? fallback?.snapshotSaved ?? false,
+    snapshotSaved: displayCurrentSnapshot.value?.snapshotSaved ?? fallback?.snapshotSaved ?? false,
     startDate: backendCurrentProject.value?.startDate ?? fallback?.startDate ?? currentProject.value?.startDate ?? null,
     endDate: backendCurrentProject.value?.endDate ?? fallback?.endDate ?? currentProject.value?.endDate ?? null,
     ...currentSiteSummary.value,
   }
 })
 
-const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
+const activeScore = computed(() => isFutureReportDate.value ? currentSite.value.score : (selectedZone.value?.score ?? currentSite.value.score))
 const activeLevel = computed(() => {
+  if (activeScore.value <= 0) return 0
   const index = LEVEL_THRESHOLDS.findLastIndex((score) => activeScore.value >= score)
   return Math.max(1, Math.min(7, index + 1))
 })
 const levelProgress = computed(() => {
+  if (activeLevel.value <= 0) return 0
   const current = LEVEL_THRESHOLDS[activeLevel.value - 1] ?? 0
   const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
   return Math.min(100, Math.max(0, Math.round(((activeScore.value - current) / Math.max(1, next - current)) * 100)))
 })
 const nextLevelPoint = computed(() => {
+  if (activeLevel.value <= 0) return Math.max(0, LEVEL_THRESHOLDS[1] - activeScore.value).toFixed(1)
   const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
   return Math.max(0, next - activeScore.value).toFixed(1)
 })
@@ -260,17 +320,34 @@ const siteRankingItems = computed(() => {
     return b.score - a.score
   })
 })
-const siteLeader = computed(() => siteRankingItems.value[0])
-const currentSiteRank = computed(() => {
-  return siteRankingItems.value.findIndex((site) => String(site.id) === String(selectedSiteId.value)) + 1
+const currentSiteRankIndex = computed(() => {
+  return siteRankingItems.value.findIndex((site) => String(site.id) === String(selectedSiteId.value))
 })
-const scoreGapToLeader = computed(() => {
-  return Math.max(0, (siteLeader.value?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
+const currentSiteRank = computed(() => currentSiteRankIndex.value + 1)
+const upperRankingSite = computed(() => {
+  if (currentSiteRankIndex.value <= 0) return null
+  return siteRankingItems.value[currentSiteRankIndex.value - 1] ?? null
+})
+const nextRankingSite = computed(() => {
+  if (currentSiteRankIndex.value !== 0) return null
+  return siteRankingItems.value[1] ?? null
 })
 const rankingComparison = computed(() => {
-  if (!siteRankingItems.value.length) return '현장 ESG 스냅샷을 불러오는 중입니다.'
-  if (currentSiteRank.value <= 1) return '현재 선택 현장이 ESG 순위 1위입니다.'
-  return `${siteLeader.value?.name ?? '상위 현장'}까지 ${scoreGapToLeader.value}점 부족`
+  if (!siteRankingItems.value.length || currentSiteRankIndex.value < 0) {
+    return '현장 ESG 순위를 불러오는 중입니다.'
+  }
+
+  if (currentSiteRank.value === 1) {
+    if (!nextRankingSite.value) return '현재 현장만 순위 산정 중입니다.'
+    if (!nextRankingSite.value.snapshotSaved) return '현재 현장이 산정 완료 현장 중 1위입니다.'
+
+    const leadPoint = Math.max(0, currentSite.value.score - nextRankingSite.value.score).toFixed(1)
+    return `${nextRankingSite.value.name}보다 ${leadPoint}점 앞서고 있습니다.`
+  }
+
+  const upperSite = upperRankingSite.value
+  const gapPoint = Math.max(0, (upperSite?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
+  return `${currentSiteRank.value - 1}위 ${upperSite?.name ?? '상위 현장'}까지 ${gapPoint}점 차이입니다.`
 })
 
 const riskActions = computed(() => {
@@ -331,10 +408,27 @@ async function loadEsgDashboardMeta(useCurrentSelection = true) {
       projectId: useCurrentSelection ? selectedProjectId.value : currentProjectId.value,
     })
     const payload = unwrapPayload(response)
-    backendCurrentProject.value = payload?.currentProject ?? null
+    let baselinePayload = null
+
+    if (isFutureReportDate.value) {
+      try {
+        const baselineResponse = await getEsgDashboard({
+          reportDate: todayDateText.value,
+          projectId: useCurrentSelection ? selectedProjectId.value : currentProjectId.value,
+        })
+        baselinePayload = unwrapPayload(baselineResponse)
+      } catch {
+        baselinePayload = null
+      }
+    }
+
+    backendCurrentProject.value = payload?.currentProject ?? baselinePayload?.currentProject ?? null
     backendCurrentSnapshot.value = payload?.currentSnapshot ?? null
-    projects.value = normalizeArray(payload?.projects)
-    backendRankings.value = normalizeArray(payload?.rankings)
+    backendTodaySnapshot.value = baselinePayload?.currentSnapshot ?? null
+    backendCurrentZoneSnapshots.value = normalizeArray(payload?.currentZoneSnapshots ?? payload?.currentSnapshot?.zones)
+    projects.value = normalizeArray(payload?.projects ?? baselinePayload?.projects)
+    backendRankings.value = normalizeArray(baselinePayload?.rankings ?? payload?.rankings)
+    backendMetricInputs.value = isFutureReportDate.value ? [] : normalizeArray(payload?.currentMetricInputs)
 
     if (!selectedProjectId.value) {
       selectedProjectId.value = backendCurrentProject.value?.idx ?? authStore.projectId ?? projects.value[0]?.idx ?? null
@@ -343,6 +437,9 @@ async function loadEsgDashboardMeta(useCurrentSelection = true) {
     sites.value = buildProjectSiteItems(projects.value, backendRankings.value, selectedProjectId.value)
   } catch {
     projects.value = await loadProjectFallback()
+    backendCurrentZoneSnapshots.value = []
+    backendTodaySnapshot.value = null
+    backendMetricInputs.value = []
     sites.value = buildProjectSiteItems(projects.value, [], selectedProjectId.value)
   }
 }
@@ -411,6 +508,7 @@ async function loadWorkers() {
 }
 
 async function persistCurrentSnapshot() {
+  if (reportDateState.value !== 'today') return
   if (!currentProjectId.value || !siteZones.value.length) return
 
   try {
@@ -428,35 +526,134 @@ async function persistCurrentSnapshot() {
 }
 
 
-function buildWorkPlanEquipmentRows(workPlans, targetDate) {
-  return normalizeArray(workPlans)
-    .filter((plan) => isDateInPlanRange(
-      targetDate,
-      plan.startDate ?? plan.start,
-      plan.endDate ?? plan.end ?? plan.effectiveEnd,
-    ))
-    .flatMap((plan) => {
-      const equipmentEntries = parseEquipmentEntries(plan.equipmentDisplay ?? plan.equipmentText, plan.equipment)
-      if (!equipmentEntries.length) {
-        return [{
-          idx: `plan-${plan.idx ?? plan.id}-default`,
-          workOrderIdx: null,
-          workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
-          title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
-          tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
-          workDetail: firstText(plan.note, plan.name, ''),
-          workDate: targetDate,
-          workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
-          gateIdx: null,
-          equipmentName: '장비 미지정',
-          equipmentType: '중장비',
-          equipmentCount: 1,
-          statusLabel: plan.status === '진행 중' ? '작업중' : '입차예정',
-        }]
-      }
+function buildSnapshotZones(zoneSnapshots) {
+  return normalizeArray(zoneSnapshots).map((snapshot, index) => {
+    const score = normalizePositiveNumber(snapshot.totalScore, 0)
+    const metrics = buildSnapshotMetrics(snapshot)
 
-      return equipmentEntries.map((equipment, index) => ({
-        idx: `plan-${plan.idx ?? plan.id}-${index}`,
+    return {
+      id: `snapshot-zone-${snapshot.idx ?? index}`,
+      siteId: String(snapshot.projectId ?? currentProjectId.value ?? ''),
+      name: firstText(snapshot.zoneName, `관리구역 ${index + 1}`),
+      type: firstText(snapshot.zoneType, '저장된 ESG 작업구역'),
+      score,
+      level: snapshot.level ?? resolveLevel(score),
+      rank: index + 1,
+      carbon: normalizePositiveNumber(snapshot.carbonKg, 0),
+      powerSaving: normalizePositiveNumber(snapshot.powerSavingKwh, 0),
+      risk: normalizePositiveNumber(snapshot.riskCount, 0),
+      missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
+      lead: 0,
+      status: score > 0 ? '저장' : '0%',
+      equipmentCount: normalizePositiveNumber(snapshot.equipmentCount, 0),
+      highRiskEquipmentCount: normalizePositiveNumber(snapshot.highRiskEquipmentCount, 0),
+      equipmentSummary: '',
+      gateSummary: '',
+      zoneType: snapshot.zoneType ?? 'work',
+      metrics,
+    }
+  })
+}
+
+function buildSnapshotMetrics(snapshot) {
+  const environmentScore = normalizePositiveNumber(snapshot.environmentScore, 0)
+  const socialScore = normalizePositiveNumber(snapshot.socialScore, 0)
+  const governanceScore = normalizePositiveNumber(snapshot.governanceScore, 0)
+  const totalScore = normalizePositiveNumber(snapshot.totalScore, 0)
+
+  return {
+    totalEquipmentCount: normalizePositiveNumber(snapshot.equipmentCount, 0),
+    highRiskEquipmentCount: normalizePositiveNumber(snapshot.highRiskEquipmentCount, 0),
+    washTargetCount: 0,
+    workLocationCount: 0,
+    gateCount: 0,
+    dustWorkCount: 0,
+    weatherRiskCount: normalizePositiveNumber(snapshot.riskCount, 0),
+    missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
+    rainPercent: 0,
+    windSpeed: 0,
+    fineDustValue: 0,
+    fineDustRiskLevel: 0,
+    carbonLoadIndex: 0,
+    estimatedCarbonKg: normalizePositiveNumber(snapshot.carbonKg, 0),
+    carbonScore: environmentScore,
+    estimatedWashWaterLiters: 0,
+    wastewaterRisk: 0,
+    waterScore: environmentScore,
+    fineDustScore: environmentScore,
+    powerPeakRisk: 0,
+    powerSavingKwh: normalizePositiveNumber(snapshot.powerSavingKwh, 0),
+    powerScore: environmentScore,
+    staffingRate: socialScore,
+    safetyEducationRate: socialScore,
+    weatherProtectionScore: socialScore,
+    routeSafetyScore: socialScore,
+    reportRate: governanceScore,
+    actionTrackingRate: governanceScore,
+    dataLinkRate: governanceScore,
+    missingCheckCount: 0,
+    checkScore: governanceScore,
+    safetyDays: safetyDays.value,
+    workerCount: 0,
+    assignedWorkerCount: 0,
+    trainedWorkerCount: 0,
+    environmentScore,
+    socialScore,
+    governanceScore,
+    totalScore,
+    operatingRisk: normalizePositiveNumber(snapshot.riskCount, 0),
+  }
+}
+
+function zeroizeZoneScore(zone) {
+  const metrics = {
+    ...(zone.metrics ?? {}),
+    carbonScore: 0,
+    waterScore: 0,
+    fineDustScore: 0,
+    powerScore: 0,
+    staffingRate: 0,
+    safetyEducationRate: 0,
+    weatherProtectionScore: 0,
+    routeSafetyScore: 0,
+    reportRate: 0,
+    actionTrackingRate: 0,
+    dataLinkRate: 0,
+    checkScore: 0,
+    environmentScore: 0,
+    socialScore: 0,
+    governanceScore: 0,
+    totalScore: 0,
+  }
+
+  return {
+    ...zone,
+    score: 0,
+    level: 0,
+    carbon: 0,
+    powerSaving: 0,
+    risk: 0,
+    missionRate: 0,
+    status: '0%',
+    metrics,
+  }
+}
+
+function buildWorkPlanEquipmentRows(workPlans, targetDate) {
+  const scopedPlans = normalizeArray(workPlans).filter((plan) => isDateInPlanRange(
+    targetDate,
+    plan.startDate ?? plan.start,
+    plan.endDate ?? plan.end ?? plan.effectiveEnd,
+  ))
+  const weeklyPlans = scopedPlans.filter((plan) => normalizePlanType(plan.planType) === 'WEEKLY')
+  const monthlyPlans = scopedPlans.filter((plan) => normalizePlanType(plan.planType) === 'MONTHLY')
+  const selectedPlans = weeklyPlans.length ? weeklyPlans : monthlyPlans
+
+  return selectedPlans.flatMap((plan) => {
+    const equipmentEntries = parseEquipmentEntries(plan.equipmentDisplay ?? plan.equipmentText, plan.equipment)
+    if (!equipmentEntries.length) {
+      return [{
+        idx: `plan-${plan.idx ?? plan.id}-default`,
         workOrderIdx: null,
         workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
         title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
@@ -465,12 +662,37 @@ function buildWorkPlanEquipmentRows(workPlans, targetDate) {
         workDate: targetDate,
         workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
         gateIdx: null,
-        equipmentName: equipment.name,
-        equipmentType: equipment.name,
-        equipmentCount: equipment.count,
-        statusLabel: plan.status === '진행 중' ? '작업중' : '입차예정',
-      }))
-    })
+        equipmentName: '장비 미지정',
+        equipmentType: '중장비',
+        equipmentCount: 1,
+        statusLabel: plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
+      }]
+    }
+
+    return equipmentEntries.map((equipment, index) => ({
+      idx: `plan-${plan.idx ?? plan.id}-${index}`,
+      workOrderIdx: null,
+      workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
+      title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
+      tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
+      workDetail: firstText(plan.note, plan.name, ''),
+      workDate: targetDate,
+      workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
+      gateIdx: null,
+      equipmentName: equipment.name,
+      equipmentType: equipment.name,
+      equipmentCount: equipment.count,
+      statusLabel: plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
+    }))
+  })
+}
+
+function normalizePlanType(value) {
+  const type = String(value || '').toUpperCase()
+  if (type.includes('WEEK') || type === '주간') return 'WEEKLY'
+  if (type.includes('MONTH') || type === '월간') return 'MONTHLY'
+  if (type.includes('YEAR') || type === '연간') return 'YEARLY'
+  return type
 }
 
 function parseEquipmentEntries(displayText, rawEquipment) {
@@ -520,6 +742,12 @@ function firstText(...values) {
 function normalizePositiveNumber(value, fallback) {
   const number = Number(value)
   return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
+function resolveInitialProjectId() {
+  const routeProjectId = Number(route.query.projectId)
+  if (Number.isFinite(routeProjectId)) return routeProjectId
+  return authStore.projectId ?? null
 }
 
 function getTodayDateText() {
@@ -608,6 +836,28 @@ watch(reportDate, () => {
   loadAll()
 })
 
+watch(
+  () => [route.query.projectId, route.query.projectIdx, route.query.siteId, authStore.projectId],
+  () => {
+    const nextProjectId = resolveInitialProjectId()
+    if (!nextProjectId || String(nextProjectId) === String(selectedProjectId.value)) return
+
+    selectedProjectId.value = nextProjectId
+    selectedZoneId.value = ''
+    backendCurrentProject.value = null
+    backendCurrentSnapshot.value = null
+    backendCurrentZoneSnapshots.value = []
+    backendTodaySnapshot.value = null
+    backendMetricInputs.value = []
+    equipmentsData.value = []
+    workPlansData.value = []
+    reportsData.value = []
+    workersData.value = []
+    staffingWorkersData.value = []
+    loadAll()
+  },
+)
+
 watch(siteZones, (zones) => {
   if (!zones.length) return
   if (!zones.find((zone) => zone.id === selectedZoneId.value)) {
@@ -618,414 +868,51 @@ watch(siteZones, (zones) => {
 
 <template>
   <div class="min-h-screen space-y-5 bg-gradient-to-br from-slate-50 via-emerald-50/50 to-sky-50/50 p-5 pb-10">
-    <section class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-950 via-emerald-800 to-teal-700 p-6 text-white shadow-card">
-      <div class="pointer-events-none absolute -right-16 -top-20 h-52 w-52 rounded-full bg-emerald-300/10" />
-      <div class="pointer-events-none absolute bottom-0 left-1/3 h-24 w-72 rounded-full bg-teal-200/10 blur-2xl" />
+    <EsgHeroSection
+      v-model:report-date="reportDate"
+      :current-site="currentSite"
+      :last-updated-at="lastUpdatedAt"
+      :loading="loading"
+      :air-quality="airQuality"
+      :safety-days="safetyDays"
+      :zone-count="siteZones.length"
+      @refresh="loadAll"
+    />
 
-      <div class="relative flex flex-col gap-6">
-        <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div class="flex items-start gap-4">
-            <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/20">
-              <Leaf class="h-7 w-7" />
-            </span>
-            <div>
-              <h1 class="text-3xl font-black tracking-tight">ESG 대시보드</h1>
-              <p class="mt-2 text-sm font-semibold text-emerald-100">
-                {{ currentSite.shortName }} 현장 · 마지막 갱신 {{ lastUpdatedAt || '대기 중' }}
-              </p>
-            </div>
-          </div>
+    <section class="grid items-stretch gap-4 xl:grid-cols-[380px_minmax(0,1fr)_380px]">
+      <EsgGrowthPanel
+        :active-level="activeLevel"
+        :active-score="activeScore"
+        :next-level-point="nextLevelPoint"
+        :level-progress="levelProgress"
+        :building-floors="buildingFloors"
+      />
 
-          <div class="flex flex-wrap items-center gap-3">
-            <div class="rounded-xl bg-white/10 px-4 py-3 ring-1 ring-white/15">
-              <p class="text-[10px] font-bold text-emerald-100">현장</p>
-              <p class="mt-1 text-sm font-black">{{ currentSite.shortName }} 현장</p>
-            </div>
-            <label class="flex items-center gap-3 rounded-xl bg-white/10 px-4 py-3 ring-1 ring-white/15">
-              <div>
-                <p class="text-[10px] font-bold text-emerald-100">기준 일자</p>
-                <input v-model="reportDate" type="date" class="mt-1 bg-transparent text-sm font-black text-white focus:outline-none" />
-              </div>
-              <CalendarDays class="h-4 w-4 text-emerald-100" />
-            </label>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black ring-1 ring-white/15 transition hover:bg-white/15 disabled:opacity-60"
-              :disabled="loading"
-              @click="loadAll"
-            >
-              <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />
-              새로고침
-            </button>
-          </div>
-        </div>
+      <EsgScoreBreakdownPanel
+        v-model:selected-zone-id="selectedZoneId"
+        v-model:active-esg-key="activeEsgKey"
+        :selected-zone="selectedZone"
+        :site-zones="siteZones"
+        :esg-breakdown="esgBreakdown"
+        :zone-metric-cards="zoneMetricCards"
+      />
 
-        <div class="grid gap-3 lg:grid-cols-4">
-          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
-            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
-              <Trophy class="h-3.5 w-3.5 text-amber-300" />
-              ESG 현장 점수
-            </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.score }}<span class="text-lg text-emerald-100">/100</span></p>
-            <p class="mt-1 text-xs text-emerald-100">Lv.{{ currentSite.level }} 시공 단계</p>
-          </div>
-
-          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
-            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
-              <Factory class="h-3.5 w-3.5 text-sky-200" />
-              미세먼지 PM10
-            </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ airQuality?.value ?? '-' }}<span class="text-lg text-emerald-100">{{ airQuality?.value != null ? '㎍/㎥' : '' }}</span></p>
-            <p class="mt-1 text-xs text-emerald-100">{{ airQuality?.label || '미세먼지 연동 대기' }}</p>
-          </div>
-
-          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
-            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
-              <ShieldCheck class="h-3.5 w-3.5 text-sky-200" />
-              안전 무사고 일수
-            </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ safetyDays }}<span class="text-lg text-emerald-100">일</span></p>
-            <p class="mt-1 text-xs text-emerald-100">현장 시작일 기준</p>
-          </div>
-
-          <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
-            <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
-              <AlertTriangle class="h-3.5 w-3.5 text-amber-200" />
-              운영 리스크
-            </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.riskCount }}<span class="text-lg text-emerald-100">건</span></p>
-            <p class="mt-1 text-xs text-emerald-100">기상 기반 자동 검출</p>
-          </div>
-        </div>
-      </div>
+      <EsgSiteRankingPanel
+        :current-site-rank="currentSiteRank"
+        :ranking-comparison="rankingComparison"
+        :site-ranking-items="siteRankingItems"
+        :selected-site-id="selectedSiteId"
+      />
     </section>
 
-    <section class="grid gap-4 xl:grid-cols-[390px_minmax(0,1fr)_380px]">
-      <article class="overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-card">
-        <div class="flex items-start justify-between gap-3 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4">
-          <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Field Level · 현장 빌딩</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">ESG 빌딩 성장</h2>
-          </div>
-          <span class="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-black text-emerald-700">
-            Lv.{{ activeLevel }}
-          </span>
-        </div>
+    <EsgMissionSafetySection
+      :missions="missions"
+      :safety-days="safetyDays"
+    />
 
-        <div class="p-5">
-          <div class="relative mx-auto h-72 max-w-[300px] overflow-hidden rounded-2xl bg-gradient-to-b from-sky-50 via-white to-emerald-50">
-            <div class="absolute inset-x-8 top-8 h-px border-t border-dashed border-slate-200" />
-            <div class="absolute inset-x-10 top-20 h-px border-t border-dashed border-slate-200" />
-            <div class="absolute inset-x-12 top-32 h-px border-t border-dashed border-slate-200" />
-            <span class="absolute right-7 top-6 z-10 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-center text-sm font-black leading-4 text-white shadow-xl ring-4 ring-white">
-              Lv.<br />{{ activeLevel }}
-            </span>
-
-            <div class="absolute bottom-8 left-1/2 w-44 -translate-x-1/2">
-              <div class="mx-auto flex h-52 w-32 flex-col-reverse justify-start gap-1.5">
-                <div
-                  v-for="floor in buildingFloors"
-                  :key="floor"
-                  class="relative h-6 transition-all duration-500"
-                  :class="[
-                    floor <= activeLevel
-                      ? 'border-x-[5px] border-emerald-950 bg-gradient-to-r from-emerald-500 via-teal-400 to-emerald-500 shadow-sm'
-                      : 'border border-dashed border-slate-200 bg-white/45',
-                    floor === activeLevel ? 'border-t-[5px] border-emerald-950' : '',
-                    floor === 1 && floor <= activeLevel ? 'rounded-b-sm' : '',
-                  ]"
-                >
-                  <div class="absolute inset-x-2 top-1.5 grid grid-cols-3 gap-1">
-                    <span
-                      v-for="window in 3"
-                      :key="window"
-                      class="h-2.5 rounded-[2px]"
-                      :class="floor <= activeLevel ? 'bg-emerald-100' : 'bg-slate-100/80'"
-                    />
-                  </div>
-                </div>
-              </div>
-              <div class="mx-auto mt-1 h-3 w-32 rounded-sm bg-forena-900" />
-              <div class="mx-auto h-1.5 w-44 rounded-full bg-slate-400" />
-              <div class="mx-auto mt-1 h-1 w-36 rounded-full bg-slate-300" />
-            </div>
-          </div>
-
-          <div class="mt-5 text-center">
-            <h3 class="text-xl font-black text-forena-900">시공 단계</h3>
-            <p class="mt-2 text-sm font-medium text-forena-600">
-              현재 점수 <span class="font-black text-emerald-700">{{ activeScore }}</span>점 · 다음 레벨까지
-              <span class="font-black text-emerald-700">{{ nextLevelPoint }}</span>점 남음
-            </p>
-          </div>
-
-          <div class="mt-4 h-2 overflow-hidden rounded-full bg-emerald-100">
-            <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${levelProgress}%` }" />
-          </div>
-
-          <div class="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-            <p class="flex items-center gap-2 text-sm font-black text-emerald-900">
-              <Sparkles class="h-4 w-4" />
-              레벨업 가이드
-            </p>
-            <p class="mt-1 text-xs leading-6 text-emerald-700">
-              중장비 공회전을 낮추고 탄소 배출을 줄이면 다음 층이 올라갑니다.
-            </p>
-          </div>
-        </div>
-      </article>
-
-      <article class="rounded-2xl border border-forena-100 bg-white p-6 shadow-card">
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-forena-700">ESG Score</p>
-            <h2 class="mt-1 text-2xl font-black text-forena-900">{{ selectedZone.name }} 점수 분해</h2>
-            <p class="mt-1 text-xs font-semibold text-forena-500">{{ selectedZone.type }} · {{ selectedZone.status }} 단계</p>
-          </div>
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-xs font-black text-emerald-700">
-              작업구역 기준
-            </span>
-            <div class="relative min-w-[170px]">
-              <label class="sr-only" for="zone-select">작업구역 선택</label>
-              <select
-                id="zone-select"
-                v-model="selectedZoneId"
-                class="h-9 w-full appearance-none rounded-full border border-forena-200 bg-white px-3 pr-9 text-xs font-black text-forena-900 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100"
-              >
-                <option v-for="zone in siteZones" :key="zone.id" :value="zone.id">
-                  {{ zone.name }}
-                </option>
-              </select>
-              <ChevronDown class="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-forena-500" />
-            </div>
-          </div>
-        </div>
-
-        <div class="mt-5 grid gap-3 lg:grid-cols-3">
-          <button
-            v-for="item in esgBreakdown"
-            :key="item.key"
-            type="button"
-            class="min-h-[150px] rounded-2xl border p-5 text-left transition"
-            :class="activeEsgKey === item.key ? `${colorClass(item.color, 'soft')} shadow-sm ring-2 ring-emerald-100` : `${colorClass(item.color, 'soft')} opacity-85 hover:opacity-100`"
-            @click="activeEsgKey = item.key"
-          >
-            <div class="flex items-start justify-between">
-              <span class="flex h-12 w-12 items-center justify-center rounded-xl" :class="colorClass(item.color, 'icon')">
-                <component :is="item.icon" class="h-5 w-5" />
-              </span>
-              <p class="text-3xl font-black tabular-nums" :class="colorClass(item.color, 'text')">{{ item.score }}</p>
-            </div>
-            <p class="mt-4 text-base font-black text-forena-900">{{ item.key }} · {{ item.title }}</p>
-            <p class="mt-1 text-[11px] leading-5 text-forena-500">{{ item.subtitle }}</p>
-            <div class="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
-              <div class="h-full rounded-full" :class="colorClass(item.color, 'bar')" :style="{ width: `${item.score}%` }" />
-            </div>
-          </button>
-        </div>
-
-        <div class="mt-5 grid gap-4 lg:grid-cols-2">
-          <div
-            v-for="card in zoneMetricCards"
-            :key="card.id"
-            class="rounded-2xl border border-forena-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-card"
-          >
-            <div class="flex items-start justify-between gap-3">
-              <div class="flex min-w-0 items-start gap-3">
-                <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" :class="card.iconClass">
-                  <component :is="card.icon" class="h-5 w-5" />
-                </span>
-                <div class="min-w-0">
-                  <p class="truncate text-base font-black text-forena-900">{{ card.title }}</p>
-                  <p class="mt-0.5 text-xs font-semibold text-forena-500">{{ card.subtitle }}</p>
-                </div>
-              </div>
-              <span class="shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-black" :class="levelTone(card.badge)">
-                {{ card.badge }}
-              </span>
-            </div>
-            <p class="mt-4 text-3xl font-black tabular-nums" :class="card.valueClass">{{ card.value }}</p>
-          </div>
-        </div>
-      </article>
-
-      <article class="rounded-2xl border border-amber-100 bg-white p-5 shadow-card">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-amber-600">Site Ranking</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 순위</h2>
-          </div>
-        </div>
-
-        <div class="mt-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-5 text-white shadow-lg">
-          <div class="flex items-center justify-between gap-3">
-            <p class="flex items-center gap-2 text-sm font-black text-emerald-100">
-              <Target class="h-4 w-4" />
-              내 순위
-            </p>
-            <p class="text-3xl font-black tabular-nums">{{ currentSiteRank }}위</p>
-          </div>
-          <p class="mt-3 text-sm font-black">
-            {{ rankingComparison }}
-          </p>
-        </div>
-
-        <div class="mt-4 space-y-3">
-          <div
-            v-for="(item, index) in siteRankingItems"
-            :key="item.id"
-            class="rounded-2xl border p-3 transition"
-            :class="item.id === selectedSiteId ? 'border-emerald-300 bg-emerald-50 ring-2 ring-emerald-100' : 'border-forena-100 bg-white'"
-          >
-            <div class="flex items-center gap-3">
-              <span
-                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sm font-black"
-                :class="index === 0 ? 'bg-amber-100 text-amber-700' : item.id === selectedSiteId ? 'bg-sky-100 text-sky-700' : 'bg-forena-100 text-forena-700'"
-              >
-                <Trophy v-if="index === 0" class="h-4 w-4" />
-                <span v-else>{{ index + 1 }}</span>
-              </span>
-              <div class="min-w-0 flex-1">
-                <div class="flex min-w-0 items-center gap-2">
-                  <p class="truncate text-sm font-black text-forena-900">{{ item.name }}</p>
-                  <span
-                    v-if="item.id === selectedSiteId"
-                    class="shrink-0 rounded-full bg-emerald-600 px-2 py-0.5 text-[10px] font-black text-white"
-                  >
-                    현재
-                  </span>
-                </div>
-                <p class="mt-0.5 text-[11px] text-forena-500">{{ item.address }}</p>
-              </div>
-              <p class="text-lg font-black tabular-nums text-emerald-800">{{ item.snapshotSaved ? item.score : '산정 대기' }}</p>
-            </div>
-            <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
-              <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${item.snapshotSaved ? item.score : 0}%` }" />
-            </div>
-          </div>
-        </div>
-      </article>
-    </section>
-
-    <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
-      <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-emerald-700">Mission</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
-          </div>
-          <Target class="h-6 w-6 text-emerald-600" />
-        </div>
-
-        <div class="mt-5 grid gap-3 lg:grid-cols-3">
-          <div
-            v-for="mission in missions"
-            :key="mission.id"
-            class="rounded-2xl border p-4"
-            :class="colorClass(mission.color, 'soft')"
-          >
-            <div class="flex items-start justify-between gap-2">
-              <div>
-                <p class="text-sm font-black text-forena-900">{{ mission.title }}</p>
-                <p class="mt-1 text-[11px] text-forena-500">{{ mission.description }}</p>
-              </div>
-              <p class="text-lg font-black tabular-nums" :class="colorClass(mission.color, 'text')">{{ mission.progress }}%</p>
-            </div>
-            <div class="mt-4 h-2 overflow-hidden rounded-full bg-white">
-              <div class="h-full rounded-full" :class="colorClass(mission.color, 'bar')" :style="{ width: `${mission.progress}%` }" />
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-rose-700">Action</p>
-            <h2 class="mt-1 text-xl font-black text-forena-900">기상 기반 즉시 조치</h2>
-          </div>
-          <Zap class="h-6 w-6 text-rose-500" />
-        </div>
-
-        <div class="mt-4 space-y-3">
-          <div
-            v-for="action in riskActions"
-            :key="action.id"
-            class="rounded-2xl border border-forena-100 bg-forena-50/40 p-4"
-          >
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-black text-forena-900">{{ action.title }}</p>
-                <p class="mt-1 text-xs leading-5 text-forena-500">{{ action.detail }}</p>
-              </div>
-              <span class="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold" :class="levelTone(action.level)">
-                {{ action.level }}
-              </span>
-            </div>
-          </div>
-        </div>
-      </article>
-    </section>
-
-    <section class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p class="text-[11px] font-bold uppercase tracking-wide text-forena-500">Competition Log</p>
-          <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 성과 요약</h2>
-        </div>
-        <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
-          <ArrowUpRight class="h-3.5 w-3.5" />
-          {{ currentSite.snapshotSaved ? `${currentSite.shortName} 현장 ESG 스냅샷 반영` : `${currentSite.shortName} 현장 ESG 계산 결과` }}
-        </span>
-      </div>
-
-      <div class="mt-5 overflow-x-auto">
-        <table class="w-full min-w-[760px] text-sm">
-          <thead>
-            <tr class="border-b border-forena-100 text-left text-[11px] font-bold uppercase tracking-wide text-forena-500">
-              <th class="py-3 pr-4">구분</th>
-              <th class="py-3 pr-4">대상</th>
-              <th class="py-3 pr-4">ESG 점수</th>
-              <th class="py-3 pr-4">레벨</th>
-              <th class="py-3 pr-4">주요 기여</th>
-              <th class="py-3 text-right">상태</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="zone in siteZones"
-              :key="zone.id"
-              class="border-b border-forena-50 transition hover:bg-forena-50/40"
-            >
-              <td class="py-3 pr-4">
-                <span class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                  <Medal class="h-3 w-3" />
-                  {{ zone.rank }}위
-                </span>
-              </td>
-              <td class="py-3 pr-4">
-                <p class="font-bold text-forena-900">{{ zone.name }}</p>
-                <p class="mt-0.5 text-[11px] text-forena-500">{{ zone.type }}</p>
-              </td>
-              <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ zone.score }}</td>
-              <td class="py-3 pr-4">
-                <span class="rounded-full border border-forena-200 bg-white px-2 py-0.5 text-[11px] font-bold text-forena-700">
-                  Lv.{{ zone.level }}
-                </span>
-              </td>
-              <td class="py-3 pr-4 text-xs text-forena-600">
-                탄소 {{ zone.carbon }}kg · 전력 {{ zone.powerSaving }}kWh · 리스크 {{ zone.risk }}건
-              </td>
-              <td class="py-3 text-right">
-                <span class="rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="levelTone(zone.status)">
-                  {{ zone.status }}
-                </span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <EsgDailySummaryTable
+      :current-site="currentSite"
+      :site-zones="siteZones"
+    />
   </div>
 </template>
