@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { submitWeeklyWorkPlan } from '@/api/workplan.js'
+import { formatPhoneNumber, isValidPhoneNumber } from '@/utils/inputFormat'
 
 export function useWeeklyWorkPlanForm({ monthlyPlans, reloadPlans }) {
   const showWeeklyForm = ref(false)
@@ -66,7 +67,7 @@ export function useWeeklyWorkPlanForm({ monthlyPlans, reloadPlans }) {
     weeklyForm.value.monthlyLocation = selected.location || ''
     weeklyForm.value.partner = selected.partner || ''
     weeklyForm.value.manager = selected.manager || ''
-    weeklyForm.value.contact = selected.contact || ''
+    weeklyForm.value.contact = formatPhoneNumber(selected.contact || '')
     weeklyForm.value.weekStart = selected.start || weeklyForm.value.weekStart
     weeklyForm.value.items = [
       makeWeeklyItem(selected.start || weeklyForm.value.weekStart, {
@@ -135,6 +136,7 @@ export function useWeeklyWorkPlanForm({ monthlyPlans, reloadPlans }) {
     const form = weeklyForm.value
     if (!form.monthlyPlanId) return false
     if (!form.partner.trim() || !form.manager.trim()) return false
+    if (!isValidPhoneNumber(form.contact, { required: true })) return false
 
     return form.items.every(
       (item) =>
@@ -157,6 +159,8 @@ export function useWeeklyWorkPlanForm({ monthlyPlans, reloadPlans }) {
   async function submitWeeklyForm() {
     if (!weeklyFormValid.value) return
     const form = weeklyForm.value
+    const contact = formatPhoneNumber(form.contact)
+    form.contact = contact
 
     try {
       const payload = {
@@ -164,7 +168,7 @@ export function useWeeklyWorkPlanForm({ monthlyPlans, reloadPlans }) {
         tradeProcessId: form.tradeProcessId,
         partner: form.partner,
         manager: form.manager,
-        contact: form.contact,
+        contact,
         weekStart: form.weekStart,
         items: form.items.map((item) => ({
           date: item.date,

@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { EQUIPMENT_GROUPS, WORKER_TRADES } from '@/utils/schedule/workPlan.js'
+import { formatPhoneNumber } from '@/utils/inputFormat'
 
 const props = defineProps({
   show: {
@@ -187,17 +188,23 @@ function itemEquipmentTotal(item) {
           </div>
           <div>
             <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-              >연락처</label
+              >연락처 <span class="text-rose-500">*</span></label
             >
             <input
               v-model="weeklyForm.contact"
+              type="tel"
               placeholder="010-0000-0000"
+              inputmode="tel"
+              maxlength="13"
+              autocomplete="tel"
+              required
               class="w-full rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-flare-400"
+              @input="weeklyForm.contact = formatPhoneNumber(weeklyForm.contact)"
             />
           </div>
           <div>
             <label class="mb-1 block text-[10px] font-bold uppercase tracking-wide text-forena-500"
-              >주 시작일(일)</label
+              >일정 시작일</label
             >
             <input
               type="date"

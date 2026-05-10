@@ -22,6 +22,15 @@ import {
 } from '@/api/auth.js'
 import { getProjectList, getMilestoneTradeNames } from '@/api/project.js'
 import { userRoleLabel, USER_ROLE } from '@/stores/authStore'
+import {
+  formatEmailInput,
+  formatLoginId,
+  formatPhoneNumber,
+  isValidEmail,
+  isValidLoginId,
+  isValidPhoneNumber,
+  normalizeEmail,
+} from '@/utils/inputFormat'
 
 const T = {
   kicker: '시스템 관리',
@@ -814,15 +823,32 @@ function deriveSiteCodeFromEditForm() {
 
 async function submitModal() {
   if (modalMode.value === 'create') {
-    const loginId = String(formCreate.loginId || '').trim()
+    const loginId = formatLoginId(formCreate.loginId)
     const password = String(formCreate.password || '').trim()
     const name = String(formCreate.name || '').trim()
-    if (!loginId || !password || password.length < 8) {
+    const phone = formatPhoneNumber(formCreate.phone)
+    const email = normalizeEmail(formCreate.email)
+    formCreate.loginId = loginId
+    formCreate.phone = phone
+    formCreate.email = email
+    if (!isValidLoginId(loginId)) {
+      pushToast('로그인 ID는 영문/숫자/._- 조합 4~30자로 입력해 주세요.', 'warning')
+      return
+    }
+    if (!password || password.length < 8) {
       pushToast('로그인 ID와 비밀번호(8자 이상)를 확인해 주세요.', 'warning')
       return
     }
     if (!name) {
       pushToast('이름을 입력해 주세요.', 'warning')
+      return
+    }
+    if (!isValidPhoneNumber(phone)) {
+      pushToast('휴대폰 번호는 010-1234-5678 형식으로 입력해 주세요.', 'warning')
+      return
+    }
+    if (!isValidEmail(email)) {
+      pushToast('이메일은 name@example.com 형식으로 입력해 주세요.', 'warning')
       return
     }
     if (needsSiteForRole.value && formCreate.projectIdx == null) {
@@ -841,8 +867,8 @@ async function submitModal() {
         loginId,
         password,
         name,
-        phone: String(formCreate.phone || '').trim() || undefined,
-        email: String(formCreate.email || '').trim() || undefined,
+        phone: phone || undefined,
+        email: email || undefined,
         role: formCreate.role,
         siteCode,
         trade: needsTrade.value ? String(formCreate.trade || '').trim() : undefined,
@@ -858,6 +884,25 @@ async function submitModal() {
 
   const idx = editingIdx.value
   if (idx == null) return
+
+  const editName = String(formEdit.name || '').trim()
+  const editPhone = formatPhoneNumber(formEdit.phone)
+  const editEmail = normalizeEmail(formEdit.email)
+  formEdit.phone = editPhone
+  formEdit.email = editEmail
+
+  if (!editName) {
+    pushToast('이름을 입력해 주세요.', 'warning')
+    return
+  }
+  if (!isValidPhoneNumber(editPhone)) {
+    pushToast('휴대폰 번호는 010-1234-5678 형식으로 입력해 주세요.', 'warning')
+    return
+  }
+  if (!isValidEmail(editEmail)) {
+    pushToast('이메일은 name@example.com 형식으로 입력해 주세요.', 'warning')
+    return
+  }
 
   if (editNeedsSite.value && formEdit.projectIdx == null) {
     pushToast('현장을 선택해 주세요.', 'warning')
@@ -903,9 +948,9 @@ async function submitModal() {
 
   try {
     await putAdminAccount(idx, {
-      name: String(formEdit.name || '').trim(),
-      phone: String(formEdit.phone || '').trim() || undefined,
-      email: String(formEdit.email || '').trim() || undefined,
+      name: editName,
+      phone: editPhone || undefined,
+      email: editEmail || undefined,
       role: formEdit.role,
       siteCode: siteCodeMerged,
       trade: tradeMerged,
@@ -2039,7 +2084,12 @@ watch(
                   v-model="formCreate.loginId"
                   type="text"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm font-mono"
+                  placeholder="user01"
+                  maxlength="30"
+                  spellcheck="false"
+                  autocapitalize="off"
                   autocomplete="off"
+                  @input="formCreate.loginId = formatLoginId(formCreate.loginId)"
                 />
               </label>
               <label class="block">
@@ -2048,6 +2098,8 @@ watch(
                   v-model="formCreate.password"
                   type="password"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  minlength="8"
+                  maxlength="32"
                   autocomplete="new-password"
                 />
               </label>
@@ -2057,6 +2109,11 @@ watch(
                   v-model="formCreate.phone"
                   type="tel"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  placeholder="010-1234-5678"
+                  inputmode="tel"
+                  maxlength="13"
+                  autocomplete="tel"
+                  @input="formCreate.phone = formatPhoneNumber(formCreate.phone)"
                 />
               </label>
               <label class="block">
@@ -2065,6 +2122,11 @@ watch(
                   v-model="formCreate.email"
                   type="email"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  placeholder="name@example.com"
+                  maxlength="80"
+                  autocomplete="email"
+                  @input="formCreate.email = formatEmailInput(formCreate.email)"
+                  @blur="formCreate.email = normalizeEmail(formCreate.email)"
                 />
               </label>
               <label class="block">
@@ -2073,6 +2135,8 @@ watch(
                   v-model="formCreate.name"
                   type="text"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  maxlength="30"
+                  autocomplete="name"
                 />
               </label>
 
@@ -2136,6 +2200,8 @@ watch(
                   v-model="formEdit.name"
                   type="text"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  maxlength="30"
+                  autocomplete="name"
                 />
               </label>
               <label class="block">
@@ -2144,6 +2210,11 @@ watch(
                   v-model="formEdit.phone"
                   type="tel"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  placeholder="010-1234-5678"
+                  inputmode="tel"
+                  maxlength="13"
+                  autocomplete="tel"
+                  @input="formEdit.phone = formatPhoneNumber(formEdit.phone)"
                 />
               </label>
               <label class="block">
@@ -2152,6 +2223,11 @@ watch(
                   v-model="formEdit.email"
                   type="email"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                  placeholder="name@example.com"
+                  maxlength="80"
+                  autocomplete="email"
+                  @input="formEdit.email = formatEmailInput(formEdit.email)"
+                  @blur="formEdit.email = normalizeEmail(formEdit.email)"
                 />
               </label>
               <label class="block">

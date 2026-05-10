@@ -423,12 +423,6 @@ const newDoc = ref({
 })
 
 /* ───── 통계 ───── */
-const summary = computed(() => ({
-  total: documents.value.length,
-  hq: documents.value.filter((d) => d.origin === 'hq').length,
-  partner: documents.value.filter((d) => d.origin === 'partner').length,
-}))
-
 /* ───── 아래 테이블 전용 ─────
  * documents: 서버에서 TRADE_PLAN만 가져옴 (공정표 3종 제외 완료)
  * workOrderDocs / reportDocs: 별도 API에서 일괄 로드 (전체)
@@ -508,6 +502,32 @@ const pageStart = computed(() =>
 const pageEnd = computed(() =>
   Math.min(currentPage.value * rowsPerPage.value, totalElements.value)
 )
+
+const visiblePageItems = computed(() => {
+  const total = totalPages.value
+  const current = currentPage.value
+
+  if (total <= 9) {
+    return Array.from({ length: total }, (_, index) => index + 1)
+  }
+
+  const pages = new Set([1, 2, total - 1, total])
+  for (let page = current - 2; page <= current + 2; page += 1) {
+    if (page >= 1 && page <= total) pages.add(page)
+  }
+
+  const sorted = [...pages].sort((a, b) => a - b)
+  const items = []
+  sorted.forEach((page, index) => {
+    const prev = sorted[index - 1]
+    if (index > 0 && page - prev > 1) {
+      items.push(`ellipsis-${prev}-${page}`)
+    }
+    items.push(page)
+  })
+
+  return items
+})
 
 /* ───── 핸들러 ───── */
 const toggleSort = (field) => {
@@ -1289,7 +1309,7 @@ const docTypeBadgeClass = (type) => {
     </div>
 
     <!-- ═══ 통계 카드 ═══ -->
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ">
+    <div v-if="false" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ">
       <!-- 전체 -->
       <article
         class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
@@ -1707,8 +1727,8 @@ const docTypeBadgeClass = (type) => {
       </div>
 
       <!-- 페이지네이션 -->
-      <div class="flex flex-col items-center justify-between gap-3 border-t border-forena-50 px-6 py-2 sm:flex-row">
-        <p class="text-xs text-slate-500">
+      <div class="relative flex flex-col items-center justify-center gap-3 border-t border-forena-50 px-6 py-2 sm:min-h-[44px]">
+        <p class="shrink-0 whitespace-nowrap text-xs text-slate-500 sm:absolute sm:left-6 sm:top-1/2 sm:-translate-y-1/2">
           {{
             L.pageInfo
               .replace('{total}', totalElements)
@@ -1716,7 +1736,7 @@ const docTypeBadgeClass = (type) => {
               .replace('{end}', pageEnd)
           }}
         </p>
-        <div class="flex items-center gap-1">
+        <div class="flex max-w-full flex-wrap items-center justify-center gap-1">
           <button
             type="button"
             class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
@@ -1725,8 +1745,15 @@ const docTypeBadgeClass = (type) => {
           >
             <ChevronLeft class="h-3.5 w-3.5" />
           </button>
-          <template v-for="p in totalPages" :key="p">
+          <template v-for="p in visiblePageItems" :key="p">
+            <span
+              v-if="typeof p === 'string'"
+              class="flex h-6 min-w-6 items-center justify-center px-1 text-xs font-bold text-slate-300"
+            >
+              ...
+            </span>
             <button
+              v-else
               type="button"
               class="h-6 w-6 rounded-lg text-xs font-bold transition"
               :class="

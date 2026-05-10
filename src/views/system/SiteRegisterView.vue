@@ -17,6 +17,15 @@ import {
 } from '@/api/auth.js'
 import { getProjectList, createProject, updateProject } from '@/api/project.js'
 import { USER_ROLE, userRoleLabel } from '@/stores/authStore'
+import {
+  formatEmailInput,
+  formatPhoneNumber,
+  formatSiteCode,
+  isValidEmail,
+  isValidPhoneNumber,
+  isValidSiteCode,
+  normalizeEmail,
+} from '@/utils/inputFormat'
 
 const router = useRouter()
 
@@ -261,11 +270,16 @@ function isoDate(d) {
 }
 
 async function submitRegister() {
-  const code = String(form.siteCode || '').trim()
+  const code = formatSiteCode(form.siteCode)
   const name = String(form.siteName || '').trim()
   const address = String(form.address || '').trim()
+  form.siteCode = code
   if (!code || !name || !address) {
     window.alert('현장 코드, 현장 명, 주소를 모두 입력해 주세요.')
+    return
+  }
+  if (!isValidSiteCode(code)) {
+    window.alert('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.')
     return
   }
   const combinedName = `[${code}] ${name}`
@@ -303,7 +317,7 @@ function openEditSite(row) {
   if (!p) return
   const { code, displayName } = parseProjectLabel(String(p.name || ''))
   editSiteForm.idx = p.idx
-  editSiteForm.siteCode = code || ''
+  editSiteForm.siteCode = formatSiteCode(code)
   editSiteForm.siteName = displayName || ''
   editSiteForm.address = String(p.location ?? '').trim()
   const sd = p.startDate
@@ -318,11 +332,16 @@ function closeSiteEdit() {
 }
 
 async function submitSiteEdit() {
-  const code = String(editSiteForm.siteCode || '').trim()
+  const code = formatSiteCode(editSiteForm.siteCode)
   const nm = String(editSiteForm.siteName || '').trim()
   const addr = String(editSiteForm.address || '').trim()
+  editSiteForm.siteCode = code
   if (!code || !nm || !addr) {
     pushToast('현장 코드, 명, 주소를 확인해 주세요.', 'warning')
+    return
+  }
+  if (!isValidSiteCode(code)) {
+    pushToast('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.', 'warning')
     return
   }
   try {
@@ -402,6 +421,25 @@ async function submitAccountModal() {
   const idx = editingIdx.value
   if (idx == null) return
 
+  const name = String(formEdit.name || '').trim()
+  const phone = formatPhoneNumber(formEdit.phone)
+  const email = normalizeEmail(formEdit.email)
+  formEdit.phone = phone
+  formEdit.email = email
+
+  if (!name) {
+    pushToast('이름을 입력해 주세요.', 'warning')
+    return
+  }
+  if (!isValidPhoneNumber(phone)) {
+    pushToast('휴대폰 번호는 010-1234-5678 형식으로 입력해 주세요.', 'warning')
+    return
+  }
+  if (!isValidEmail(email)) {
+    pushToast('이메일은 name@example.com 형식으로 입력해 주세요.', 'warning')
+    return
+  }
+
   const prevRow = accounts.value.find((a) => a.idx === idx)
   const siteCodeMerged =
     prevRow?.siteCode != null && String(prevRow.siteCode).trim() !== ''
@@ -414,9 +452,9 @@ async function submitAccountModal() {
 
   try {
     await putAdminAccount(idx, {
-      name: String(formEdit.name || '').trim(),
-      phone: String(formEdit.phone || '').trim() || undefined,
-      email: String(formEdit.email || '').trim() || undefined,
+      name,
+      phone: phone || undefined,
+      email: email || undefined,
       role: formEdit.role,
       siteCode: siteCodeMerged,
       trade: tradeMerged,
@@ -716,7 +754,11 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2 font-mono text-sm"
                 :placeholder="T.codePh"
+                maxlength="20"
+                spellcheck="false"
+                autocapitalize="characters"
                 autocomplete="off"
+                @input="form.siteCode = formatSiteCode(form.siteCode)"
               />
             </label>
             <label class="block">
@@ -726,6 +768,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2"
                 :placeholder="T.namePh"
+                maxlength="60"
               />
             </label>
             <label class="block">
@@ -735,6 +778,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2"
                 :placeholder="T.addrPh"
+                maxlength="120"
               />
             </label>
           </div>
@@ -785,7 +829,11 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2 font-mono text-sm"
                 :placeholder="T.codePh"
+                maxlength="20"
+                spellcheck="false"
+                autocapitalize="characters"
                 autocomplete="off"
+                @input="editSiteForm.siteCode = formatSiteCode(editSiteForm.siteCode)"
               />
             </label>
             <label class="block">
@@ -795,6 +843,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2"
                 :placeholder="T.namePh"
+                maxlength="60"
               />
             </label>
             <label class="block">
@@ -804,6 +853,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 type="text"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2"
                 :placeholder="T.addrPh"
+                maxlength="120"
               />
             </label>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -865,11 +915,20 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
             <p class="rounded-lg bg-forena-50 px-3 py-2 text-[11px] text-forena-600">{{ T.loginIdRo }}</p>
             <label class="block">
               <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.lblAccountName }}</span>
-              <input v-model="formEdit.name" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+              <input v-model="formEdit.name" type="text" class="w-full rounded-lg border border-forena-200 px-3 py-2" maxlength="30" autocomplete="name" />
             </label>
             <label class="block">
               <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.phone }}</span>
-              <input v-model="formEdit.phone" type="tel" class="w-full rounded-lg border border-forena-200 px-3 py-2" />
+              <input
+                v-model="formEdit.phone"
+                type="tel"
+                class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                placeholder="010-1234-5678"
+                inputmode="tel"
+                maxlength="13"
+                autocomplete="tel"
+                @input="formEdit.phone = formatPhoneNumber(formEdit.phone)"
+              />
             </label>
             <label class="block">
               <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
@@ -877,6 +936,11 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 v-model="formEdit.email"
                 type="email"
                 class="w-full rounded-lg border border-forena-200 px-3 py-2"
+                placeholder="name@example.com"
+                maxlength="80"
+                autocomplete="email"
+                @input="formEdit.email = formatEmailInput(formEdit.email)"
+                @blur="formEdit.email = normalizeEmail(formEdit.email)"
               />
             </label>
             <label class="block">
