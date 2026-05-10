@@ -96,10 +96,6 @@ export function useWorkPlanGantt({
   const monthlyGanttSource = computed(() => {
     let r = [...baselinePlans.value, ...monthlyPlans.value]
 
-    if (filterTrade.value) {
-      r = r.filter((p) => tradeMatches(p.trade, filterTrade.value))
-    }
-
     if (filterStatus.value) {
       r = r.filter((p) => workPlanStatus(p) === filterStatus.value)
     }
@@ -109,10 +105,6 @@ export function useWorkPlanGantt({
 
   const yearlyGanttSource = computed(() => {
     let r = [...baselinePlans.value, ...annualPlans.value]
-
-    if (filterTrade.value) {
-      r = r.filter((p) => tradeMatches(p.trade, filterTrade.value))
-    }
 
     if (filterStatus.value) {
       r = r.filter((p) => workPlanStatus(p) === filterStatus.value)
@@ -156,25 +148,27 @@ export function useWorkPlanGantt({
   // 막대 위치/너비 계산 — 이번 달 영역 내로 클리핑
   function barStyle(startStr, endStr) {
     if (!startStr || !endStr) return null
-    const { firstDate, lastDate } = monthMeta.value
+    const { firstDate, lastDate, daysInMonth } = monthMeta.value
     if (endStr < firstDate || startStr > lastDate) return null
     const s = startStr < firstDate ? firstDate : startStr
     const e = endStr > lastDate ? lastDate : endStr
     const sd = Number(s.slice(8, 10))
     const ed = Number(e.slice(8, 10))
     const span = Math.max(1, ed - sd + 1)
+    const leftPct = ((sd - 1) / daysInMonth) * 100
+    const widthPct = (span / daysInMonth) * 100
     return {
-      left: `${(sd - 1) * GANTT_DAY_W + 4}px`,
-      width: `${span * GANTT_DAY_W - 8}px`,
+      left: `${leftPct}%`,
+      width: `${Math.max(0.2, widthPct)}%`,
     }
   }
 
   function monthCellCenterStyle(dateStr) {
     if (!dateStr) return null
-    const { firstDate, lastDate } = monthMeta.value
+    const { firstDate, lastDate, daysInMonth } = monthMeta.value
     if (dateStr < firstDate || dateStr > lastDate) return null
     const day = Number(dateStr.slice(8, 10))
-    return { left: `${(day - 1) * GANTT_DAY_W + GANTT_DAY_W / 2}px` }
+    return { left: `${((day - 0.5) / daysInMonth) * 100}%` }
   }
 
   function yearBarStyle(startStr, endStr) {
@@ -261,10 +255,9 @@ export function useWorkPlanGantt({
   // 오늘 라인
   const todayLineStyle = computed(() => {
     const t = new Date()
-    const { year, month } = monthMeta.value
+    const { year, month, daysInMonth } = monthMeta.value
     if (t.getFullYear() !== year || t.getMonth() + 1 !== month) return null
-    const left = (t.getDate() - 1) * GANTT_DAY_W + GANTT_DAY_W / 2
-    return { left: `${left}px` }
+    return { left: `${((t.getDate() - 0.5) / daysInMonth) * 100}%` }
   })
 
   const chartWidth = computed(() => `max(100%, ${monthMeta.value.daysInMonth * GANTT_DAY_W}px)`)
@@ -319,7 +312,7 @@ export function useWorkPlanGantt({
       // 마일스톤은 연간 계획 행으로 보여주면 안 됨
       if (baseIsMilestone(b)) continue
 
-      if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
+      if (filterTrade.value && !tradeMatches(baseTradeName(b), filterTrade.value)) continue
 
       const trade = baseTradeName(b)
       if (!tradeMap.has(trade)) tradeMap.set(trade, [])
@@ -345,7 +338,9 @@ export function useWorkPlanGantt({
       const tpid = workPlanTradeProcessId(w)
       if (tpid == null) {
         console.warn('[WorkPlanView] tradeProcessId 없는 work_plan:', w)
-        orphans.push(w)
+        if (!filterTrade.value || tradeMatches(w.trade, filterTrade.value)) {
+          orphans.push(w)
+        }
         continue
       }
 
@@ -359,7 +354,9 @@ export function useWorkPlanGantt({
       }
       if (!matched) {
         console.warn('[WorkPlanView] 매칭되는 trade_process 없음:', w)
-        orphans.push(w)
+        if (!filterTrade.value || tradeMatches(w.trade, filterTrade.value)) {
+          orphans.push(w)
+        }
         continue
       }
 
@@ -471,7 +468,7 @@ export function useWorkPlanGantt({
       // 마일스톤은 연간 계획 행으로 보여주면 안 됨
       if (baseIsMilestone(b)) continue
 
-      if (filterTrade.value && baseTradeName(b) !== filterTrade.value) continue
+      if (filterTrade.value && !tradeMatches(baseTradeName(b), filterTrade.value)) continue
 
       const trade = baseTradeName(b)
       const tpid = baseId(b)
@@ -499,7 +496,9 @@ export function useWorkPlanGantt({
     for (const w of plans) {
       const tpid = workPlanTradeProcessId(w)
       if (tpid == null) {
-        orphans.push(w)
+        if (!filterTrade.value || tradeMatches(w.trade, filterTrade.value)) {
+          orphans.push(w)
+        }
         continue
       }
       let matched = null
@@ -511,7 +510,9 @@ export function useWorkPlanGantt({
         }
       }
       if (!matched) {
-        orphans.push(w)
+        if (!filterTrade.value || tradeMatches(w.trade, filterTrade.value)) {
+          orphans.push(w)
+        }
         continue
       }
       if (filterStatus.value && workPlanStatus(w) !== filterStatus.value) continue
