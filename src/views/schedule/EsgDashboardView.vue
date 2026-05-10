@@ -19,313 +19,183 @@ import {
   Users,
   Zap,
 } from 'lucide-vue-next'
-import api from '@/api/index.js'
-import { fetchGateList } from '@/api/gate.js'
+import { getEsgDashboard, saveEsgSnapshot } from '@/api/esgDashboard.js'
+import { getProjectList } from '@/api/project.js'
+import { getReportsByDate } from '@/api/report.js'
+import { fetchWeatherDashboard } from '@/api/weatherControl.js'
+import { getStaffingWorkerPool } from '@/api/staffing.js'
 import { getGateEquipments } from '@/api/workOrder.js'
+import { fetchWorkPlansByProject } from '@/api/workplan.js'
+import { fetchWorkerList } from '@/api/worker.js'
+import { useAuthStore } from '@/stores/authStore.js'
+import {
+  buildDashboardZones,
+  buildEsgBreakdown,
+  buildMissions,
+  buildProjectSiteItems,
+  buildSnapshotPayload,
+  buildZoneMetricCards,
+  calculateOperatingRiskCount,
+  calculateSafetyDays,
+  LEVEL_THRESHOLDS,
+  resolveLevel,
+} from '@/utils/esgDashboardMapper.js'
+
+const authStore = useAuthStore()
 
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
 const lastUpdatedAt = ref('')
 const dashboard = ref(null)
-const selectedSiteId = ref('mokdong')
-const selectedZoneId = ref('zone-a')
+const selectedProjectId = ref(authStore.projectId ?? null)
+const selectedZoneId = ref('')
 const activeEsgKey = ref('E')
 let refreshTimer = null
 
-// feat: 중장비 입출차 · 게이트 실데이터
-const gatesData = ref([])       // GET /gate
-const equipmentsData = ref([])  // GET /work-order/gate-equipments
+const projects = ref([])
+const backendRankings = ref([])
+const backendCurrentProject = ref(null)
+const backendCurrentSnapshot = ref(null)
+const sites = ref([])
 
-const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
+const equipmentsData = ref([])
+const workPlansData = ref([])
+const reportsData = ref([])
+const workersData = ref([])
+const staffingWorkersData = ref([])
 
-const sites = ref([
-  {
-    id: 'mokdong',
-    name: '목동 복합개발 2공구',
-    shortName: '목동',
-    address: '서울 양천구 목동',
-    contractor: '한화건설',
-    manager: '현장 총괄자',
-    score: 62.0,
-    level: 3,
-    carbon: 24.8,
-    powerSaving: 86,
-    riskCount: 0,
-    missionRate: 62,
-    trend: 3.0,
-    accent: 'emerald',
-  },
-  {
-    id: 'deungchon',
-    name: '등촌동 현장',
-    shortName: '등촌동',
-    address: '서울 강서구 등촌동',
-    contractor: '한화건설',
-    manager: '안전관리자',
-    score: 88.1,
-    level: 6,
-    carbon: 42.5,
-    powerSaving: 146,
-    riskCount: 2,
-    missionRate: 88,
-    trend: 4.6,
-    accent: 'sky',
-  },
-  {
-    id: 'singil',
-    name: '신길동 현장',
-    shortName: '신길동',
-    address: '서울 영등포구 신길동',
-    contractor: '한화건설',
-    manager: '품질관리자',
-    score: 76.2,
-    level: 4,
-    carbon: 31.2,
-    powerSaving: 104,
-    riskCount: 5,
-    missionRate: 76,
-    trend: 2.2,
-    accent: 'violet',
-  },
-  {
-    id: 'sindaebang',
-    name: '신대방 현장',
-    shortName: '신대방',
-    address: '서울 동작구 신대방동',
-    contractor: '한화건설',
-    manager: '품질관리자',
-    score: 72.5,
-    level: 4,
-    carbon: 28.4,
-    powerSaving: 92,
-    riskCount: 7,
-    missionRate: 72,
-    trend: 1.9,
-    accent: 'amber',
-  },
-])
-
-const zones = ref([
-  {
-    id: 'zone-a',
-    siteId: 'mokdong',
-    name: 'A 게이트',
-    type: '차량 대기 동선',
-    score: 62.0,
-    level: 3,
-    rank: 1,
-    carbon: 18,
-    powerSaving: 74,
-    risk: 3,
-    missionRate: 62,
-    lead: 0,
-    status: '시공',
-  },
-  {
-    id: 'zone-b',
-    siteId: 'mokdong',
-    name: '골조 구역',
-    type: '양중 작업 가능',
-    score: 58.5,
-    level: 3,
-    rank: 2,
-    carbon: 14,
-    powerSaving: 61,
-    risk: 5,
-    missionRate: 58,
-    lead: -3.5,
-    status: '관리',
-  },
-  {
-    id: 'zone-c',
-    siteId: 'mokdong',
-    name: '세척장',
-    type: '전력 절감 강화',
-    score: 66.3,
-    level: 3,
-    rank: 3,
-    carbon: 22,
-    powerSaving: 86,
-    risk: 4,
-    missionRate: 66,
-    lead: 4.3,
-    status: '우수',
-  },
-  {
-    id: 'zone-d',
-    siteId: 'mokdong',
-    name: '민원 구역',
-    type: '소음/먼지 감시',
-    score: 55.8,
-    level: 2,
-    rank: 4,
-    carbon: 11,
-    powerSaving: 45,
-    risk: 8,
-    missionRate: 52,
-    lead: -6.2,
-    status: '위험',
-  },
-  {
-    id: 'deungchon-a',
-    siteId: 'deungchon',
-    name: 'A 동 골조',
-    type: '양중 작업 집중',
-    score: 78.2,
-    level: 3,
-    rank: 1,
-    carbon: 34,
-    powerSaving: 98,
-    risk: 5,
-    missionRate: 70,
-    lead: 2.4,
-    status: '관리',
-  },
-  {
-    id: 'deungchon-b',
-    siteId: 'deungchon',
-    name: 'B 동 외부',
-    type: '비산먼지 관리',
-    score: 72.6,
-    level: 3,
-    rank: 2,
-    carbon: 24,
-    powerSaving: 73,
-    risk: 8,
-    missionRate: 59,
-    lead: -1.2,
-    status: '주의',
-  },
-  {
-    id: 'sindaebang-a',
-    siteId: 'sindaebang',
-    name: '업무동 코어',
-    type: '전력 사용 집중',
-    score: 74.9,
-    level: 3,
-    rank: 1,
-    carbon: 30,
-    powerSaving: 76,
-    risk: 6,
-    missionRate: 64,
-    lead: 1.9,
-    status: '관리',
-  },
-  {
-    id: 'sindaebang-b',
-    siteId: 'sindaebang',
-    name: '지하 굴착',
-    type: '배수·안전 통제',
-    score: 68.4,
-    level: 2,
-    rank: 2,
-    carbon: 21,
-    powerSaving: 58,
-    risk: 9,
-    missionRate: 55,
-    lead: -2.8,
-    status: '위험',
-  },
-])
-
-const currentSite = computed(() => sites.value.find((site) => site.id === selectedSiteId.value) ?? sites.value[0])
-
-// feat: 날씨 AI 위험 건수 (equipmentRisks + planRisks)
-const weatherRiskCount = computed(() =>
-  (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0)
-)
-
-// feat: 작업지시서 기준 미션 달성률 (작업중 비율)
-const realMissionRate = computed(() => {
-  const equips = equipmentsData.value
-  if (!equips.length) return 62  // fallback
-  const working = equips.filter((e) => e.statusLabel === '작업중').length
-  return Math.round((working / equips.length) * 100)
+const selectedSiteId = computed(() => String(selectedProjectId.value ?? currentProject.value?.idx ?? ''))
+const currentProject = computed(() => {
+  return projects.value.find((project) => String(project.idx) === String(selectedProjectId.value))
+    ?? backendCurrentProject.value
+    ?? projects.value[0]
+    ?? null
 })
-
-// feat: 게이트 데이터를 zone 형식으로 변환
-// E = zoneScore - rain*0.05 - fineDust*0.03 + powerSaving*0.04
-// S = zoneScore + missionRate*0.12 - risk*1.4
-// G = zoneScore + (100 - risk*5)*0.1 - wind*0.8
-const realGateZones = computed(() => {
-  if (!gatesData.value.length) return []
-
-  const missionRate = realMissionRate.value
-  const weatherRisk = weatherRiskCount.value
-
-  const mapped = gatesData.value.map((gate) => {
-    const cong = gate.congestion ?? 'SMOOTH'
-    const vehicles = gate.vehicles ?? 0
-    const activeMachines = gate.activeMachineCount ?? 0
-    const totalMachines = gate.machines?.length ?? 0
-    const manpower = gate.manpower ?? 2
-
-    // 기준 점수: 혼잡도에서 출발
-    const congBase = cong === 'SMOOTH' ? 78 : cong === 'BUSY' ? 62 : 44
-    const zoneScore = Math.max(30, Math.min(95, congBase - vehicles * 0.5))
-
-    // E — powerSaving: 세척기계 가동 효율 (활성 많고 여유 있을수록 ↑)
-    const idleMachines = totalMachines - activeMachines
-    const overload = Math.max(0, vehicles - (gate.capacity ?? vehicles))
-    const powerSaving = Math.max(20, Math.min(150,
-      40 + activeMachines * 12 - idleMachines * 5 - overload * 2
-    ))
-
-    // E — carbon: 공회전 절감량 (기계 가동·인력 多, 차량 少일수록 ↑)
-    const carbon = Math.max(5, Math.round(20 + activeMachines * 3 + manpower * 0.5 - vehicles * 0.8))
-
-    // S/G — risk: 날씨 AI 위험 + 혼잡도 가중
-    const congRisk = cong === 'CRITICAL' ? 4 : cong === 'BUSY' ? 2 : 0
-    const risk = Math.min(10, weatherRisk + congRisk)
-
-    // 상태 라벨
-    const status = cong === 'SMOOTH' ? '우수' : cong === 'BUSY' ? '관리' : '위험'
-
-    return {
-      id: `gate-${gate.idx}`,
-      siteId: 'mokdong',
-      name: gate.name,
-      type: gate.noticeMessage ?? gate.congestionLabel ?? '정상 운영',
-      score: Math.round(zoneScore * 10) / 10,
-      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => zoneScore >= t) + 1),
-      rank: 0,         // sort 후 재할당
-      carbon,
-      powerSaving,
-      risk,
-      missionRate,
-      lead: 0,
-      status,
-      _gateIdx: gate.idx,
-    }
-  })
-
-  // 점수 내림차순 정렬 → rank / lead 계산
-  mapped.sort((a, b) => b.score - a.score)
-  mapped.forEach((z, i) => {
-    z.rank = i + 1
-    z.lead = i === 0 ? 0 : Math.round((z.score - mapped[0].score) * 10) / 10
-  })
-
-  return mapped
-})
-
-// feat: 현장 기준으로 zones 결정 — 목동(현재 현장)은 실데이터, 나머지는 목업
-const siteZones = computed(() => {
-  if (realGateZones.value.length && currentSite.value.id === 'mokdong') {
-    return realGateZones.value
-  }
-  return zones.value.filter((zone) => zone.siteId === currentSite.value.id)
-})
-
-const selectedZone = computed(() => {
-  return siteZones.value.find((zone) => zone.id === selectedZoneId.value) ?? siteZones.value[0]
-})
+const currentProjectId = computed(() => currentProject.value?.idx ?? selectedProjectId.value ?? null)
 
 const weatherToday = computed(() => dashboard.value?.today ?? null)
 const weatherAnalysis = computed(() => dashboard.value?.analysis ?? null)
 const airQuality = computed(() => dashboard.value?.airQuality ?? null)
 const equipmentRisks = computed(() => normalizeArray(dashboard.value?.equipmentRisks))
 const planRisks = computed(() => normalizeArray(dashboard.value?.planRisks))
+
+const weatherRiskCount = computed(() =>
+  (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0)
+)
+
+const gateEquipmentsForCurrentProject = computed(() => {
+  return equipmentsData.value.filter((equipment) => {
+    const dateMatched = normalizeDateText(equipment.workDate) === reportDate.value
+    if (!dateMatched) return false
+
+    if (equipment.siteIdx != null && currentProjectId.value != null) {
+      return String(equipment.siteIdx) === String(currentProjectId.value)
+    }
+
+    return authStore.projectId != null
+  })
+})
+
+const workPlanEquipmentsForCurrentProject = computed(() => {
+  if (!currentProjectId.value) return []
+  return buildWorkPlanEquipmentRows(workPlansData.value, reportDate.value)
+})
+
+const filteredEquipments = computed(() => {
+  if (gateEquipmentsForCurrentProject.value.length) {
+    return gateEquipmentsForCurrentProject.value
+  }
+  return workPlanEquipmentsForCurrentProject.value
+})
+
+const realMissionRate = computed(() => {
+  const equipments = filteredEquipments.value
+  if (!equipments.length) return 0
+  const working = equipments.filter((equipment) => equipment.statusLabel === '작업중').length
+  return Math.round((working / equipments.length) * 100)
+})
+
+const safetyDays = computed(() => {
+  return backendCurrentProject.value?.safetyDays
+    ?? backendCurrentSnapshot.value?.safetyDays
+    ?? calculateSafetyDays(currentProject.value, reportDate.value)
+})
+
+const dashboardContext = computed(() => ({
+  weatherAnalysis: weatherAnalysis.value,
+  airQuality: airQuality.value,
+  weatherRiskCount: weatherRiskCount.value,
+  missionRate: realMissionRate.value,
+  reports: reportsData.value,
+  workOrders: filteredEquipments.value,
+  workers: workersData.value,
+  staffingWorkers: staffingWorkersData.value,
+  safetyDays: safetyDays.value,
+  currentProjectId: currentProjectId.value,
+}))
+
+const siteZones = computed(() => {
+  return buildDashboardZones(filteredEquipments.value, dashboardContext.value)
+})
+
+const selectedZone = computed(() => {
+  return siteZones.value.find((zone) => zone.id === selectedZoneId.value) ?? siteZones.value[0]
+})
+
+const esgBreakdown = computed(() => {
+  const iconMap = {
+    E: Leaf,
+    S: ShieldCheck,
+    G: Gauge,
+  }
+  return buildEsgBreakdown(selectedZone.value, {
+    airQuality: airQuality.value,
+    safetyDays: safetyDays.value,
+  }).map((item) => ({
+    ...item,
+    icon: iconMap[item.key],
+  }))
+})
+
+const currentSiteSummary = computed(() => {
+  const zones = siteZones.value
+  if (!zones.length) {
+    return {
+      score: backendCurrentSnapshot.value?.totalScore ?? 0,
+      level: resolveLevel(backendCurrentSnapshot.value?.totalScore ?? 0),
+      carbon: backendCurrentSnapshot.value?.carbonKg ?? 0,
+      powerSaving: backendCurrentSnapshot.value?.powerSavingKwh ?? 0,
+      riskCount: backendCurrentSnapshot.value?.riskCount ?? 0,
+      missionRate: backendCurrentSnapshot.value?.missionRate ?? 0,
+    }
+  }
+
+  const avgScore = Math.round((zones.reduce((sum, zone) => sum + zone.score, 0) / zones.length) * 10) / 10
+  return {
+    score: avgScore,
+    level: resolveLevel(avgScore),
+    carbon: zones.reduce((sum, zone) => sum + Number(zone.carbon || 0), 0),
+    powerSaving: zones.reduce((sum, zone) => sum + Number(zone.powerSaving || 0), 0),
+    riskCount: calculateOperatingRiskCount(filteredEquipments.value, weatherRiskCount.value),
+    missionRate: realMissionRate.value,
+  }
+})
+
+const currentSite = computed(() => {
+  const fallback = sites.value.find((site) => site.id === selectedSiteId.value) ?? sites.value[0]
+  return {
+    ...fallback,
+    id: selectedSiteId.value || fallback?.id || 'current-site',
+    projectId: currentProjectId.value,
+    name: backendCurrentProject.value?.name ?? fallback?.name ?? currentProject.value?.name ?? '현장명 미지정',
+    shortName: fallback?.shortName ?? backendCurrentProject.value?.name ?? '현장',
+    address: backendCurrentProject.value?.location ?? fallback?.address ?? currentProject.value?.location ?? '',
+    snapshotSaved: backendCurrentSnapshot.value?.snapshotSaved ?? fallback?.snapshotSaved ?? false,
+    startDate: backendCurrentProject.value?.startDate ?? fallback?.startDate ?? currentProject.value?.startDate ?? null,
+    endDate: backendCurrentProject.value?.endDate ?? fallback?.endDate ?? currentProject.value?.endDate ?? null,
+    ...currentSiteSummary.value,
+  }
+})
 
 const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
 const activeLevel = computed(() => {
@@ -362,235 +232,45 @@ const weatherImpact = computed(() => {
   return { label: '정상 운영', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200', score }
 })
 
-const esgBreakdown = computed(() => {
-  const zone = selectedZone.value
-  const rain = weatherAnalysis.value?.precipitationProbability ?? 30
-  const wind = weatherAnalysis.value?.maxWindSpeed ?? 2.4
-  const fineDust = airQuality.value?.value ?? 37
+const zoneMetricCards = computed(() => buildZoneMetricCards(
+  selectedZone.value,
+  activeEsgKey.value,
+  { AlertTriangle, Droplets, Factory, Gauge, HardHat, Leaf, Medal, ShieldCheck, Users, Zap },
+  { safetyDays: safetyDays.value },
+))
 
-  const environment = clampScore(zone.score - rain * 0.05 - fineDust * 0.03 + zone.powerSaving * 0.04)
-  const social = clampScore(zone.score + zone.missionRate * 0.12 - zone.risk * 1.4)
-  const governance = clampScore(zone.score + (100 - zone.risk * 5) * 0.1 - wind * 0.8)
+const missions = computed(() => buildMissions(selectedZone.value, currentSite.value))
 
-  return [
-    {
-      key: 'E',
-      title: 'Environment',
-      subtitle: '탄소 저감 · 세척 전력 · 비산먼지',
-      score: environment,
-      color: 'emerald',
-      icon: Leaf,
-      description: '장비 공회전, 세척 전력, 미세먼지 대응을 합산한 환경 점수입니다.',
-      details: [
-        { label: '탄소 저감량', value: `${zone.carbon}kg`, caption: '대기 장비 공회전 감소 기준' },
-        { label: '세척 전력 절감', value: `-${zone.powerSaving}kWh`, caption: '세척장 전력 사용 최적화' },
-        { label: '비산먼지 대응', value: `${airQuality.value?.value ?? 36}㎍/㎥`, caption: 'PM10 기준 살수/차폐 대응' },
-      ],
-      guide: '중장비 공회전을 줄이고 세척장 전력 피크를 낮추면 다음 레벨에 가장 빠르게 도달합니다.',
-    },
-    {
-      key: 'S',
-      title: 'Social',
-      subtitle: '무사고 · 안전 교육 · 민원 대응',
-      score: social,
-      color: 'sky',
-      icon: ShieldCheck,
-      description: '근로자 안전, 민원 리스크, 보호구 지급 상태를 반영한 사회 점수입니다.',
-      details: [
-        { label: '안전 무사고', value: '87일', caption: '목표 90일 임박' },
-        { label: '보호구 지급률', value: `${Math.max(72, zone.missionRate + 18)}%`, caption: '구역 투입 인원 기준' },
-        { label: '민원 리스크', value: `${zone.risk}건`, caption: '소음/분진/동선 신고 포함' },
-      ],
-      guide: '보행 동선과 장비 진입 동선을 분리하고 민원 구역 모니터링을 유지하면 S 점수가 안정적으로 오릅니다.',
-    },
-    {
-      key: 'G',
-      title: 'Governance',
-      subtitle: '작업일보 · 위험 추적 · 점검 기록',
-      score: governance,
-      color: 'violet',
-      icon: Gauge,
-      description: '작업 기록의 투명성, 위험 조치 추적, 점검 누락 여부를 반영한 거버넌스 점수입니다.',
-      details: [
-        { label: '작업일보 기록률', value: `${Math.min(98, Math.round(zone.score + 24))}%`, caption: '금일 공정 기록 기준' },
-        { label: '위험 조치 완료', value: `${Math.max(0, 10 - zone.risk)}/10`, caption: 'AI 추천 조치 추적' },
-        { label: '점검 누락', value: `${Math.max(0, zone.risk - 3)}건`, caption: '최근 7일 기준' },
-      ],
-      guide: '위험 조치 결과를 작업일보와 함께 남기면 현장 간 비교에서 G 점수가 크게 올라갑니다.',
-    },
-  ]
-})
+const siteRankingItems = computed(() => {
+  const current = currentSite.value
+  const merged = sites.value.map((site) => {
+    if (String(site.id) !== String(current.id)) return site
+    return {
+      ...site,
+      ...current,
+    }
+  })
 
-const zoneMetricCards = computed(() => {
-  const zone = selectedZone.value
-  const idleMinutes = Math.max(8, 24 - zone.level * 3)
-  const protectionRate = Math.max(72, zone.missionRate + 18)
-
-  if (activeEsgKey.value === 'S') {
-    return [
-      {
-        id: 'safe-days',
-        title: '무사고 일수',
-        subtitle: '목표 90일 임박',
-        value: '87일',
-        badge: '우수',
-        icon: ShieldCheck,
-        iconClass: 'bg-sky-50 text-sky-700',
-        valueClass: 'text-sky-800',
-      },
-      {
-        id: 'protection',
-        title: '근로자 보호',
-        subtitle: '안전 교육/보호구',
-        value: `${protectionRate}%`,
-        badge: '관리',
-        icon: Users,
-        iconClass: 'bg-emerald-50 text-emerald-700',
-        valueClass: 'text-emerald-800',
-      },
-      {
-        id: 'complaint',
-        title: '민원 리스크',
-        subtitle: '소음/분진 신고',
-        value: `${zone.risk}건`,
-        badge: zone.risk >= 7 ? '위험' : '관리',
-        icon: AlertTriangle,
-        iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
-        valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-amber-700',
-      },
-      {
-        id: 'education',
-        title: '안전 교육',
-        subtitle: '구역 투입 인원 기준',
-        value: `${Math.min(98, zone.missionRate + 24)}%`,
-        badge: '관리',
-        icon: Medal,
-        iconClass: 'bg-violet-50 text-violet-700',
-        valueClass: 'text-violet-800',
-      },
-    ]
+  if (!merged.find((site) => String(site.id) === String(current.id))) {
+    merged.push(current)
   }
 
-  if (activeEsgKey.value === 'G') {
-    return [
-      {
-        id: 'daily-log',
-        title: '작업일보 기록률',
-        subtitle: '금일 공정 기록',
-        value: `${Math.min(98, Math.round(zone.score + 24))}%`,
-        badge: '관리',
-        icon: Gauge,
-        iconClass: 'bg-violet-50 text-violet-700',
-        valueClass: 'text-violet-800',
-      },
-      {
-        id: 'action-done',
-        title: '위험 조치 완료',
-        subtitle: 'AI 추천 조치 추적',
-        value: `${Math.max(0, 10 - zone.risk)}/10`,
-        badge: zone.risk >= 7 ? '주의' : '우수',
-        icon: ShieldCheck,
-        iconClass: 'bg-emerald-50 text-emerald-700',
-        valueClass: 'text-emerald-800',
-      },
-      {
-        id: 'missing-check',
-        title: '점검 누락',
-        subtitle: '최근 7일 기준',
-        value: `${Math.max(0, zone.risk - 3)}건`,
-        badge: zone.risk >= 7 ? '위험' : '관리',
-        icon: AlertTriangle,
-        iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
-        valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-amber-700',
-      },
-      {
-        id: 'evidence',
-        title: '증빙 이력',
-        subtitle: '사진/점검표 업로드',
-        value: `${Math.min(96, zone.missionRate + 30)}%`,
-        badge: '관리',
-        icon: Medal,
-        iconClass: 'bg-sky-50 text-sky-700',
-        valueClass: 'text-sky-800',
-      },
-    ]
-  }
-
-  return [
-    {
-      id: 'gate',
-      title: zone.name,
-      subtitle: zone.type,
-      value: `대기 ${idleMinutes}분`,
-      badge: zone.status,
-      icon: HardHat,
-      iconClass: 'bg-emerald-50 text-emerald-700',
-      valueClass: 'text-emerald-800',
-    },
-    {
-      id: 'wash',
-      title: '세척장',
-      subtitle: '전력 절감 강화',
-      value: `-${currentSite.value.powerSaving}kWh`,
-      badge: '우수',
-      icon: Droplets,
-      iconClass: 'bg-emerald-50 text-emerald-700',
-      valueClass: 'text-emerald-800',
-    },
-    {
-      id: 'process-risk',
-      title: '공정 리스크',
-      subtitle: '기상 영향 가능',
-      value: `${zone.risk}건`,
-      badge: zone.risk >= 7 ? '위험' : '관리',
-      icon: AlertTriangle,
-      iconClass: zone.risk >= 7 ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700',
-      valueClass: zone.risk >= 7 ? 'text-rose-700' : 'text-emerald-800',
-    },
-    {
-      id: 'carbon',
-      title: '탄소 저감량',
-      subtitle: '공회전 감소 기준',
-      value: `${zone.carbon}kg`,
-      badge: '개선',
-      icon: Leaf,
-      iconClass: 'bg-emerald-50 text-emerald-700',
-      valueClass: 'text-emerald-800',
-    },
-  ]
+  return merged.sort((a, b) => {
+    if (a.snapshotSaved !== b.snapshotSaved) return a.snapshotSaved ? -1 : 1
+    return b.score - a.score
+  })
 })
-
-const missions = computed(() => [
-  {
-    id: 'idle',
-    title: '장비 대기시간 20% 줄이기',
-    description: '입출차 대기 흐름 개선',
-    progress: selectedZone.value.missionRate,
-    color: 'emerald',
-  },
-  {
-    id: 'power',
-    title: '세척장 전력 절감 25% 달성',
-    description: '세척 설비 가동 최적화',
-    progress: Math.min(100, Math.round(currentSite.value.powerSaving / 1.55)),
-    color: 'lime',
-  },
-  {
-    id: 'complaint',
-    title: '민원 경고 이하 유지',
-    description: '소음·먼지 기준 관리',
-    progress: Math.max(40, 100 - selectedZone.value.risk * 8),
-    color: 'sky',
-  },
-])
-
-const siteRankingItems = computed(() => [...sites.value].sort((a, b) => b.score - a.score))
 const siteLeader = computed(() => siteRankingItems.value[0])
 const currentSiteRank = computed(() => {
-  return siteRankingItems.value.findIndex((site) => site.id === selectedSiteId.value) + 1
+  return siteRankingItems.value.findIndex((site) => String(site.id) === String(selectedSiteId.value)) + 1
 })
 const scoreGapToLeader = computed(() => {
   return Math.max(0, (siteLeader.value?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
+})
+const rankingComparison = computed(() => {
+  if (!siteRankingItems.value.length) return '현장 ESG 스냅샷을 불러오는 중입니다.'
+  if (currentSiteRank.value <= 1) return '현재 선택 현장이 ESG 순위 1위입니다.'
+  return `${siteLeader.value?.name ?? '상위 현장'}까지 ${scoreGapToLeader.value}점 부족`
 })
 
 const riskActions = computed(() => {
@@ -619,45 +299,227 @@ const riskActions = computed(() => {
     {
       id: 'stable',
       title: '현재 기상 조건은 평시 운용 범위',
-      detail: '장비 대기시간과 세척 전력 절감 미션 중심으로 관리하면 됩니다.',
+      detail: '장비 대기시간과 세척수·전력 피크 관리 미션 중심으로 운영하면 됩니다.',
       level: '양호',
     },
   ]
 })
 
-async function loadDashboard() {
+async function loadAll() {
   loading.value = true
   try {
-    const response = await api.get('/weather/dashboard', {
-      params: { reportDate: reportDate.value },
-    })
-    dashboard.value = unwrapPayload(response)
+    await loadEsgDashboardMeta()
+    await Promise.all([
+      loadDashboard(),
+      loadEquipments(),
+      loadWorkPlans(),
+      loadReports(),
+      loadWorkers(),
+    ])
+    await persistCurrentSnapshot()
+    await loadEsgDashboardMeta(false)
     lastUpdatedAt.value = formatTime(new Date())
-  } catch (error) {
-    dashboard.value = null
   } finally {
     loading.value = false
   }
 }
 
-// feat: 게이트 실데이터 로드 — 중장비 입출차 페이지와 동일한 API
-async function loadGates() {
+async function loadEsgDashboardMeta(useCurrentSelection = true) {
   try {
-    const res = await fetchGateList()
-    gatesData.value = Array.isArray(res) ? res : []
+    const response = await getEsgDashboard({
+      reportDate: reportDate.value,
+      projectId: useCurrentSelection ? selectedProjectId.value : currentProjectId.value,
+    })
+    const payload = unwrapPayload(response)
+    backendCurrentProject.value = payload?.currentProject ?? null
+    backendCurrentSnapshot.value = payload?.currentSnapshot ?? null
+    projects.value = normalizeArray(payload?.projects)
+    backendRankings.value = normalizeArray(payload?.rankings)
+
+    if (!selectedProjectId.value) {
+      selectedProjectId.value = backendCurrentProject.value?.idx ?? authStore.projectId ?? projects.value[0]?.idx ?? null
+    }
+
+    sites.value = buildProjectSiteItems(projects.value, backendRankings.value, selectedProjectId.value)
   } catch {
-    gatesData.value = []
+    projects.value = await loadProjectFallback()
+    sites.value = buildProjectSiteItems(projects.value, [], selectedProjectId.value)
   }
 }
 
-// feat: 오늘 투입 장비 로드 — 작업 지시서 기준 미션 달성률 계산용
+async function loadProjectFallback() {
+  try {
+    return normalizeArray(await getProjectList())
+  } catch {
+    return []
+  }
+}
+
+async function loadDashboard() {
+  try {
+    const response = await fetchWeatherDashboard(reportDate.value)
+    dashboard.value = unwrapPayload(response)
+  } catch {
+    dashboard.value = null
+  }
+}
+
 async function loadEquipments() {
   try {
-    const res = await getGateEquipments(reportDate.value)
-    equipmentsData.value = Array.isArray(res) ? res : []
+    const response = await getGateEquipments(reportDate.value)
+    equipmentsData.value = normalizeArray(response)
   } catch {
     equipmentsData.value = []
   }
+}
+
+async function loadWorkPlans() {
+  if (!currentProjectId.value) {
+    workPlansData.value = []
+    return
+  }
+
+  try {
+    const response = await fetchWorkPlansByProject(currentProjectId.value, { includeAllTrades: true })
+    workPlansData.value = normalizeArray(response)
+  } catch {
+    workPlansData.value = []
+  }
+}
+
+async function loadReports() {
+  try {
+    const response = await getReportsByDate(reportDate.value)
+    reportsData.value = normalizeArray(response)
+  } catch {
+    reportsData.value = []
+  }
+}
+
+async function loadWorkers() {
+  const [workerResponse, staffingResponse] = await Promise.allSettled([
+    fetchWorkerList(reportDate.value),
+    getStaffingWorkerPool({ rosterDate: reportDate.value }),
+  ])
+
+  workersData.value = workerResponse.status === 'fulfilled'
+    ? normalizeArray(workerResponse.value?.rows ?? workerResponse.value)
+    : []
+  staffingWorkersData.value = staffingResponse.status === 'fulfilled'
+    ? normalizeArray(staffingResponse.value?.rows ?? staffingResponse.value)
+    : []
+}
+
+async function persistCurrentSnapshot() {
+  if (!currentProjectId.value || !siteZones.value.length) return
+
+  try {
+    const payload = buildSnapshotPayload({
+      reportDate: reportDate.value,
+      currentSite: currentSite.value,
+      siteZones: siteZones.value,
+      esgBreakdown: esgBreakdown.value,
+      safetyDays: safetyDays.value,
+    })
+    backendCurrentSnapshot.value = await saveEsgSnapshot(payload)
+  } catch {
+    // ESG 스냅샷 저장 실패는 화면 표시를 막지 않는다.
+  }
+}
+
+
+function buildWorkPlanEquipmentRows(workPlans, targetDate) {
+  return normalizeArray(workPlans)
+    .filter((plan) => isDateInPlanRange(
+      targetDate,
+      plan.startDate ?? plan.start,
+      plan.endDate ?? plan.end ?? plan.effectiveEnd,
+    ))
+    .flatMap((plan) => {
+      const equipmentEntries = parseEquipmentEntries(plan.equipmentDisplay ?? plan.equipmentText, plan.equipment)
+      if (!equipmentEntries.length) {
+        return [{
+          idx: `plan-${plan.idx ?? plan.id}-default`,
+          workOrderIdx: null,
+          workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
+          title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
+          tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
+          workDetail: firstText(plan.note, plan.name, ''),
+          workDate: targetDate,
+          workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
+          gateIdx: null,
+          equipmentName: '장비 미지정',
+          equipmentType: '중장비',
+          equipmentCount: 1,
+          statusLabel: plan.status === '진행 중' ? '작업중' : '입차예정',
+        }]
+      }
+
+      return equipmentEntries.map((equipment, index) => ({
+        idx: `plan-${plan.idx ?? plan.id}-${index}`,
+        workOrderIdx: null,
+        workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
+        title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
+        tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
+        workDetail: firstText(plan.note, plan.name, ''),
+        workDate: targetDate,
+        workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
+        gateIdx: null,
+        equipmentName: equipment.name,
+        equipmentType: equipment.name,
+        equipmentCount: equipment.count,
+        statusLabel: plan.status === '진행 중' ? '작업중' : '입차예정',
+      }))
+    })
+}
+
+function parseEquipmentEntries(displayText, rawEquipment) {
+  if (Array.isArray(rawEquipment) && rawEquipment.length) {
+    return rawEquipment
+      .map((equipment) => {
+        if (typeof equipment === 'string') return parseEquipmentText(equipment)
+        return {
+          name: firstText(equipment.type, equipment.equipmentName, equipment.name, '중장비'),
+          count: normalizePositiveNumber(equipment.count ?? equipment.equipmentCount, 1),
+        }
+      })
+      .filter((equipment) => equipment.name)
+  }
+
+  return String(displayText ?? '')
+    .split(',')
+    .map((text) => parseEquipmentText(text))
+    .filter((equipment) => equipment.name)
+}
+
+function parseEquipmentText(text) {
+  const normalized = String(text ?? '').trim()
+  if (!normalized) return { name: '', count: 0 }
+
+  const match = normalized.match(/^(.+?)\s*(\d+)\s*대?$/)
+  if (!match) return { name: normalized, count: 1 }
+
+  return {
+    name: match[1].trim(),
+    count: normalizePositiveNumber(match[2], 1),
+  }
+}
+
+function isDateInPlanRange(targetDate, startDate, endDate) {
+  const target = normalizeDateText(targetDate)
+  const start = normalizeDateText(startDate)
+  const end = normalizeDateText(endDate || startDate)
+  if (!target || !start) return false
+  return target >= start && target <= (end || start)
+}
+
+function firstText(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim().length > 0)?.trim() ?? ''
+}
+
+function normalizePositiveNumber(value, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : fallback
 }
 
 function getTodayDateText() {
@@ -681,11 +543,18 @@ function unwrapPayload(payload) {
 }
 
 function normalizeArray(value) {
-  return Array.isArray(value) ? value : []
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.data)) return value.data
+  if (Array.isArray(value?.content)) return value.content
+  if (Array.isArray(value?.list)) return value.list
+  if (Array.isArray(value?.rows)) return value.rows
+  if (Array.isArray(value?.workers)) return value.workers
+  return []
 }
 
-function clampScore(value) {
-  return Math.max(0, Math.min(100, Math.round(value * 10) / 10))
+function normalizeDateText(value) {
+  if (!value) return ''
+  return String(value).slice(0, 10)
 }
 
 function colorClass(color, type) {
@@ -720,18 +589,14 @@ function colorClass(color, type) {
 
 function levelTone(level) {
   if (level === '경고' || level === '위험') return 'bg-rose-100 text-rose-800 border-rose-200'
-  if (level === '주의' || level === '관리') return 'bg-amber-100 text-amber-800 border-amber-200'
+  if (level === '주의' || level === '관리' || level === '대기') return 'bg-amber-100 text-amber-800 border-amber-200'
   return 'bg-emerald-100 text-emerald-800 border-emerald-200'
 }
 
 onMounted(() => {
-  loadDashboard()
-  loadGates()
-  loadEquipments()
+  loadAll()
   refreshTimer = setInterval(() => {
-    loadDashboard()
-    loadGates()
-    loadEquipments()
+    loadAll()
   }, 30 * 60 * 1000)
 })
 
@@ -740,37 +605,15 @@ onUnmounted(() => {
 })
 
 watch(reportDate, () => {
-  loadDashboard()
-  loadEquipments()
+  loadAll()
 })
 
-// feat: 실 게이트 zones 로드 시 selectedZoneId 초기화 + 목동 현장 점수 갱신
-watch(realGateZones, (zones) => {
+watch(siteZones, (zones) => {
   if (!zones.length) return
-
-  // zone 선택 초기화 (첫 번째 게이트로)
-  if (!zones.find((z) => z.id === selectedZoneId.value)) {
+  if (!zones.find((zone) => zone.id === selectedZoneId.value)) {
     selectedZoneId.value = zones[0].id
   }
-
-  // 목동 현장 점수를 실데이터 평균으로 갱신
-  const avgScore = Math.round(
-    (zones.reduce((sum, z) => sum + z.score, 0) / zones.length) * 10
-  ) / 10
-
-  const mokIdx = sites.value.findIndex((s) => s.id === 'mokdong')
-  if (mokIdx >= 0) {
-    sites.value[mokIdx] = {
-      ...sites.value[mokIdx],
-      score: avgScore,
-      level: Math.max(1, LEVEL_THRESHOLDS.findLastIndex((t) => avgScore >= t) + 1),
-      powerSaving: zones.reduce((sum, z) => sum + z.powerSaving, 0),
-      carbon: zones.reduce((sum, z) => sum + z.carbon, 0),
-      riskCount: weatherRiskCount.value,
-      missionRate: realMissionRate.value,
-    }
-  }
-})
+}, { immediate: true })
 </script>
 
 <template>
@@ -786,7 +629,7 @@ watch(realGateZones, (zones) => {
               <Leaf class="h-7 w-7" />
             </span>
             <div>
-              <h1 class="text-3xl font-black tracking-tight">공사현장 ESG 대시보드</h1>
+              <h1 class="text-3xl font-black tracking-tight">ESG 대시보드</h1>
               <p class="mt-2 text-sm font-semibold text-emerald-100">
                 {{ currentSite.shortName }} 현장 · 마지막 갱신 {{ lastUpdatedAt || '대기 중' }}
               </p>
@@ -809,7 +652,7 @@ watch(realGateZones, (zones) => {
               type="button"
               class="inline-flex items-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-sm font-black ring-1 ring-white/15 transition hover:bg-white/15 disabled:opacity-60"
               :disabled="loading"
-              @click="loadDashboard"
+              @click="loadAll"
             >
               <RefreshCw class="h-4 w-4" :class="loading ? 'animate-spin' : ''" />
               새로고침
@@ -832,8 +675,8 @@ watch(realGateZones, (zones) => {
               <Factory class="h-3.5 w-3.5 text-sky-200" />
               미세먼지 PM10
             </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">{{ airQuality?.value ?? 36 }}<span class="text-lg text-emerald-100">㎍/㎥</span></p>
-            <p class="mt-1 text-xs text-emerald-100">{{ airQuality?.label || '보통' }}</p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ airQuality?.value ?? '-' }}<span class="text-lg text-emerald-100">{{ airQuality?.value != null ? '㎍/㎥' : '' }}</span></p>
+            <p class="mt-1 text-xs text-emerald-100">{{ airQuality?.label || '미세먼지 연동 대기' }}</p>
           </div>
 
           <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
@@ -841,8 +684,8 @@ watch(realGateZones, (zones) => {
               <ShieldCheck class="h-3.5 w-3.5 text-sky-200" />
               안전 무사고 일수
             </p>
-            <p class="mt-2 text-4xl font-black tabular-nums">87<span class="text-lg text-emerald-100">일</span></p>
-            <p class="mt-1 text-xs text-emerald-100">목표 90일 임박</p>
+            <p class="mt-2 text-4xl font-black tabular-nums">{{ safetyDays }}<span class="text-lg text-emerald-100">일</span></p>
+            <p class="mt-1 text-xs text-emerald-100">현장 시작일 기준</p>
           </div>
 
           <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
@@ -1010,12 +853,9 @@ watch(realGateZones, (zones) => {
       <article class="rounded-2xl border border-amber-100 bg-white p-5 shadow-card">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-[11px] font-bold uppercase tracking-wide text-amber-600">Rival · 현장 대결</p>
+            <p class="text-[11px] font-bold uppercase tracking-wide text-amber-600">Site Ranking</p>
             <h2 class="mt-1 text-xl font-black text-forena-900">현장 ESG 순위</h2>
           </div>
-          <span class="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">
-            임시 데이터
-          </span>
         </div>
 
         <div class="mt-5 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-800 p-5 text-white shadow-lg">
@@ -1027,7 +867,7 @@ watch(realGateZones, (zones) => {
             <p class="text-3xl font-black tabular-nums">{{ currentSiteRank }}위</p>
           </div>
           <p class="mt-3 text-sm font-black">
-            {{ siteLeader.name }}까지 {{ scoreGapToLeader }}점 부족
+            {{ rankingComparison }}
           </p>
         </div>
 
@@ -1058,10 +898,10 @@ watch(realGateZones, (zones) => {
                 </div>
                 <p class="mt-0.5 text-[11px] text-forena-500">{{ item.address }}</p>
               </div>
-              <p class="text-lg font-black tabular-nums text-emerald-800">{{ item.score }}</p>
+              <p class="text-lg font-black tabular-nums text-emerald-800">{{ item.snapshotSaved ? item.score : '산정 대기' }}</p>
             </div>
             <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
-              <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${item.score}%` }" />
+              <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${item.snapshotSaved ? item.score : 0}%` }" />
             </div>
           </div>
         </div>
@@ -1136,7 +976,7 @@ watch(realGateZones, (zones) => {
         </div>
         <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
           <ArrowUpRight class="h-3.5 w-3.5" />
-          {{ currentSite.shortName }} 현장 {{ currentSite.trend }}점 상승
+          {{ currentSite.snapshotSaved ? `${currentSite.shortName} 현장 ESG 스냅샷 반영` : `${currentSite.shortName} 현장 ESG 계산 결과` }}
         </span>
       </div>
 
