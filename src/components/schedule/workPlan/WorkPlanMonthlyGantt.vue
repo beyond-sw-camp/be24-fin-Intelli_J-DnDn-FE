@@ -239,8 +239,7 @@ defineEmits(['toggle-group', 'toggle-process', 'select-baseline', 'select-work-p
                     <div
                       v-for="day in monthMeta.days"
                       :key="day.date"
-                      class="border-r border-forena-50"
-                      :style="{ width: GANTT_DAY_W + 'px' }"
+                      class="flex-1 border-r border-forena-50"
                       :class="monthlyDayCellClass(day)"
                     ></div>
 
@@ -302,8 +301,7 @@ defineEmits(['toggle-group', 'toggle-process', 'select-baseline', 'select-work-p
                     <div
                       v-for="day in monthMeta.days"
                       :key="day.date"
-                      class="border-r border-forena-50"
-                      :style="{ width: GANTT_DAY_W + 'px' }"
+                      class="flex-1 border-r border-forena-50"
                       :class="monthlyDayCellClass(day)"
                     ></div>
                   </div>
