@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   Upload,
   Search,
@@ -27,11 +28,14 @@ import {
   RotateCcw,
   Pin,
   RefreshCw,
+  ExternalLink,
 } from 'lucide-vue-next'
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import api from '@/api/index'
 import { getWorkOrderList } from '@/api/workOrder'
+
+const router = useRouter()
 
 /* ───── 한국어 라벨 ───── */
 const L = {
@@ -168,7 +172,7 @@ function mapApiToFront(apiDoc) {
     docType:     DOC_TYPE_MAP[apiDoc.docType] ?? apiDoc.docType ?? '',
     fileName:    fileName,
     fileExt:     ext,
-    fileUrl:     '',  // DTO에 없음 - 필요하면 백엔드에서 추가
+    fileUrl:     apiDoc.fileUrl || apiDoc.file_url || '',  // DB의 file_url 컬럼
     origin:      origin,
     partnerName: partnerName,
     uploadDate:  uploadDate,
@@ -277,25 +281,18 @@ async function fetchDocuments() {
   isLoading.value = true
   apiError.value = ''
   try {
-    // 백엔드는 page를 0부터 시작 → currentPage(1부터) - 1
-    const page = currentPage.value - 1
-    const size = rowsPerPage.value
-
+    // 시공계획서(TRADE_PLAN)만 전체 가져오기
+    // (공정표 3종은 고정 영역에서 별도 조회하므로 여기선 제외)
     const res = await fetch(
-      `${API_BASE}/document-management/${currentProjectId.value}?page=${page}&size=${size}`
+      `${API_BASE}/document-management/${currentProjectId.value}?page=0&size=1000&docType=TRADE_PLAN`
     )
     const json = await res.json()
-    console.log('[API 응답]', json)
+    console.log('[API 응답 - TRADE_PLAN]', json)
 
     if (json.success && json.data) {
-      // 페이징 응답: { content: [...], totalElements, totalPages, ... }
       documents.value = mapApiListToFront(json.data.content)
-      totalElementsFromServer.value = json.data.totalElements
-      totalPagesFromServer.value = json.data.totalPages
     } else {
       documents.value = []
-      totalElementsFromServer.value = 0
-      totalPagesFromServer.value = 0
     }
   } catch (e) {
     apiError.value = '서버 연결 실패 — 데이터를 불러올 수 없습니다.'
@@ -406,12 +403,6 @@ const sortDir = ref('desc')
 
 const currentPage = ref(1)
 const rowsPerPage = ref(10)
-const totalElementsFromServer = ref(0)
-const totalPagesFromServer = ref(0)
-
-
-// 페이지 또는 페이지당 개수 변경 시 다시 불러오기
-// (watcher는 useClientPagination computed 정의 이후에 배치됨 — 아래 참조)
 
 
 // 공정표 3종: 위쪽 고정 섹션에만 표시, 아래 테이블 탭에서는 제외
@@ -438,35 +429,20 @@ const summary = computed(() => ({
   partner: documents.value.filter((d) => d.origin === 'partner').length,
 }))
 
-/* ───── 아래 테이블 전용: 공정표 3종 제외 ─────
- * documents (서버 페이징): 공종별 시공계획서 등
+/* ───── 아래 테이블 전용 ─────
+ * documents: 서버에서 TRADE_PLAN만 가져옴 (공정표 3종 제외 완료)
  * workOrderDocs / reportDocs: 별도 API에서 일괄 로드 (전체)
- *
- * 탭별 데이터 소스 분리:
- *   - 공종별 시공계획서: 서버 페이징 (documents 그대로 사용)
- *   - 작업지시서 / 공사 일보: 클라이언트 페이징 (workOrderDocs / reportDocs)
- *   - 전체: 모두 합쳐서 클라이언트 페이징
+ * → 모든 탭에서 클라이언트 페이징 사용
  */
 const tableDocuments = computed(() => {
-  const docs = documents.value.filter((d) => !SCHEDULE_TYPES.includes(d.docType))
-  return [...docs, ...workOrderDocs.value, ...reportDocs.value]
+  return [...documents.value, ...workOrderDocs.value, ...reportDocs.value]
 })
 
-/* ── 클라이언트 페이징을 사용하는 탭 여부 ──
- * 작업지시서·공사 일보·전체 탭에서는 별도 API 데이터를 머지하므로
- * 서버 페이징 대신 클라이언트 페이징 사용
- */
-const useClientPagination = computed(() =>
-  currentTab.value === L.tabAll ||
-  currentTab.value === L.tabWorkInstruction ||
-  currentTab.value === L.tabDailyReport
-)
+// 페이지/페이지당 개수 변경 시 — 클라이언트 페이징이므로 서버 재조회 불필요
 
-// 페이지/페이지당 개수 변경 시 서버 재조회 (서버 페이징 탭에서만)
-watch([currentPage, rowsPerPage], () => {
-  if (!useClientPagination.value) {
-    fetchDocuments()
-  }
+// ★ 탭 변경 시 페이지 리셋
+watch(currentTab, () => {
+  currentPage.value = 1
 })
 
 /* ───── 필터링 + 정렬 (공정표 3종 제외된 tableDocuments 기준) ───── */
@@ -512,28 +488,17 @@ const filteredDocuments = computed(() => {
   return result
 })
 
-/* ───── 페이지네이션 (탭에 따라 서버/클라이언트 페이징 분기) ───── */
+/* ───── 페이지네이션 (전 탭 클라이언트 페이징) ───── */
 const totalPages = computed(() => {
-  if (useClientPagination.value) {
-    return Math.max(1, Math.ceil(filteredDocuments.value.length / rowsPerPage.value))
-  }
-  return totalPagesFromServer.value
+  return Math.max(1, Math.ceil(filteredDocuments.value.length / rowsPerPage.value))
 })
 
 const paginatedDocuments = computed(() => {
-  if (useClientPagination.value) {
-    const start = (currentPage.value - 1) * rowsPerPage.value
-    return filteredDocuments.value.slice(start, start + rowsPerPage.value)
-  }
-  // 서버 페이징: 이미 잘려서 옴
-  return filteredDocuments.value
+  const start = (currentPage.value - 1) * rowsPerPage.value
+  return filteredDocuments.value.slice(start, start + rowsPerPage.value)
 })
 
-const totalElements = computed(() =>
-  useClientPagination.value
-    ? filteredDocuments.value.length
-    : totalElementsFromServer.value
-)
+const totalElements = computed(() => filteredDocuments.value.length)
 
 const pageStart = computed(() =>
   totalElements.value === 0
@@ -989,6 +954,262 @@ const closePdfPreview = () => {
     pdfPreviewUrl.value = ''
   }
   pdfBlob.value = null
+  pdfPageLink.value = ''
+}
+
+/* ───── 한 건 문서 미리보기 (작업지시서 / 공사일보) ───── */
+const pdfPageLink = ref('')                 // 원본 페이지 링크
+const singlePdfRef = ref(null)              // 작업지시서 1건 렌더링 영역
+const singleReportPdfRef = ref(null)        // 공사일보 1건 렌더링 영역
+const singleWorkOrder = ref(null)           // 미리보기 중인 작업지시서 데이터
+const singleReport = ref(null)              // 미리보기 중인 공사일보 데이터
+const isGeneratingSinglePdf = ref(false)
+const previewingDocId = ref(null)           // 현재 PDF 생성 중인 doc.id (행별 스피너용)
+
+// 표 행 클릭 → 미리보기
+async function previewDoc(doc) {
+  if (isGeneratingSinglePdf.value) return   // 중복 클릭 방지
+  previewingDocId.value = doc.id
+  console.log('[previewDoc]', { id: doc.id, docType: doc.docType, hasRaw: !!doc._raw })
+
+  if (doc.docType === L.tabWorkInstruction) {
+    if (!doc._raw) { previewingDocId.value = null; return }
+    await previewWorkOrder(doc)
+  } else if (doc.docType === L.tabDailyReport) {
+    if (!doc._raw) { previewingDocId.value = null; return }
+    await previewReport(doc)
+  } else if (doc.id != null) {
+    // 시공계획서 등 파일 기반 문서 → download API로 blob 받아서 미리보기
+    await previewFileDoc(doc)
+  }
+
+  previewingDocId.value = null
+}
+
+// 파일 기반 문서 (시공계획서 등) 미리보기
+async function previewFileDoc(doc) {
+  // WO- / RP- 접두어가 붙은 id는 download API에 보낼 수 없으므로 차단
+  const docId = doc.id
+  if (typeof docId === 'string' && /^(WO|RP)-/.test(docId)) {
+    console.warn('[previewFileDoc] 작업지시서/공사일보는 이 함수로 처리할 수 없습니다:', docId)
+    return
+  }
+
+  // 파일이 서버에 없는 경우 안내 (fileUrl을 알 수 있을 때만 체크)
+  if (doc.fileUrl && doc.fileUrl.startsWith('dummy')) {
+    alert('이 문서는 아직 파일이 등록되지 않아 미리보기가 불가합니다.')
+    return
+  }
+
+  isGeneratingSinglePdf.value = true
+  try {
+    console.log('[previewFileDoc] download URL:', `${API_BASE}/document-management/download/${docId}`)
+
+    const res = await fetch(`${API_BASE}/document-management/download/${docId}`)
+
+    if (!res.ok) throw new Error(`파일 로드 실패: ${res.status}`)
+
+    const blob = await res.blob()
+    const fileName = doc.fileName || 'document'
+
+    // PDF 파일인지 확인 (확장자 기반)
+    const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : ''
+    const isPdf = ext === 'pdf'
+
+    if (isPdf) {
+      // PDF → 미리보기 모달에 iframe으로 표시
+      if (pdfPreviewUrl.value) {
+        URL.revokeObjectURL(pdfPreviewUrl.value)
+      }
+      // blob을 PDF 타입으로 재생성 (백엔드가 octet-stream으로 보내므로)
+      const pdfBlob2 = new Blob([blob], { type: 'application/pdf' })
+      pdfBlob.value = pdfBlob2
+      pdfPreviewUrl.value = URL.createObjectURL(pdfBlob2)
+      pdfFileName.value = fileName
+      pdfPageLink.value = ''
+      showPdfPreview.value = true
+    } else {
+      // PDF가 아닌 파일(xlsx 등) → 바로 다운로드
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }
+  } catch (e) {
+    console.error('[파일 미리보기 오류]', e)
+    alert(`파일 미리보기 중 오류가 발생했습니다.\n${e.message}`)
+  } finally {
+    isGeneratingSinglePdf.value = false
+  }
+}
+
+// 다운로드 버튼 클릭 핸들러 — 미리보기를 먼저 띄우고 모달에서 다운로드
+async function handleDownload(doc) {
+  // 먼저 미리보기 모달을 띄움 (PDF 생성 or 서버에서 파일 로드)
+  await previewDoc(doc)
+  // pdfFileName을 doc.fileName으로 맞춰줌 (원래 파일명으로 다운로드)
+  if (pdfBlob.value && doc.fileName) {
+    pdfFileName.value = doc.fileName
+  }
+}
+
+// 작업지시서 1건 PDF 미리보기
+async function previewWorkOrder(doc) {
+  const raw = doc._raw
+  if (!raw) return
+
+  isGeneratingSinglePdf.value = true
+
+  // 작업지시서 페이지에서의 파싱 로직 재현
+  let locationStr = raw.title
+    ? raw.title
+      .replace(`[${raw.tradeType}] `, '')
+      .replace(' 작업지시서', '')
+    : ''
+  let detail = raw.instructionContent || ''
+  let time = ''
+  let safetyText = ''
+  if (detail.includes('[작업시간]')) {
+    const parts = detail.split('[작업시간]')
+    detail = parts[0].trim()
+    const subParts = parts[1].split('[안전사항]')
+    time = subParts[0] ? subParts[0].trim() : ''
+    if (subParts.length > 1) safetyText = subParts[1].trim()
+  }
+
+  const toDateStr = (v) => {
+    if (!v) return ''
+    if (Array.isArray(v)) {
+      const [y, m, d] = v
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+    return String(v).substring(0, 10)
+  }
+
+  singleWorkOrder.value = {
+    title:        raw.title || `[${raw.tradeType || '작업'}] 작업지시서`,
+    process:      raw.tradeType || '공종',
+    dueDate:      toDateStr(raw.dueDate) || '',
+    location:     locationStr,
+    partner:      '한울중기',
+    workDetail:   raw.workDetail || detail,
+    workTime:     raw.workTime || time,
+    safety:       raw.safetyContent || safetyText,
+    workerCount:  raw.workerCount || 0,
+    statusCode:   raw.statusCode || 'OPEN',
+    equipments:   (raw.equipments || []).map(eq => ({
+      name: eq.equipmentName || eq.name || '',
+      count: eq.equipmentCount || eq.count || 0,
+    })),
+  }
+
+  pdfPageLink.value = '/site/work-instructions'
+
+  await nextTick()
+  await new Promise(r => setTimeout(r, 300))
+
+  await captureAndPreview(singlePdfRef.value, `작업지시서_${singleWorkOrder.value.process}_${singleWorkOrder.value.dueDate}.pdf`)
+  isGeneratingSinglePdf.value = false
+}
+
+// 공사일보 1건 PDF 미리보기
+async function previewReport(doc) {
+  const raw = doc._raw
+  if (!raw) return
+
+  isGeneratingSinglePdf.value = true
+
+  const toDateStr = (v) => {
+    if (!v) return ''
+    if (Array.isArray(v)) {
+      const [y, m, d] = v
+      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    }
+    return String(v).substring(0, 10)
+  }
+
+  const reportDate = toDateStr(raw.reportDate)
+
+  // 종합 공사일보 PDF 렌더링과 동일한 데이터 형태
+  singleReport.value = {
+    id:              raw.idx,
+    date:            reportDate,
+    process:         raw.tradeType || raw.process || '공정',
+    workers:         raw.actualWorkerCount || 0,
+    location:        raw.location || '',
+    equipmentCount:  0,
+    todayWork:       raw.todayWork || '',
+    tomorrowPlan:    raw.tomorrowPlan || '',
+    progress:        raw.todayProgress || 0,
+    processProgress: raw.actualProgress || 0,
+    notes:           raw.issue || '',
+  }
+
+  pdfPageLink.value = '/site/daily-log'
+
+  await nextTick()
+  await new Promise(r => setTimeout(r, 300))
+
+  await captureAndPreview(singleReportPdfRef.value, `공사일보_${singleReport.value.process}_${reportDate}.pdf`)
+  isGeneratingSinglePdf.value = false
+}
+
+// 공통: DOM → canvas → PDF Blob → 미리보기 모달
+async function captureAndPreview(el, fileName) {
+  if (!el) {
+    alert('PDF 영역을 찾을 수 없습니다.')
+    return
+  }
+
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+    })
+
+    const pdf = new jsPDF('p', 'mm', 'a4')
+    const pdfWidth = pdf.internal.pageSize.getWidth()
+    const pdfHeight = pdf.internal.pageSize.getHeight()
+    const imgWidth = pdfWidth
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
+    const imgData = canvas.toDataURL('image/png')
+
+    let heightLeft = imgHeight
+    let position = 0
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pdfHeight
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight
+      pdf.addPage()
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pdfHeight
+    }
+
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value)
+    }
+
+    const blob = pdf.output('blob')
+    pdfBlob.value = blob
+    pdfPreviewUrl.value = URL.createObjectURL(blob)
+    pdfFileName.value = fileName
+    showPdfPreview.value = true
+  } catch (e) {
+    console.error('PDF 생성 실패:', e)
+    alert('PDF 생성 중 오류가 발생했습니다.')
+  }
+}
+
+// 원본 페이지로 이동
+function goToOriginalPage() {
+  if (pdfPageLink.value) {
+    router.push(pdfPageLink.value)
+  }
 }
 
 /* ───── 유틸 ───── */
@@ -1393,11 +1614,15 @@ const docTypeBadgeClass = (type) => {
             v-else
             v-for="doc in paginatedDocuments"
             :key="doc.id"
-            class="group border-b border-forena-50 transition hover:bg-flare-50/40"
-            :class="{ 'bg-forena-50/30': selectedRows.has(doc.id) }"
+            class="group cursor-pointer border-b border-forena-50 transition hover:bg-flare-50/40"
+            :class="{
+                'bg-forena-50/30': selectedRows.has(doc.id),
+                'animate-pulse bg-flare-50/60': previewingDocId === doc.id,
+              }"
+            @click="previewDoc(doc)"
           >
             <!-- 체크 -->
-            <td class="px-4 py-3.5 text-center">
+            <td class="px-4 py-3.5 text-center" @click.stop>
               <input
                 type="checkbox"
                 class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
@@ -1463,21 +1688,14 @@ const docTypeBadgeClass = (type) => {
             <!-- 업로드자 -->
             <td class="px-4 py-3.5 text-center text-xs text-slate-600">{{ doc.uploader }}</td>
 
-            <!-- 액션 -->
-            <td class="px-4 py-3.5 text-center">
+            <!-- 액션 (다운로드만) -->
+            <td class="px-4 py-3.5 text-center" @click.stop>
               <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
-                <button
-                  type="button"
-                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
-                  title="미리보기"
-                >
-                  <Eye class="h-5 w-5" />
-                </button>
                 <button
                   type="button"
                   class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
                   title="다운로드"
-                  @click="downloadFile(doc.id, doc.fileName)"
+                  @click="handleDownload(doc)"
                 >
                   <Download class="h-5 w-5" />
                 </button>
@@ -1732,6 +1950,228 @@ const docTypeBadgeClass = (type) => {
       </div>
     </Teleport>
 
+    <!-- ═══ 작업지시서 1건 PDF 렌더링 (화면 밖) ═══ -->
+    <Teleport to="body">
+      <div style="position: fixed; left: -9999px; top: 0; width: 794px; background: white;" aria-hidden="true">
+        <div
+          ref="singlePdfRef"
+          v-if="singleWorkOrder"
+          style="font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; padding: 30px 36px; background: white; color: #000; font-size: 11px; min-height: 1093px; display: flex; flex-direction: column; box-sizing: border-box;"
+        >
+          <!-- 상단: 제목 + 결재란 -->
+          <div style="position:relative; height:100px; margin-bottom:10px;">
+            <h1 style="text-align:center; font-size:26px; font-weight:800; letter-spacing:12px; margin:0; padding-top:30px; color:#000;">
+              작 업 지 시 서
+            </h1>
+            <table style="position:absolute; top:0; right:0; border:1.5px solid #000; border-collapse:collapse;">
+              <tr>
+                <td rowspan="2" style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:22px; padding:16px 4px; text-align:center; font-size:10px; line-height:1.4;">결<br><br>재</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">작성</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">검토</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">승인</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- 기본 정보 테이블 -->
+          <table style="width:100%; border-collapse:collapse; border:1.5px solid #000;">
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; width:120px; padding:8px 10px;">현 장 명</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ projectInfo.name }}</td>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; width:120px; padding:8px 10px;">협력회사명</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.partner }}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:8px 10px;">공 종</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.process }}</td>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:8px 10px;">처리기한</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.dueDate || '즉시' }}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:8px 10px;">제 목</td>
+              <td colspan="3" style="border:1px solid #555; padding:8px 10px; font-weight:600;">{{ singleWorkOrder.title }}</td>
+            </tr>
+          </table>
+
+          <!-- 지시사항 -->
+          <table style="width:100%; border-collapse:collapse; border:1.5px solid #000; margin-top:14px;">
+            <tr>
+              <th style="border:1px solid #555; background:#d9d9d9; font-weight:700; text-align:center; font-size:12px; letter-spacing:6px; padding:7px;">
+                지 시 사 항
+              </th>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; padding:14px 14px; vertical-align:top; line-height:1.8; white-space:pre-wrap; min-height:180px;">{{ singleWorkOrder.workDetail || '-' }}</td>
+            </tr>
+          </table>
+
+          <!-- 작업 상세 (시간/인력/안전/장비) -->
+          <table style="width:100%; border-collapse:collapse; border:1.5px solid #000; margin-top:14px;">
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; width:120px; padding:8px 10px;">작업 시간</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.workTime || '-' }}</td>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; width:120px; padding:8px 10px;">투입 인력</td>
+              <td style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.workerCount }} 명</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:8px 10px;">작업 위치</td>
+              <td colspan="3" style="border:1px solid #555; padding:8px 10px;">{{ singleWorkOrder.location || '-' }}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:8px 10px;">안전사항</td>
+              <td colspan="3" style="border:1px solid #555; padding:8px 10px; vertical-align:top; line-height:1.7; white-space:pre-wrap;">{{ singleWorkOrder.safety || '-' }}</td>
+            </tr>
+          </table>
+
+          <!-- 장비 현황 -->
+          <table v-if="singleWorkOrder.equipments.length > 0" style="width:100%; border-collapse:collapse; border:1.5px solid #000; margin-top:14px;">
+            <tr>
+              <th colspan="3" style="border:1px solid #555; background:#d9d9d9; font-weight:700; text-align:center; font-size:12px; letter-spacing:6px; padding:7px;">
+                투 입 장 비
+              </th>
+            </tr>
+            <tr>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:10%;">No.</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px;">장비명</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:20%;">수량</th>
+            </tr>
+            <tr v-for="(eq, eqIdx) in singleWorkOrder.equipments" :key="eqIdx">
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ eqIdx + 1 }}</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ eq.name }}</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ eq.count }} 대</td>
+            </tr>
+          </table>
+
+          <!-- 서명란 -->
+          <div style="margin-top:auto; padding-top:24px;">
+            <p style="text-align:center; font-size:11px; margin-bottom:20px;">상기의 내용과 같이 지시합니다.</p>
+            <div style="display:flex; justify-content:flex-end; gap:40px; font-size:11px;">
+              <span>주식회사 ○○건설</span>
+              <span>현장대리인 : ________________ (인)</span>
+            </div>
+          </div>
+
+          <!-- 푸터 -->
+          <div style="margin-top:18px; padding-top:12px; border-top:1px solid #999; font-size:10px; color:#666; text-align:right;">
+            출력일시 : {{ new Date().toLocaleString('ko-KR') }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══ 공사일보 1건 PDF 렌더링 (화면 밖) ═══ -->
+    <Teleport to="body">
+      <div style="position: fixed; left: -9999px; top: 0; width: 794px; background: white;" aria-hidden="true">
+        <div
+          ref="singleReportPdfRef"
+          v-if="singleReport"
+          style="font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; padding: 30px 36px; background: white; color: #000; font-size: 11px; min-height: 1093px; display: flex; flex-direction: column; box-sizing: border-box;"
+        >
+          <!-- 상단 헤더 (제목 + 결재란) -->
+          <div style="position:relative; height:90px; margin-bottom:10px;">
+            <h1 style="text-align:center; font-size:26px; font-weight:800; letter-spacing:12px; margin:0; padding-top:30px; color:#000;">
+              공 사 일 보
+            </h1>
+            <table style="position:absolute; top:0; right:0; border:1.5px solid #000; border-collapse:collapse;">
+              <tr>
+                <td rowspan="2" style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:22px; padding:16px 4px; text-align:center; font-size:10px; line-height:1.4;">결<br><br>재</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">담당</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">검토</td>
+                <td style="border:1px solid #000; background:#f0f0f0; font-weight:700; width:50px; height:18px; padding:4px 0; text-align:center; font-size:10px;">승인</td>
+              </tr>
+              <tr>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+                <td style="border:1px solid #000; width:50px; height:50px;"></td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- 공사 정보 헤더 -->
+          <div style="display:table; width:100%; margin-bottom:14px; font-size:11px; clear:both;">
+            <div style="display:table-cell;">
+              <span style="font-weight:700; padding-right:6px;">■ 공사명 :</span>
+              <span style="font-weight:600;">{{ projectInfo.name }}</span>
+            </div>
+            <div style="display:table-cell; text-align:right; white-space:nowrap;">
+              <span style="font-weight:700; padding-right:6px;">■ 일자 :</span>
+              <span style="font-weight:600;">{{ singleReport.date }}</span>
+            </div>
+          </div>
+
+          <!-- 공정 상세 -->
+          <table style="width:100%; border-collapse:collapse; border:1.5px solid #000;">
+            <tr>
+              <th colspan="6" style="background:#2a2a2a; color:white; text-align:left; font-weight:700; font-size:12px; letter-spacing:2px; padding:7px 12px; border:1px solid #2a2a2a;">
+                {{ singleReport.process }} 공사 / 위치 : {{ singleReport.location || '위치 미지정' }}
+              </th>
+            </tr>
+            <tr>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">공종</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:24%;">작업 위치</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">금일 인력</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:14%;">투입 장비</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:17%;">금일 진척률</th>
+              <th style="border:1px solid #555; background:#e8e8e8; font-weight:700; text-align:center; padding:6px 8px; width:17%;">전체 진척률</th>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ singleReport.process }}</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ singleReport.location || '-' }}</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700;">{{ singleReport.workers }} 명</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center;">{{ singleReport.equipmentCount }} 대</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700; font-size:13px;">{{ singleReport.progress }}%</td>
+              <td style="border:1px solid #555; padding:6px 8px; text-align:center; font-weight:700; font-size:13px;">{{ singleReport.processProgress }}%</td>
+            </tr>
+            <tr>
+              <th colspan="6" style="border:1px solid #555; background:#d9d9d9; font-weight:700; text-align:center; font-size:12px; letter-spacing:8px; padding:7px;">
+                금 일 작 업 내 용
+              </th>
+            </tr>
+            <tr>
+              <td colspan="6" style="border:1px solid #555; padding:10px 12px; vertical-align:top; line-height:1.7; white-space:pre-wrap; height:120px; min-width:1px;">{{ singleReport.todayWork || '-' }}</td>
+            </tr>
+            <tr>
+              <td style="border:1px solid #555; background:#f0f0f0; font-weight:700; text-align:center; padding:6px 8px;">특이사항</td>
+              <td colspan="5" style="border:1px solid #555; background:#fffaf0; padding:8px 12px; vertical-align:top; line-height:1.6; white-space:pre-wrap;">{{ singleReport.notes || '특이사항 없음' }}</td>
+            </tr>
+          </table>
+
+          <!-- 푸터 -->
+          <div style="margin-top:auto; padding-top:18px; border-top:1px solid #999; font-size:10px; color:#666; text-align:right;">
+            출력일시 : {{ new Date().toLocaleString('ko-KR') }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══ PDF 생성 중 로딩 오버레이 ═══ -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-200"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-150"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="isGeneratingSinglePdf"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-forena-900/30 backdrop-blur-[2px]"
+        >
+          <div class="flex flex-col items-center gap-3 rounded-2xl border border-forena-100 bg-white px-10 py-8 shadow-xl">
+            <Loader2 class="h-8 w-8 animate-spin text-flare-500" />
+            <p class="text-sm font-semibold text-forena-800">PDF 생성 중...</p>
+            <p class="text-[11px] text-forena-400">잠시만 기다려주세요</p>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- ═══ PDF 미리보기 모달 ═══ -->
     <Teleport to="body">
       <div
@@ -1772,22 +2212,37 @@ const docTypeBadgeClass = (type) => {
           </div>
 
           <!-- 푸터 -->
-          <div class="flex items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/40 px-5 py-3">
+          <div class="flex items-center justify-between border-t border-forena-100 bg-forena-50/40 px-5 py-3">
+            <!-- 왼쪽: 원본 페이지 링크 (작업지시서/공사일보일 때만 표시) -->
             <button
+              v-if="pdfPageLink"
               type="button"
-              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-              @click="closePdfPreview"
+              class="inline-flex items-center gap-1 text-xs text-forena-500 transition hover:text-forena-700"
+              @click="goToOriginalPage"
             >
-              닫기
+              <ExternalLink class="h-3.5 w-3.5" />
+              원본 페이지에서 보기
             </button>
-            <button
-              type="button"
-              class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
-              @click="downloadPdfFromPreview"
-            >
-              <Download class="h-3.5 w-3.5" />
-              다운로드
-            </button>
+            <span v-else></span>
+
+            <!-- 오른쪽: 닫기 + 다운로드 -->
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+                @click="closePdfPreview"
+              >
+                닫기
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
+                @click="downloadPdfFromPreview"
+              >
+                <Download class="h-3.5 w-3.5" />
+                다운로드
+              </button>
+            </div>
           </div>
         </div>
       </div>
