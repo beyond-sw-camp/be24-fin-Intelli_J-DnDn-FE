@@ -282,7 +282,7 @@ async function fetchDocuments() {
     const size = rowsPerPage.value
 
     const res = await fetch(
-        `${API_BASE}/document-management/${currentProjectId.value}?page=${page}&size=${size}`
+      `${API_BASE}/document-management/${currentProjectId.value}?page=${page}&size=${size}`
     )
     const json = await res.json()
     console.log('[API 응답]', json)
@@ -310,7 +310,7 @@ async function fetchDocuments() {
 async function fetchPinnedSchedules() {
   try {
     const res = await fetch(
-        `${API_BASE}/document-management/${currentProjectId.value}/pinned`
+      `${API_BASE}/document-management/${currentProjectId.value}/pinned`
     )
     const json = await res.json()
     console.log('[고정 영역 응답]', json)
@@ -358,15 +358,15 @@ async function fetchReports() {
 
     // 날짜별 병렬 호출 (BaseResponse 인터셉터가 data를 풀어줌 → 곧장 List<Res>)
     const results = await Promise.allSettled(
-        dates.map((date) => api.get('/report/', { params: { date } }))
+      dates.map((date) => api.get('/report/', { params: { date } }))
     )
 
     const merged = []
     results.forEach((r) => {
       if (r.status === 'fulfilled') {
         const list = Array.isArray(r.value)
-            ? r.value
-            : (r.value?.data?.data || r.value?.data || r.value?.content || [])
+          ? r.value
+          : (r.value?.data?.data || r.value?.data || r.value?.content || [])
         if (Array.isArray(list)) merged.push(...list)
       }
     })
@@ -457,9 +457,9 @@ const tableDocuments = computed(() => {
  * 서버 페이징 대신 클라이언트 페이징 사용
  */
 const useClientPagination = computed(() =>
-    currentTab.value === L.tabAll ||
-    currentTab.value === L.tabWorkInstruction ||
-    currentTab.value === L.tabDailyReport
+  currentTab.value === L.tabAll ||
+  currentTab.value === L.tabWorkInstruction ||
+  currentTab.value === L.tabDailyReport
 )
 
 // 페이지/페이지당 개수 변경 시 서버 재조회 (서버 페이징 탭에서만)
@@ -480,11 +480,11 @@ const filteredDocuments = computed(() => {
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(
-        (d) =>
-            d.docCode.toLowerCase().includes(q) ||
-            d.fileName.toLowerCase().includes(q) ||
-            (d.partnerName && d.partnerName.toLowerCase().includes(q)) ||
-            d.uploader.toLowerCase().includes(q),
+      (d) =>
+        d.docCode.toLowerCase().includes(q) ||
+        d.fileName.toLowerCase().includes(q) ||
+        (d.partnerName && d.partnerName.toLowerCase().includes(q)) ||
+        d.uploader.toLowerCase().includes(q),
     )
   }
 
@@ -530,18 +530,18 @@ const paginatedDocuments = computed(() => {
 })
 
 const totalElements = computed(() =>
-    useClientPagination.value
-        ? filteredDocuments.value.length
-        : totalElementsFromServer.value
+  useClientPagination.value
+    ? filteredDocuments.value.length
+    : totalElementsFromServer.value
 )
 
 const pageStart = computed(() =>
-    totalElements.value === 0
-        ? 0
-        : (currentPage.value - 1) * rowsPerPage.value + 1
+  totalElements.value === 0
+    ? 0
+    : (currentPage.value - 1) * rowsPerPage.value + 1
 )
 const pageEnd = computed(() =>
-    Math.min(currentPage.value * rowsPerPage.value, totalElements.value)
+  Math.min(currentPage.value * rowsPerPage.value, totalElements.value)
 )
 
 /* ───── 핸들러 ───── */
@@ -793,12 +793,12 @@ const activeDatePreset = computed(() => {
 const PINNED_TYPES = [L.tabMasterSchedule, L.tabMilestone, L.tabSubSchedule]
 
 const pinnedSchedules = computed(() =>
-    PINNED_TYPES.map((type) => {
-      const latest = pinnedDocuments.value
-          .filter((d) => d.docType === type)
-          .sort((a, b) => (b.docDate > a.docDate ? 1 : -1))[0] ?? null
-      return { type, doc: latest }
-    })
+  PINNED_TYPES.map((type) => {
+    const latest = pinnedDocuments.value
+      .filter((d) => d.docType === type)
+      .sort((a, b) => (b.docDate > a.docDate ? 1 : -1))[0] ?? null
+    return { type, doc: latest }
+  })
 )
 
 
@@ -823,6 +823,12 @@ const isGeneratingPdf = ref(false)
 const pdfRef = ref(null)
 const pdfReports = ref([])
 
+/* ───── PDF 미리보기 관련 상태 ───── */
+const showPdfPreview = ref(false)        // 미리보기 모달 표시 여부
+const pdfPreviewUrl = ref('')            // iframe에 띄울 Blob URL
+const pdfBlob = ref(null)                // 다운로드 시 사용할 Blob 객체
+const pdfFileName = ref('')              // 저장할 파일명
+
 // 공사 정보 (실제 환경에선 API/스토어에서 받아오기)
 const projectInfo = ref({
   name: '체육공원 진입도로(대3-42호) 개설공사',
@@ -837,8 +843,8 @@ const pdfStats = computed(() => {
   const totalWorkers = list.reduce((s, r) => s + (r.workers || 0), 0)
   const totalEquip = list.reduce((s, r) => s + (r.equipmentCount || 0), 0)
   const avgProgress = total
-      ? Math.round(list.reduce((s, r) => s + (r.processProgress || 0), 0) / total)
-      : 0
+    ? Math.round(list.reduce((s, r) => s + (r.processProgress || 0), 0) / total)
+    : 0
   return { total, totalWorkers, totalEquip, avgProgress }
 })
 
@@ -865,7 +871,7 @@ const downloadExcel = () => {
   showPdfModal.value = true
 }
 
-// 데이터 불러오기 + PDF 생성
+// 데이터 불러오기 + PDF 생성 → 미리보기로 띄우기
 const generatePdf = async () => {
   if (!pdfTargetDate.value) {
     alert('날짜를 선택해주세요.')
@@ -885,9 +891,9 @@ const generatePdf = async () => {
     }
 
     const toDateString = (d) =>
-        Array.isArray(d)
-            ? `${d[0]}-${String(d[1]).padStart(2, '0')}-${String(d[2]).padStart(2, '0')}`
-            : d
+      Array.isArray(d)
+        ? `${d[0]}-${String(d[1]).padStart(2, '0')}-${String(d[2]).padStart(2, '0')}`
+        : d
 
     pdfReports.value = dbReports.map((db) => ({
       id: db.idx,
@@ -938,14 +944,51 @@ const generatePdf = async () => {
       heightLeft -= pdfHeight
     }
 
-    pdf.save(`공사일보_${pdfTargetDate.value}.pdf`)
+    // 5. 바로 저장하지 않고 Blob으로 만들어 미리보기 띄우기
+    //    (이전 미리보기 URL이 남아 있으면 메모리 해제)
+    if (pdfPreviewUrl.value) {
+      URL.revokeObjectURL(pdfPreviewUrl.value)
+      pdfPreviewUrl.value = ''
+    }
+
+    const blob = pdf.output('blob')
+    pdfBlob.value = blob
+    pdfPreviewUrl.value = URL.createObjectURL(blob)
+    pdfFileName.value = `공사일보_${pdfTargetDate.value}.pdf`
+
+    // 선택 모달은 닫고 미리보기 모달 열기
     showPdfModal.value = false
+    showPdfPreview.value = true
   } catch (e) {
     console.error('PDF 생성 실패:', e)
     alert('PDF 생성 중 오류가 발생했습니다.')
   } finally {
     isGeneratingPdf.value = false
   }
+}
+
+// 미리보기에서 실제 다운로드 실행
+const downloadPdfFromPreview = () => {
+  if (!pdfBlob.value) return
+  const a = document.createElement('a')
+  const url = URL.createObjectURL(pdfBlob.value)
+  a.href = url
+  a.download = pdfFileName.value || 'document.pdf'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // download용 임시 URL은 즉시 해제 (미리보기 URL은 유지)
+  URL.revokeObjectURL(url)
+}
+
+// 미리보기 모달 닫기 (Blob URL 정리)
+const closePdfPreview = () => {
+  showPdfPreview.value = false
+  if (pdfPreviewUrl.value) {
+    URL.revokeObjectURL(pdfPreviewUrl.value)
+    pdfPreviewUrl.value = ''
+  }
+  pdfBlob.value = null
 }
 
 /* ───── 유틸 ───── */
@@ -1006,17 +1049,17 @@ const docTypeBadgeClass = (type) => {
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
-            @click="downloadExcel"
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+          @click="downloadExcel"
         >
           <Download class="h-3.5 w-3.5 text-forena-400" />
           {{ L.excel }}
         </button>
         <button
-            type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
-            @click="showUploadDrawer = true"
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
+          @click="showUploadDrawer = true"
         >
           <Plus class="h-3.5 w-3.5 text-flare-600" />
           {{ L.upload }}
@@ -1028,10 +1071,10 @@ const docTypeBadgeClass = (type) => {
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 ">
       <!-- 전체 -->
       <article
-          class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
+        class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
       >
         <div
-            class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 to-flare-400 opacity-90"
+          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 to-flare-400 opacity-90"
         />
         <div class="flex items-start justify-between">
           <h3 class="text-sm font-semibold text-forena-800">{{ L.statTotal }}</h3>
@@ -1047,10 +1090,10 @@ const docTypeBadgeClass = (type) => {
 
       <!-- 본사 -->
       <article
-          class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
+        class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
       >
         <div
-            class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 to-forena-300"
+          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 to-forena-300"
         />
         <div class="flex items-start justify-between">
           <h3 class="text-sm font-semibold text-forena-800">{{ L.statHq }}</h3>
@@ -1066,10 +1109,10 @@ const docTypeBadgeClass = (type) => {
 
       <!-- 협력사 -->
       <article
-          class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
+        class="relative flex h-[110px] flex-col justify-between overflow-hidden rounded-2xl border border-white/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
       >
         <div
-            class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-flare-400 to-emerald-400"
+          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-flare-400 to-emerald-400"
         />
         <div class="flex items-start justify-between">
           <h3 class="text-sm font-semibold text-forena-800">{{ L.statPartner }}</h3>
@@ -1104,9 +1147,9 @@ const docTypeBadgeClass = (type) => {
 
       <!-- 리스트 행 -->
       <div
-          v-for="item in pinnedSchedules"
-          :key="item.type"
-          class="group grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
+        v-for="item in pinnedSchedules"
+        :key="item.type"
+        class="group grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] items-center border-b border-forena-50 px-6 py-3.5 last:border-b-0 transition hover:bg-flare-50/40"
       >
         <!-- 문서 유형 -->
         <div class="flex items-center gap-2 text-left">
@@ -1156,10 +1199,10 @@ const docTypeBadgeClass = (type) => {
 
     <!-- ═══ 테이블 카드 ═══ -->
     <div
-        class="relative overflow-hidden rounded-2xl border border-white/90 bg-white/90 shadow-card backdrop-blur-sm"
+      class="relative overflow-hidden rounded-2xl border border-white/90 bg-white/90 shadow-card backdrop-blur-sm"
     >
       <div
-          class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 text-center to-flare-400 opacity-90"
+        class="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-forena-500 text-center to-flare-400 opacity-90"
       />
 
       <!-- 검색 + 필터 바 -->
@@ -1167,24 +1210,24 @@ const docTypeBadgeClass = (type) => {
         <div class="relative w-full max-w-sm">
           <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
-              v-model="searchQuery"
-              type="text"
-              :placeholder="L.searchPh"
-              class="w-full rounded-xl border border-forena-200/80 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+            v-model="searchQuery"
+            type="text"
+            :placeholder="L.searchPh"
+            class="w-full rounded-xl border border-forena-200/80 py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
           />
         </div>
         <div v-if="selectedRows.size > 0" class="flex items-center gap-2 text-xs text-forena-600">
           <span class="font-bold">{{ selectedRows.size }}건 선택</span>
           <button
-              type="button"
-              class="flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100"
+            type="button"
+            class="flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-[11px] font-bold text-rose-700 transition hover:bg-rose-100"
           >
             <Trash2 class="h-3 w-3" />
             삭제
           </button>
           <button
-              type="button"
-              class="flex items-center gap-1 rounded-lg border border-forena-200 bg-forena-50 px-3 py-1.5 text-[11px] font-bold text-forena-700 transition hover:bg-forena-100"
+            type="button"
+            class="flex items-center gap-1 rounded-lg border border-forena-200 bg-forena-50 px-3 py-1.5 text-[11px] font-bold text-forena-700 transition hover:bg-forena-100"
           >
             <Download class="h-3 w-3" />
             다운로드
@@ -1195,24 +1238,24 @@ const docTypeBadgeClass = (type) => {
       <!-- 탭 -->
       <div class="scrollbar-hide flex items-center gap-1 overflow-x-auto border-b border-forena-50 px-6 py-2">
         <button
-            v-for="tab in tabs"
-            :key="tab"
-            type="button"
-            class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition"
-            :class="
+          v-for="tab in tabs"
+          :key="tab"
+          type="button"
+          class="shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition"
+          :class="
             currentTab === tab
               ? 'bg-forena-500 text-white shadow-sm'
               : 'text-slate-500 hover:bg-forena-50 hover:text-forena-700'
           "
-            @click="currentTab = tab; currentPage = 1; clearDateFilter(); clearPartnerFilter()"
+          @click="currentTab = tab; currentPage = 1; clearDateFilter(); clearPartnerFilter()"
         >
           {{ tab }}
         </button>
         <button
-            v-if="currentTab !== L.tabAll"
-            type="button"
-            class="ml-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
-            @click="currentTab = L.tabAll"
+          v-if="currentTab !== L.tabAll"
+          type="button"
+          class="ml-1 flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-bold text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+          @click="currentTab = L.tabAll"
         >
           <RotateCcw class="h-3 w-3" />
           {{ L.resetFilter }}
@@ -1221,15 +1264,15 @@ const docTypeBadgeClass = (type) => {
 
       <!-- 날짜 빠른 선택 (작업지시서·공사일보 탭 전용) -->
       <div
-          v-if="showDateFilter"
-          class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
+        v-if="showDateFilter"
+        class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
       >
         <CalendarDays class="h-3.5 w-3.5 shrink-0 text-forena-400" />
         <span class="text-[11px] font-bold text-forena-500 shrink-0">날짜 필터</span>
         <!-- 빠른 선택 프리셋 -->
         <div class="flex flex-wrap gap-1">
           <button
-              v-for="preset in [
+            v-for="preset in [
                 { key: 'today', label: '오늘' },
                 { key: 'yesterday', label: '어제' },
                 { key: 'thisWeek', label: '이번 주' },
@@ -1237,39 +1280,39 @@ const docTypeBadgeClass = (type) => {
                 { key: 'thisMonth', label: '이번 달' },
                 { key: 'lastMonth', label: '지난 달' },
               ]"
-              :key="preset.key"
-              type="button"
-              class="rounded-md px-2.5 py-1 text-[11px] font-bold transition"
-              :class="
+            :key="preset.key"
+            type="button"
+            class="rounded-md px-2.5 py-1 text-[11px] font-bold transition"
+            :class="
                 activeDatePreset === preset.key
                   ? 'bg-forena-500 text-white shadow-sm'
                   : 'border border-forena-200 bg-white text-slate-600 hover:border-forena-300 hover:bg-forena-50'
               "
-              @click="applyQuickDate(preset.key)"
+            @click="applyQuickDate(preset.key)"
           >{{ preset.label }}</button>
         </div>
         <!-- 직접 입력 -->
         <div class="ml-1 flex items-center gap-1.5">
           <input
-              v-model="dateFilterStart"
-              type="date"
-              class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              @change="currentPage = 1"
+            v-model="dateFilterStart"
+            type="date"
+            class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+            @change="currentPage = 1"
           />
           <span class="text-[11px] text-slate-400">~</span>
           <input
-              v-model="dateFilterEnd"
-              type="date"
-              class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              @change="currentPage = 1"
+            v-model="dateFilterEnd"
+            type="date"
+            class="rounded-md border border-forena-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+            @change="currentPage = 1"
           />
         </div>
         <!-- 초기화 -->
         <button
-            v-if="dateFilterStart || dateFilterEnd"
-            type="button"
-            class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
-            @click="clearDateFilter"
+          v-if="dateFilterStart || dateFilterEnd"
+          type="button"
+          class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
+          @click="clearDateFilter"
         >
           <X class="h-3 w-3" />
           초기화
@@ -1278,24 +1321,24 @@ const docTypeBadgeClass = (type) => {
 
       <!-- 협력사 필터 (공종별 시공계획서 탭 전용) -->
       <div
-          v-if="showPartnerFilter"
-          class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
+        v-if="showPartnerFilter"
+        class="flex flex-wrap items-center gap-2 border-b border-forena-50 bg-forena-50/40 px-6 py-3"
       >
         <Handshake class="h-3.5 w-3.5 shrink-0 text-forena-400" />
         <span class="text-[11px] font-bold text-forena-500 shrink-0">협력사 필터</span>
         <select
-            v-model="partnerFilter"
-            class="rounded-lg border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-            @change="currentPage = 1"
+          v-model="partnerFilter"
+          class="rounded-lg border border-forena-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+          @change="currentPage = 1"
         >
           <option value="">전체</option>
           <option v-for="pn in partnerList" :key="pn" :value="pn">{{ pn }}</option>
         </select>
         <button
-            v-if="partnerFilter"
-            type="button"
-            class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
-            @click="clearPartnerFilter"
+          v-if="partnerFilter"
+          type="button"
+          class="flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-slate-500 transition hover:bg-slate-50"
+          @click="clearPartnerFilter"
         >
           <X class="h-3 w-3" />
           초기화
@@ -1309,15 +1352,15 @@ const docTypeBadgeClass = (type) => {
           <tr>
             <th class="w-10 px-4 py-3.5 items-center text-center">
               <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
-                  :checked="selectedRows.size === paginatedDocuments.length && paginatedDocuments.length > 0"
-                  @change="toggleSelectAll"
+                type="checkbox"
+                class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
+                :checked="selectedRows.size === paginatedDocuments.length && paginatedDocuments.length > 0"
+                @change="toggleSelectAll"
               />
             </th>
             <th
-                class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
-                @click="toggleSort('docCode')"
+              class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
+              @click="toggleSort('docCode')"
             >
                 <span class="flex items-center justify-center gap-1">
                   {{ L.colDocCode }}
@@ -1328,8 +1371,8 @@ const docTypeBadgeClass = (type) => {
             <th class="px-4 py-3.5 font-semibold text-left">{{ L.colFileName }}</th>
             <th class="px-4 py-3.5 font-semibold text-left">{{ L.colOrigin }}</th>
             <th
-                class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
-                @click="toggleSort('uploadDate')"
+              class="cursor-pointer px-4 py-3.5 font-semibold select-none text-center"
+              @click="toggleSort('uploadDate')"
             >
                 <span class="flex items-center justify-center gap-1">
                   {{ L.colUploadDate }}
@@ -1347,19 +1390,19 @@ const docTypeBadgeClass = (type) => {
             </td>
           </tr>
           <tr
-              v-else
-              v-for="doc in paginatedDocuments"
-              :key="doc.id"
-              class="group border-b border-forena-50 transition hover:bg-flare-50/40"
-              :class="{ 'bg-forena-50/30': selectedRows.has(doc.id) }"
+            v-else
+            v-for="doc in paginatedDocuments"
+            :key="doc.id"
+            class="group border-b border-forena-50 transition hover:bg-flare-50/40"
+            :class="{ 'bg-forena-50/30': selectedRows.has(doc.id) }"
           >
             <!-- 체크 -->
             <td class="px-4 py-3.5 text-center">
               <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
-                  :checked="selectedRows.has(doc.id)"
-                  @change="toggleRow(doc.id)"
+                type="checkbox"
+                class="h-3.5 w-3.5 rounded border-forena-300 text-forena-600 accent-forena-600"
+                :checked="selectedRows.has(doc.id)"
+                @change="toggleRow(doc.id)"
               />
             </td>
 
@@ -1371,8 +1414,8 @@ const docTypeBadgeClass = (type) => {
             <!-- 문서 유형 -->
             <td class="px-4 py-3.5 text-center">
                 <span
-                    class="inline-flex rounded-lg px-2 py-0.5 text-[11px] font-bold ring-1"
-                    :class="docTypeBadgeClass(doc.docType)"
+                  class="inline-flex rounded-lg px-2 py-0.5 text-[11px] font-bold ring-1"
+                  :class="docTypeBadgeClass(doc.docType)"
                 >
                   {{ doc.docType }}
                 </span>
@@ -1382,8 +1425,8 @@ const docTypeBadgeClass = (type) => {
             <td class="px-4 py-3.5">
               <div class="flex items-center gap-2">
                   <span
-                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-                      :class="fileIconColor(doc.fileExt)"
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+                    :class="fileIconColor(doc.fileExt)"
                   >
                     <component :is="fileIcon(doc.fileExt)" class="h-3.5 w-3.5" />
                   </span>
@@ -1424,17 +1467,17 @@ const docTypeBadgeClass = (type) => {
             <td class="px-4 py-3.5 text-center">
               <div class="flex items-center justify-center gap-1 opacity-0 transition group-hover:opacity-100">
                 <button
-                    type="button"
-                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
-                    title="미리보기"
+                  type="button"
+                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-forena-50 hover:text-forena-700"
+                  title="미리보기"
                 >
                   <Eye class="h-5 w-5" />
                 </button>
                 <button
-                    type="button"
-                    class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
-                    title="다운로드"
-                    @click="downloadFile(doc.id, doc.fileName)"
+                  type="button"
+                  class="rounded-lg p-1.5 text-slate-400 transition hover:bg-flare-50 hover:text-forena-700"
+                  title="다운로드"
+                  @click="downloadFile(doc.id, doc.fileName)"
                 >
                   <Download class="h-5 w-5" />
                 </button>
@@ -1450,39 +1493,39 @@ const docTypeBadgeClass = (type) => {
         <p class="text-xs text-slate-500">
           {{
             L.pageInfo
-                .replace('{total}', totalElements)
-                .replace('{start}', pageStart)
-                .replace('{end}', pageEnd)
+              .replace('{total}', totalElements)
+              .replace('{start}', pageStart)
+              .replace('{end}', pageEnd)
           }}
         </p>
         <div class="flex items-center gap-1">
           <button
-              type="button"
-              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
-              :disabled="currentPage <= 1"
-              @click="currentPage--"
+            type="button"
+            class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+            :disabled="currentPage <= 1"
+            @click="currentPage--"
           >
             <ChevronLeft class="h-3.5 w-3.5" />
           </button>
           <template v-for="p in totalPages" :key="p">
             <button
-                type="button"
-                class="h-6 w-6 rounded-lg text-xs font-bold transition"
-                :class="
+              type="button"
+              class="h-6 w-6 rounded-lg text-xs font-bold transition"
+              :class="
                 p === currentPage
                   ? 'bg-forena-500 text-white shadow-sm'
                   : 'text-slate-500 hover:bg-forena-50 hover:text-forena-800'
               "
-                @click="currentPage = p"
+              @click="currentPage = p"
             >
               {{ p }}
             </button>
           </template>
           <button
-              type="button"
-              class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
-              :disabled="currentPage >= totalPages"
-              @click="currentPage++"
+            type="button"
+            class="rounded-lg border border-forena-200 p-1 text-forena-600 transition hover:bg-forena-50 disabled:opacity-40"
+            :disabled="currentPage >= totalPages"
+            @click="currentPage++"
           >
             <ChevronRight class="h-3.5 w-3.5" />
           </button>
@@ -1493,9 +1536,9 @@ const docTypeBadgeClass = (type) => {
     <!-- ═══ 종합 공사일보 PDF 모달 ═══ -->
     <Teleport to="body">
       <div
-          v-if="showPdfModal"
-          class="fixed inset-0 z-50 flex items-center justify-center bg-forena-900/30 backdrop-blur-[2px] p-4"
-          @click.self="showPdfModal = false"
+        v-if="showPdfModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-forena-900/30 backdrop-blur-[2px] p-4"
+        @click.self="showPdfModal = false"
       >
         <div class="flex w-full max-w-md flex-col rounded-2xl border border-forena-100 bg-white shadow-2xl">
 
@@ -1511,9 +1554,9 @@ const docTypeBadgeClass = (type) => {
               </div>
             </div>
             <button
-                type="button"
-                class="rounded-lg border border-forena-200 bg-white p-1.5 text-forena-400 transition hover:text-forena-700"
-                @click="showPdfModal = false"
+              type="button"
+              class="rounded-lg border border-forena-200 bg-white p-1.5 text-forena-400 transition hover:text-forena-700"
+              @click="showPdfModal = false"
             >
               <X class="h-4 w-4" />
             </button>
@@ -1527,9 +1570,9 @@ const docTypeBadgeClass = (type) => {
                 조회 일자
               </label>
               <input
-                  type="date"
-                  v-model="pdfTargetDate"
-                  class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-800 outline-none focus:border-flare-400"
+                type="date"
+                v-model="pdfTargetDate"
+                class="w-full rounded-lg border border-forena-200 bg-white px-3 py-2 text-sm font-semibold text-forena-800 outline-none focus:border-flare-400"
               />
               <p class="mt-1.5 text-[11px] text-forena-500">
                 선택된 일자: <span class="font-semibold text-forena-700">{{ fmtKor(pdfTargetDate) }}</span>
@@ -1538,42 +1581,42 @@ const docTypeBadgeClass = (type) => {
 
             <div class="rounded-lg border border-flare-100 bg-flare-50/40 p-3 text-[11px] text-forena-600">
               <p class="font-bold text-flare-700">📋 안내</p>
-              <p class="mt-1 leading-relaxed">선택한 일자에 작성된 모든 공정의 공사일보가 1개의 PDF 파일로 합쳐서 다운로드됩니다.</p>
+              <p class="mt-1 leading-relaxed">선택한 일자에 작성된 모든 공정의 공사일보가 1개의 PDF 파일로 합쳐서 미리보기로 표시됩니다. 미리보기 화면에서 다운로드할 수 있습니다.</p>
             </div>
           </div>
 
           <!-- 푸터 -->
           <div class="flex items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/40 px-5 py-3">
             <button
-                type="button"
-                class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50 disabled:opacity-50"
-                @click="showPdfModal = false"
-                :disabled="isGeneratingPdf"
+              type="button"
+              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50 disabled:opacity-50"
+              @click="showPdfModal = false"
+              :disabled="isGeneratingPdf"
             >
               취소
             </button>
             <button
-                type="button"
-                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600 disabled:opacity-50"
-                @click="generatePdf"
-                :disabled="isGeneratingPdf"
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600 disabled:opacity-50"
+              @click="generatePdf"
+              :disabled="isGeneratingPdf"
             >
               <Loader2 v-if="isGeneratingPdf" class="h-3.5 w-3.5 animate-spin" />
-              <Download v-else class="h-3.5 w-3.5" />
-              {{ isGeneratingPdf ? 'PDF 생성 중...' : 'PDF 다운로드' }}
+              <Eye v-else class="h-3.5 w-3.5" />
+              {{ isGeneratingPdf ? 'PDF 생성 중...' : '미리보기' }}
             </button>
           </div>
         </div>
 
         <!-- 화면 밖 PDF 렌더링 영역 -->
         <div
-            style="position: fixed; left: -9999px; top: 0; width: 794px; background: white;"
-            aria-hidden="true"
+          style="position: fixed; left: -9999px; top: 0; width: 794px; background: white;"
+          aria-hidden="true"
         >
           <div
-              ref="pdfRef"
-              v-if="pdfReports.length > 0"
-              style="font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; padding: 30px 36px; background: white; color: #000; font-size: 11px; min-height: 1093px; display: flex; flex-direction: column; box-sizing: border-box;"
+            ref="pdfRef"
+            v-if="pdfReports.length > 0"
+            style="font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; padding: 30px 36px; background: white; color: #000; font-size: 11px; min-height: 1093px; display: flex; flex-direction: column; box-sizing: border-box;"
           >
             <!-- ═══ 상단 헤더 (제목 + 결재란) ═══ -->
             <div style="position:relative; height:90px; margin-bottom:10px;">
@@ -1689,23 +1732,84 @@ const docTypeBadgeClass = (type) => {
       </div>
     </Teleport>
 
+    <!-- ═══ PDF 미리보기 모달 ═══ -->
+    <Teleport to="body">
+      <div
+        v-if="showPdfPreview"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-forena-900/40 backdrop-blur-[2px] p-4"
+        @click.self="closePdfPreview"
+      >
+        <div class="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-forena-100 bg-white shadow-2xl">
+
+          <!-- 헤더 -->
+          <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-3">
+            <div class="flex items-center gap-2.5">
+              <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-flare-50">
+                <Eye class="h-4 w-4 text-flare-600" />
+              </div>
+              <div>
+                <h2 class="text-base font-bold text-forena-900">PDF 미리보기</h2>
+                <p class="text-[11px] text-forena-500">{{ pdfFileName }}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              class="rounded-lg border border-forena-200 bg-white p-1.5 text-forena-400 transition hover:text-forena-700"
+              @click="closePdfPreview"
+            >
+              <X class="h-4 w-4" />
+            </button>
+          </div>
+
+          <!-- 본문: PDF iframe -->
+          <div class="flex-1 overflow-hidden bg-forena-50">
+            <iframe
+              v-if="pdfPreviewUrl"
+              :src="pdfPreviewUrl"
+              class="h-full w-full border-0"
+              title="PDF 미리보기"
+            />
+          </div>
+
+          <!-- 푸터 -->
+          <div class="flex items-center justify-end gap-2 border-t border-forena-100 bg-forena-50/40 px-5 py-3">
+            <button
+              type="button"
+              class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
+              @click="closePdfPreview"
+            >
+              닫기
+            </button>
+            <button
+              type="button"
+              class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
+              @click="downloadPdfFromPreview"
+            >
+              <Download class="h-3.5 w-3.5" />
+              다운로드
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- ═══ 업로드 Drawer ═══ -->
     <Teleport to="body">
       <div
-          v-if="showUploadDrawer"
-          class="fixed inset-0 z-50 flex justify-end bg-forena-900/20 backdrop-blur-[2px]"
-          @click.self="showUploadDrawer = false"
+        v-if="showUploadDrawer"
+        class="fixed inset-0 z-50 flex justify-end bg-forena-900/20 backdrop-blur-[2px]"
+        @click.self="showUploadDrawer = false"
       >
         <aside
-            class="flex h-full w-full max-w-md flex-col border-l border-forena-100 bg-white shadow-2xl animate-[drawerIn_0.25s_ease-out]"
-            @click.stop
+          class="flex h-full w-full max-w-md flex-col border-l border-forena-100 bg-white shadow-2xl animate-[drawerIn_0.25s_ease-out]"
+          @click.stop
         >
           <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-4">
             <h2 class="text-lg font-bold text-forena-900">{{ L.drawerTitle }}</h2>
             <button
-                type="button"
-                class="rounded-lg border border-forena-200 bg-white p-2 text-forena-400 transition hover:text-forena-700"
-                @click="showUploadDrawer = false"
+              type="button"
+              class="rounded-lg border border-forena-200 bg-white p-2 text-forena-400 transition hover:text-forena-700"
+              @click="showUploadDrawer = false"
             >
               <X class="h-4 w-4" />
             </button>
@@ -1714,15 +1818,15 @@ const docTypeBadgeClass = (type) => {
           <div class="scrollbar-hide flex-1 space-y-5 overflow-y-auto p-6 text-sm">
             <!-- 파일 드롭존 -->
             <div
-                class="relative rounded-xl border-2 border-dashed border-forena-200 p-6 text-center transition hover:border-flare-400/60"
-                @dragover.prevent
-                @drop="handleFileDrop"
+              class="relative rounded-xl border-2 border-dashed border-forena-200 p-6 text-center transition hover:border-flare-400/60"
+              @dragover.prevent
+              @drop="handleFileDrop"
             >
               <input
-                  type="file"
-                  class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                  accept=".pdf,.xlsx,.xls,.docx,.hwp,.hwpx"
-                  @change="handleFileChange"
+                type="file"
+                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                accept=".pdf,.xlsx,.xls,.docx,.hwp,.hwpx"
+                @change="handleFileChange"
               />
               <template v-if="!newDoc.fileName">
                 <Upload class="mx-auto mb-2 h-8 w-8 text-flare-600" />
@@ -1733,8 +1837,8 @@ const docTypeBadgeClass = (type) => {
               <template v-else>
                 <div class="flex items-center justify-center gap-2">
                   <span
-                      class="flex h-8 w-8 items-center justify-center rounded-lg"
-                      :class="fileIconColor(newDoc.fileName.split('.').pop())"
+                    class="flex h-8 w-8 items-center justify-center rounded-lg"
+                    :class="fileIconColor(newDoc.fileName.split('.').pop())"
                   >
                     <component :is="fileIcon(newDoc.fileName.split('.').pop())" class="h-4 w-4" />
                   </span>
@@ -1750,9 +1854,9 @@ const docTypeBadgeClass = (type) => {
             <div>
               <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelDocType }}</label>
               <select
-                  v-model="newDoc.docType"
-                  class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                  @change="onDocTypeChange"
+                v-model="newDoc.docType"
+                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+                @change="onDocTypeChange"
               >
                 <option value="" disabled>문서 유형을 선택하세요</option>
                 <option v-for="dt in docTypes" :key="dt" :value="dt">{{ dt }}</option>
@@ -1764,14 +1868,14 @@ const docTypeBadgeClass = (type) => {
               <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelOrigin }}</label>
               <div class="flex gap-2">
                 <button
-                    type="button"
-                    class="flex-1 rounded-xl border px-3 py-2.5 text-xs font-bold transition"
-                    :class="
+                  type="button"
+                  class="flex-1 rounded-xl border px-3 py-2.5 text-xs font-bold transition"
+                  :class="
                     newDoc.origin === 'hq'
                       ? 'border-forena-500 bg-forena-500 text-white shadow-sm'
                       : 'border-forena-200 text-slate-600 hover:border-forena-300 hover:bg-forena-50'
                   "
-                    @click="newDoc.origin = 'hq'; newDoc.partnerName = ''"
+                  @click="newDoc.origin = 'hq'; newDoc.partnerName = ''"
                 >
                   <div class="flex items-center justify-center gap-1.5">
                     <Building2 class="h-3.5 w-3.5" />
@@ -1779,14 +1883,14 @@ const docTypeBadgeClass = (type) => {
                   </div>
                 </button>
                 <button
-                    type="button"
-                    class="flex-1 rounded-xl border px-3 py-2.5 text-xs font-bold transition"
-                    :class="
+                  type="button"
+                  class="flex-1 rounded-xl border px-3 py-2.5 text-xs font-bold transition"
+                  :class="
                     newDoc.origin === 'partner'
                       ? 'border-flare-500 bg-flare-500 text-white shadow-sm'
                       : 'border-forena-200 text-slate-600 hover:border-flare-300 hover:bg-flare-50'
                   "
-                    @click="newDoc.origin = 'partner'"
+                  @click="newDoc.origin = 'partner'"
                 >
                   <div class="flex items-center justify-center gap-1.5">
                     <Handshake class="h-3.5 w-3.5" />
@@ -1800,8 +1904,8 @@ const docTypeBadgeClass = (type) => {
             <div v-if="newDoc.origin === 'partner'">
               <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelPartnerName }}</label>
               <select
-                  v-model="newDoc.partnerName"
-                  class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+                v-model="newDoc.partnerName"
+                class="w-full rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
               >
                 <option value="" disabled>{{ L.labelPartnerSelect }}</option>
                 <option v-for="pn in partnerList" :key="pn" :value="pn">{{ pn }}</option>
@@ -1813,20 +1917,20 @@ const docTypeBadgeClass = (type) => {
               <div>
                 <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{ L.labelMemo }}</label>
                 <input
-                    v-model="newDoc.memo"
-                    type="text"
-                    placeholder="비고 입력"
-                    class="w-full rounded-xl border border-forena-200 px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
+                  v-model="newDoc.memo"
+                  type="text"
+                  placeholder="비고 입력"
+                  class="w-full rounded-xl border border-forena-200 px-3 py-2.5 text-sm outline-none focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
                 />
               </div>
             </div>
 
             <!-- 제출 -->
             <button
-                type="button"
-                :disabled="isSubmitting"
-                class="w-full rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 py-3 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:opacity-60"
-                @click="submitUpload"
+              type="button"
+              :disabled="isSubmitting"
+              class="w-full rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 py-3 text-sm font-bold text-white shadow-md transition hover:from-forena-800 hover:to-forena-950 disabled:opacity-60"
+              @click="submitUpload"
             >
               <span v-if="!isSubmitting">{{ L.submit }}</span>
               <Loader2 v-else class="mx-auto h-4 w-4 animate-spin" />
