@@ -5,6 +5,7 @@ import {
   isHolidayDate,
   workPlanStatus,
 } from '@/utils/schedule/workPlan.js'
+import { tradeMatches } from '@/utils/authScope'
 
 export function useWorkPlanWeeklyCalendar({
   weeklyPlans,
@@ -18,8 +19,8 @@ export function useWorkPlanWeeklyCalendar({
   const filtered = computed(() => {
     let result = viewMode.value === 'weekly' ? weeklyPlans.value : monthlyPlans.value
 
-    if (viewMode.value !== 'weekly' && filterTrade.value) {
-      result = result.filter((plan) => plan.trade === filterTrade.value)
+    if (filterTrade.value) {
+      result = result.filter((plan) => tradeMatches(plan.trade, filterTrade.value))
     }
 
     if (filterStatus.value) {

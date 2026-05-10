@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import {
   Upload,
   Users,
@@ -23,6 +23,8 @@ import WorkPlanUploadSettingsModal from '@/components/schedule/workPlan/WorkPlan
 import WorkPlanVerifyModal from '@/components/schedule/workPlan/WorkPlanVerifyModal.vue'
 import WorkPlanWeeklyFormModal from '@/components/schedule/workPlan/WorkPlanWeeklyFormModal.vue'
 import WorkPlanYearlyGantt from '@/components/schedule/workPlan/WorkPlanYearlyGantt.vue'
+import { useAuthStore } from '@/stores/authStore'
+import { tradeMatches, useAuthScope } from '@/utils/authScope'
 import {
   dayTextClass,
   monthlyDayCellClass,
@@ -35,6 +37,9 @@ import {
 } from '@/utils/schedule/workPlan.js'
 
 const { currentProjectId: selectedProjectId } = useCurrentProject()
+const auth = useAuthStore()
+const { isTradeScope, assignedTrade } = useAuthScope(auth)
+const canManageSitePlans = computed(() => !isTradeScope.value)
 
 const weeklyPlans = ref([]) // 주간 작업 계획
 const monthlyPlans = ref([]) // 월간 작업 계획
@@ -45,6 +50,19 @@ const viewMode = ref('weekly')
 const filterTrade = ref('')
 const filterStatus = ref('')
 const selectedPlan = ref(null)
+const tradeFilterOptions = computed(() =>
+  isTradeScope.value && assignedTrade.value ? [assignedTrade.value] : trades,
+)
+
+function scopedByTrade(plans) {
+  if (!isTradeScope.value || !assignedTrade.value) return plans
+  return plans.filter((plan) => tradeMatches(plan.trade, assignedTrade.value))
+}
+
+const scopedWeeklyPlans = computed(() => scopedByTrade(weeklyPlans.value))
+const scopedMonthlyPlans = computed(() => scopedByTrade(monthlyPlans.value))
+const scopedAnnualPlans = computed(() => scopedByTrade(annualPlans.value))
+const scopedBaselinePlans = computed(() => scopedByTrade(baselinePlans.value))
 const {
   uploadFileName,
   uploadCategory,
@@ -96,8 +114,8 @@ const {
   goCurrentWeek,
   plansForDay,
 } = useWorkPlanWeeklyCalendar({
-  weeklyPlans,
-  monthlyPlans,
+  weeklyPlans: scopedWeeklyPlans,
+  monthlyPlans: scopedMonthlyPlans,
   viewMode,
   filterTrade,
   filterStatus,
@@ -121,7 +139,7 @@ const {
   submitWeeklyForm,
   cancelWeeklyForm,
 } = useWeeklyWorkPlanForm({
-  monthlyPlans,
+  monthlyPlans: scopedMonthlyPlans,
   reloadPlans: loadPlans,
 })
 
@@ -134,9 +152,9 @@ async function loadPlans() {
 
     const [baselineRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
       fetchTradeProcessList({ projectId }),
-      fetchWorkPlanList({ planType: '주간' }),
-      fetchWorkPlanList({ planType: '월간' }),
-      fetchWorkPlanList({ planType: '연간' }),
+      fetchWorkPlanList({ projectId, planType: '주간' }),
+      fetchWorkPlanList({ projectId, planType: '월간' }),
+      fetchWorkPlanList({ projectId, planType: '연간' }),
     ])
 
     baselinePlans.value = baselineRes.filter((b) => !baseIsMilestone(b))
@@ -155,6 +173,15 @@ async function loadPlans() {
 watch([filterTrade, filterStatus], () => {
   loadPlans()
 })
+
+watch(
+  [isTradeScope, assignedTrade],
+  () => {
+    filterTrade.value = isTradeScope.value && assignedTrade.value ? assignedTrade.value : ''
+    selectedPlan.value = null
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   loadPlans() // 기존 계획 데이터 로드
@@ -202,9 +229,9 @@ const {
   onClickBaseline,
   onClickWorkPlan,
 } = useWorkPlanGantt({
-  baselinePlans,
-  monthlyPlans,
-  annualPlans,
+  baselinePlans: scopedBaselinePlans,
+  monthlyPlans: scopedMonthlyPlans,
+  annualPlans: scopedAnnualPlans,
   filterTrade,
   filterStatus,
   viewMode,
@@ -241,6 +268,7 @@ const {
         </div>
 
         <button
+          v-if="canManageSitePlans"
           type="button"
           class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
           @click="isUploadPopupOpen = true"
@@ -291,10 +319,11 @@ const {
         <span class="text-[11px] font-bold text-forena-400">공종</span>
         <select
           v-model="filterTrade"
+          :disabled="isTradeScope"
           class="rounded-md border border-forena-200 bg-white px-2.5 py-1.5 text-xs text-forena-800 outline-none focus:border-flare-400"
         >
           <option value="">전체</option>
-          <option v-for="t in trades" :key="t">{{ t }}</option>
+          <option v-for="t in tradeFilterOptions" :key="t">{{ t }}</option>
         </select>
       </div>
 

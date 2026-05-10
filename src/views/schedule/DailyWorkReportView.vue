@@ -20,6 +20,8 @@ import {
   toNumberOrNull,
   todayStr,
 } from '@/utils/schedule/dailyWorkReport.js'
+import { useAuthStore } from '@/stores/authStore'
+import { tradeMatches, useAuthScope } from '@/utils/authScope'
 import {
   CalendarDays,
   ChevronLeft,
@@ -40,9 +42,15 @@ import {
 } from 'lucide-vue-next'
 
 const { currentProjectId } = useCurrentProject()
+const auth = useAuthStore()
+const { isTradeScope, assignedTrade, currentRoleMode } = useAuthScope(auth)
+const canSwitchRole = computed(() => auth.isAdminRole)
 
 const currentRole = ref(ROLES.WORKER)
 const myProcess = ref(ALL_PROCESSES[0])
+const processOptions = computed(() =>
+  isTradeScope.value && assignedTrade.value ? [assignedTrade.value] : ALL_PROCESSES,
+)
 
 const selectedDate = ref(todayStr())
 function prevDay() {
@@ -58,12 +66,25 @@ const isToday = computed(() => selectedDate.value === todayStr())
 
 const activeTab = ref('today')
 
+watch(
+  [currentRoleMode, assignedTrade],
+  () => {
+    currentRole.value = currentRoleMode.value
+    if (isTradeScope.value && assignedTrade.value) {
+      myProcess.value = assignedTrade.value
+    }
+    if (currentRole.value === ROLES.WORKER) activeTab.value = 'today'
+  },
+  { immediate: true },
+)
+
 function switchTab(tab) {
   if (tab === 'consolidated' && currentRole.value !== ROLES.MANAGER) return
   activeTab.value = tab
 }
 
 function switchRole(role) {
+  if (!canSwitchRole.value) return
   currentRole.value = role
   if (role === ROLES.WORKER) activeTab.value = 'today'
 }
@@ -105,12 +126,16 @@ function statusMeta(s) {
 
 const visibleProcesses = computed(() => {
   if (currentRole.value === ROLES.WORKER) return [myProcess.value]
-  return getAllTradeOptions()
+  return processOptions.value.length ? processOptions.value : getAllTradeOptions()
 })
 
 function reportsForDate(dateStr) {
   return reports.value.filter(
-    (r) => r.date === dateStr && visibleProcesses.value.includes(r.process),
+    (r) =>
+      r.date === dateStr &&
+      (currentRole.value === ROLES.WORKER
+        ? tradeMatches(r.process, myProcess.value)
+        : visibleProcesses.value.includes(r.process)),
   )
 }
 
@@ -143,7 +168,7 @@ const availableTodayOrders = ref([])
 
 function canEdit(report) {
   if (currentRole.value === ROLES.MANAGER) return false
-  if (report.process !== myProcess.value) return false
+  if (!tradeMatches(report.process, myProcess.value)) return false
   if (report.status === '승인 완료') return false
   return true
 }
@@ -158,7 +183,7 @@ async function openCreate() {
 
     availableTodayOrders.value = orders.filter(
       (o) =>
-        getTradeNameFromRecord(o) === targetProcess &&
+        tradeMatches(getTradeNameFromRecord(o), targetProcess) &&
         o.dueDate === targetDate &&
         o.statusCode === 'APPROVED',
     )
@@ -220,8 +245,12 @@ async function selectTaskForReport(order) {
 
   try {
     const [weekRes, monthRes] = await Promise.all([
-      api.get('/work-plan', { params: { planType: '주간' } }).catch(() => ({ data: [] })),
-      api.get('/work-plan', { params: { planType: '월간' } }).catch(() => ({ data: [] })),
+      api
+        .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '주간' } })
+        .catch(() => ({ data: [] })),
+      api
+        .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '월간' } })
+        .catch(() => ({ data: [] })),
     ])
 
     const weeklyPlans = Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []
@@ -319,9 +348,15 @@ async function openEditor(report) {
 
   try {
     const [weekRes, monthRes, yearRes] = await Promise.all([
-      api.get('/work-plan', { params: { planType: '주간' } }).catch(() => ({ data: [] })),
-      api.get('/work-plan', { params: { planType: '월간' } }).catch(() => ({ data: [] })),
-      api.get('/work-plan', { params: { planType: '연간' } }).catch(() => ({ data: [] })),
+      api
+        .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '주간' } })
+        .catch(() => ({ data: [] })),
+      api
+        .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '월간' } })
+        .catch(() => ({ data: [] })),
+      api
+        .get('/work-plan', { params: { projectId: currentProjectId.value, planType: '연간' } })
+        .catch(() => ({ data: [] })),
     ])
 
     const weeklyPlans = Array.isArray(weekRes) ? weekRes : weekRes.data?.data || weekRes.data || []
@@ -567,6 +602,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 ? 'bg-forena-800 text-white'
                 : 'text-forena-600 hover:bg-forena-50'
             "
+            :disabled="!canSwitchRole"
             @click="switchRole(ROLES.WORKER)"
           >
             <UserCog class="h-3.5 w-3.5" /> 공종 담당자
@@ -578,6 +614,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
                 ? 'bg-forena-800 text-white'
                 : 'text-forena-600 hover:bg-forena-50'
             "
+            :disabled="!canSwitchRole"
             @click="switchRole(ROLES.MANAGER)"
           >
             <ShieldCheck class="h-3.5 w-3.5" /> 현장 총 책임자
@@ -587,9 +624,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         <select
           v-if="currentRole === ROLES.WORKER"
           v-model="myProcess"
+          :disabled="isTradeScope"
           class="rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-forena-700 outline-none focus:border-flare-400"
         >
-          <option v-for="p in ALL_PROCESSES" :key="p" :value="p">{{ p }} 공종</option>
+          <option v-for="p in processOptions" :key="p" :value="p">{{ p }} 공종</option>
         </select>
       </div>
     </div>

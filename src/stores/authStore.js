@@ -20,6 +20,25 @@ const LEGACY_AUTH_STORAGE_KEYS = ['dndnAuth']
 
 /** 세션 형식 버전 bump 시 기존 자동 로그인 무력화 */
 const AUTH_STORAGE_KEY = 'dndnAuth_v2'
+const INITIAL_UPLOAD_DONE_PREFIX = 'dndnInitialUploadDone_v1'
+
+function normalizeProjectId(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function initialUploadDoneKey({ loginId, projectId, siteCode }) {
+  const scope = projectId != null ? `project:${projectId}` : `site:${siteCode || 'unknown'}`
+  return `${INITIAL_UPLOAD_DONE_PREFIX}:${scope}:${loginId || 'unknown'}`
+}
+
+function hasInitialUploadDone(snapshot) {
+  return localStorage.getItem(initialUploadDoneKey(snapshot)) === '1'
+}
+
+function rememberInitialUploadDone(snapshot) {
+  localStorage.setItem(initialUploadDoneKey(snapshot), '1')
+}
 
 /**
  * 과거 형식 또는 신뢰할 수 없는 스냅샷 제거 + JWT 무효화
@@ -104,10 +123,16 @@ export function pathAllowedForRole(userRole, fullPath) {
   ) {
     if (path.startsWith('/hr/accounts') || path.startsWith('/hr/sites')) return false
     if (path.startsWith('/system/')) return false
+    if (path === '/site/upload') return isInitialUploadRole(role)
     return path.startsWith('/site/') || path.startsWith('/hr/')
   }
 
   return false
+}
+
+export function isInitialUploadRole(userRole) {
+  const role = normalizeUserRole(userRole)
+  return role === USER_ROLE.SITE_DIRECTOR || role === USER_ROLE.SITE_MANAGER
 }
 
 export function userRoleLabel(userRole) {
@@ -139,6 +164,15 @@ export const useAuthStore = defineStore('auth', () => {
   /** @type {import('vue').Ref<number|string|null>} */
   const userIdx = ref(saved?.userIdx ?? null)
 
+  /** @type {import('vue').Ref<number|null>} */
+  const projectId = ref(normalizeProjectId(saved?.projectId))
+
+  /** @type {import('vue').Ref<string>} */
+  const siteCode = ref(saved?.siteCode || '')
+
+  /** @type {import('vue').Ref<string>} */
+  const trade = ref(saved?.trade || '')
+
   const isAuthenticated = ref(Boolean(saved?.isAuthenticated))
 
   /** 본사·대시보드만 보기(구 viewer 데모) */
@@ -150,6 +184,9 @@ export const useAuthStore = defineStore('auth', () => {
   const roleLabel = computed(() => userRoleLabel(userRole.value))
 
   const isAdminRole = computed(() => userRole.value === USER_ROLE.ADMIN)
+  const initialUploadRequired = computed(
+    () => isUpload.value && isInitialUploadRole(userRole.value),
+  )
 
   function persistAuth() {
     const sessionKind = localStorage.getItem('accessToken') ? 'server' : 'demo'
@@ -159,6 +196,9 @@ export const useAuthStore = defineStore('auth', () => {
       loginId: loginId.value,
       userName: userName.value,
       userIdx: userIdx.value,
+      projectId: projectId.value,
+      siteCode: siteCode.value,
+      trade: trade.value,
       isAuthenticated: isAuthenticated.value,
       stayOnLogin: stayOnLogin.value,
       isUpload: isUpload.value,
@@ -188,13 +228,41 @@ export const useAuthStore = defineStore('auth', () => {
     if (lid) loginId.value = lid
     userName.value = loginRes?.name ?? ''
     userIdx.value = loginRes?.userIdx ?? null
+    projectId.value = normalizeProjectId(loginRes?.projectId)
+    siteCode.value = String(loginRes?.siteCode ?? '').trim()
+    trade.value = String(loginRes?.trade ?? '').trim()
     stayOnLogin.value = Boolean(options.stayOnLogin)
     if (Object.prototype.hasOwnProperty.call(options, 'isUpload')) {
       isUpload.value = Boolean(options.isUpload)
+    } else if (Object.prototype.hasOwnProperty.call(loginRes ?? {}, 'needsInitialUpload')) {
+      isUpload.value = Boolean(loginRes.needsInitialUpload)
+    } else if (Object.prototype.hasOwnProperty.call(loginRes ?? {}, 'isUpload')) {
+      isUpload.value = Boolean(loginRes.isUpload)
     } else {
-      isUpload.value = true
+      isUpload.value =
+        isInitialUploadRole(userRole.value) &&
+        !hasInitialUploadDone({
+          loginId: loginId.value,
+          projectId: projectId.value,
+          siteCode: siteCode.value,
+        })
     }
     isAuthenticated.value = true
+    persistAuth()
+  }
+
+  function markInitialUploadComplete() {
+    isUpload.value = false
+    rememberInitialUploadDone({
+      loginId: loginId.value,
+      projectId: projectId.value,
+      siteCode: siteCode.value,
+    })
+    persistAuth()
+  }
+
+  function setProjectId(value) {
+    projectId.value = normalizeProjectId(value)
     persistAuth()
   }
 
@@ -211,6 +279,9 @@ export const useAuthStore = defineStore('auth', () => {
       loginId.value = 'admin'
       userName.value = '데모 관리자'
       userIdx.value = null
+      projectId.value = null
+      siteCode.value = ''
+      trade.value = ''
       stayOnLogin.value = false
       isUpload.value = false
       isAuthenticated.value = true
@@ -223,6 +294,9 @@ export const useAuthStore = defineStore('auth', () => {
       loginId.value = 'viewer'
       userName.value = '데모 본사'
       userIdx.value = null
+      projectId.value = null
+      siteCode.value = ''
+      trade.value = ''
       stayOnLogin.value = true
       isUpload.value = false
       isAuthenticated.value = true
@@ -240,6 +314,9 @@ export const useAuthStore = defineStore('auth', () => {
     loginId.value = ''
     userName.value = ''
     userIdx.value = null
+    projectId.value = null
+    siteCode.value = ''
+    trade.value = ''
     localStorage.removeItem('accessToken')
     localStorage.removeItem(AUTH_STORAGE_KEY)
   }
@@ -249,12 +326,18 @@ export const useAuthStore = defineStore('auth', () => {
     loginId,
     userName,
     userIdx,
+    projectId,
+    siteCode,
+    trade,
     roleLabel,
     isAdminRole,
     isAuthenticated,
     stayOnLogin,
     isUpload,
+    initialUploadRequired,
     applyLoginSuccess,
+    markInitialUploadComplete,
+    setProjectId,
     loginDemo,
     logout,
     persistAuth,

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import api from '@/api/index'
 import WorkInstructionEditorModal from '@/components/schedule/workInstruction/WorkInstructionEditorModal.vue'
 import WorkInstructionTaskSelectorModal from '@/components/schedule/workInstruction/WorkInstructionTaskSelectorModal.vue'
@@ -50,12 +50,25 @@ import {
   toDateString,
   unwrapApiData,
 } from '@/utils/schedule/workInstruction.js'
+import { useAuthStore } from '@/stores/authStore'
+import { tradeMatches, useAuthScope } from '@/utils/authScope'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 
 const currentRole = ref(ROLES.WORKER)
 const tradeOptions = ref([...DEFAULT_TRADE_OPTIONS])
 const myProcess = ref(DEFAULT_TRADE_OPTIONS[0])
+const { currentProjectId } = useCurrentProject()
+const auth = useAuthStore()
+const { isTradeScope, assignedTrade, currentRoleMode } = useAuthScope(auth)
+const canSwitchRole = computed(() => auth.isAdminRole)
 
 function ensureSelectedTrade() {
+  if (isTradeScope.value && assignedTrade.value) {
+    myProcess.value = assignedTrade.value
+    filterProcess.value = assignedTrade.value
+    return
+  }
+
   const options = availableTrades.value
   if (!options.length) {
     myProcess.value = ''
@@ -111,6 +124,20 @@ const filterPartner = ref('')
 const filterStatus = ref('')
 const searchKeyword = ref('')
 
+watch(
+  [currentRoleMode, assignedTrade],
+  () => {
+    currentRole.value = currentRoleMode.value
+    if (isTradeScope.value && assignedTrade.value) {
+      myProcess.value = assignedTrade.value
+      filterProcess.value = assignedTrade.value
+    } else if (currentRole.value === ROLES.MANAGER) {
+      filterProcess.value = 'all'
+    }
+  },
+  { immediate: true },
+)
+
 const STATUS_LIST = [
   '작성 전',
   '초안 생성',
@@ -145,6 +172,8 @@ const canReviewViewing = computed(
 const workOrders = ref([])
 
 const availableTrades = computed(() => {
+  if (isTradeScope.value && assignedTrade.value) return [assignedTrade.value]
+
   const merged = new Set(tradeOptions.value)
   workOrders.value.forEach((o) => {
     const tradeName = normalizeTradeName(o.process)
@@ -164,6 +193,7 @@ const visibleTabs = computed(() => {
 })
 
 function onRoleChange(role) {
+  if (!canSwitchRole.value) return
   currentRole.value = role
   if (role === ROLES.WORKER) filterProcess.value = myProcess.value
   else filterProcess.value = 'all'
@@ -175,7 +205,7 @@ function onMyProcessChange() {
 
 const filteredOrders = computed(() => {
   let r = workOrders.value
-  if (currentRole.value === ROLES.WORKER) r = r.filter((o) => o.process === myProcess.value)
+  if (currentRole.value === ROLES.WORKER) r = r.filter((o) => tradeMatches(o.process, myProcess.value))
   else if (filterProcess.value !== 'all') r = r.filter((o) => o.process === filterProcess.value)
   if (filterDate.value) r = r.filter((o) => o.date === filterDate.value)
   if (filterPartner.value) r = r.filter((o) => o.partner.includes(filterPartner.value))
@@ -292,12 +322,14 @@ async function openCreate() {
   const targetProcess = currentRole.value === ROLES.WORKER ? myProcess.value : filterProcess.value
 
   try {
-    const response = await api.get('/work-plan', { params: { planType: '주간' } })
+    const response = await api.get('/work-plan', {
+      params: { projectId: currentProjectId.value, planType: '주간' },
+    })
     const plans = unwrapApiData(response)
 
     availableTasks.value = plans.filter((p) => {
       const planTrade = getTradeNameFromPlan(p)
-      const matchTrade = planTrade === targetProcess
+      const matchTrade = tradeMatches(planTrade, targetProcess)
       const matchDate =
         targetDate >= toDateString(p.startDate) && targetDate <= toDateString(p.endDate)
       return matchTrade && matchDate
@@ -462,7 +494,7 @@ async function submitOrder() {
   })
 
   const requestPayload = {
-    siteIdx: 1,
+    siteIdx: currentProjectId.value,
     partnerCompanyIdx: 1,
     workPlanId: r.workPlanId,
     tradeType: r.process,
@@ -542,7 +574,7 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
       await approveWorkOrder(rawId)
     } else {
       const requestPayload = {
-        siteIdx: 1,
+        siteIdx: currentProjectId.value,
         partnerCompanyIdx: 1,
         tradeType: order.process,
         title: `[${order.process}] ${order.location} 작업지시서`,
@@ -595,7 +627,9 @@ async function fetchTradeOptions() {
   const collected = new Set()
 
   async function collectFromWorkPlans(planType) {
-    const response = await api.get('/work-plan', { params: { planType } })
+    const response = await api.get('/work-plan', {
+      params: { projectId: currentProjectId.value, planType },
+    })
     unwrapApiData(response).forEach((plan) => {
       const tradeName = getTradeNameFromPlan(plan)
       if (tradeName && tradeName !== '기타') collected.add(tradeName)
@@ -611,7 +645,9 @@ async function fetchTradeOptions() {
 
   if (!collected.size) {
     try {
-      const response = await api.get('/trade-process')
+      const response = await api.get('/trade-process', {
+        params: { projectId: currentProjectId.value },
+      })
       unwrapApiData(response).forEach((process) => {
         const tradeName = getTradeNameFromPlan(process)
         if (tradeName && tradeName !== '기타') collected.add(tradeName)
@@ -712,6 +748,7 @@ async function fetchWorkOrders() {
                 ? 'bg-forena-800 text-white'
                 : 'text-forena-600 hover:bg-forena-50'
             "
+            :disabled="!canSwitchRole"
             @click="onRoleChange(ROLES.WORKER)"
           >
             <UserCog class="h-3.5 w-3.5" /> 공정 담당자
@@ -723,6 +760,7 @@ async function fetchWorkOrders() {
                 ? 'bg-forena-800 text-white'
                 : 'text-forena-600 hover:bg-forena-50'
             "
+            :disabled="!canSwitchRole"
             @click="onRoleChange(ROLES.MANAGER)"
           >
             <ShieldCheck class="h-3.5 w-3.5" /> 현장 총 관리자
@@ -732,13 +770,14 @@ async function fetchWorkOrders() {
           v-if="currentRole === ROLES.WORKER"
           v-model="myProcess"
           @change="onMyProcessChange"
-          :disabled="!availableTrades.length"
+          :disabled="isTradeScope || !availableTrades.length"
           class="rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-forena-700 outline-none focus:border-flare-400 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
         >
           <option v-if="!availableTrades.length" value="">공종 없음</option>
           <option v-for="p in availableTrades" :key="p" :value="p">{{ p }} 공종</option>
         </select>
         <button
+          v-if="currentRole === ROLES.WORKER"
           @click="openCreate"
           class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-flare-600"
         >

@@ -6,6 +6,14 @@ export async function getProjectList() {
 }
 
 /**
+ * @param {number|string} projectId
+ * @returns {Promise<{ idx: number, name: string, location?: string, startDate?: string|null, endDate?: string|null, period?: string }>}
+ */
+export async function getProject(projectId) {
+  return await api.get(`/project/${projectId}`)
+}
+
+/**
  * @param {{ name: string, location?: string, startDate?: string|null, endDate?: string|null }} body
  */
 export async function createProject(body) {

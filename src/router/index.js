@@ -162,11 +162,15 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
+  const uploadRoute = () => {
+    const query = auth.projectId ? { ...to.query, projectId: String(auth.projectId) } : to.query
+    return { path: '/site/upload', query }
+  }
 
   if (to.path === '/login') {
     if (auth.isAuthenticated) {
       if (auth.stayOnLogin) return true
-      return { path: '/site/dashboard' }
+      return auth.initialUploadRequired ? uploadRoute() : { path: '/site/dashboard' }
     }
     return true
   }
@@ -175,8 +179,19 @@ router.beforeEach((to) => {
     return { path: '/login' }
   }
 
+  if (
+    auth.initialUploadRequired &&
+    to.path !== '/site/upload' &&
+    to.path !== '/account/password' &&
+    pathAllowedForRole(auth.userRole, '/site/upload')
+  ) {
+    return uploadRoute()
+  }
+
   if (!pathAllowedForRole(auth.userRole, to.path)) {
-    return { path: '/site/dashboard' }
+    return auth.initialUploadRequired && pathAllowedForRole(auth.userRole, '/site/upload')
+      ? uploadRoute()
+      : { path: '/site/dashboard' }
   }
   return true
 })
