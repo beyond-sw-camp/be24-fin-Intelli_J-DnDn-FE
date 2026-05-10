@@ -232,9 +232,6 @@ export function useWorkPlanGantt({
     const full = styleFn(p.start, p.end)
     if (!full) return { width: '0px' }
 
-    const pct = progressPctOf(p)
-    if (pct != null) return { width: `${pct}%` }
-
     const fillEnd = progressFillEnd(p)
     if (!fillEnd) return { width: '0px' }
 
@@ -270,7 +267,7 @@ export function useWorkPlanGantt({
   })
 
   const chartWidth = computed(() => `max(100%, ${monthMeta.value.daysInMonth * GANTT_DAY_W}px)`)
-  const yearChartWidth = computed(() => `max(100%, ${12 * GANTT_MONTH_W}px)`)
+  const yearChartWidth = computed(() => `${12 * GANTT_MONTH_W}px`)
 
   // 화면 상단/필터 바 — 활성 연장 개수
   const extensionCount = computed(() => Object.keys(planStore.extensions).length)

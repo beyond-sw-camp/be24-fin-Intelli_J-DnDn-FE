@@ -133,6 +133,56 @@ const selectedTaskId = ref(null)
 const selectedTask = computed(
   () => aiTasks.value.find((t) => t.id === selectedTaskId.value) ?? null,
 )
+
+function clampPercent(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(100, n))
+}
+
+function roundProgress(value, digits = 1) {
+  const unit = 10 ** digits
+  return Math.round(Number(value || 0) * unit) / unit
+}
+
+function isMonthlyWorkPlan(plan) {
+  const type = String(plan?.planType || '').toLowerCase()
+  return type === 'monthly' || type.includes('month') || type.includes('월') || type.includes('붽')
+}
+
+function isYearlyWorkPlan(plan) {
+  const type = String(plan?.planType || '').toLowerCase()
+  return (
+    type === 'yearly' ||
+    type === 'annual' ||
+    type.includes('year') ||
+    type.includes('annual') ||
+    type.includes('연') ||
+    type.includes('곌')
+  )
+}
+
+function planDurationWeight(plan) {
+  const start = toDateOnly(plan?.start)
+  const end = toDateOnly(plan?.effectiveEnd || plan?.end)
+  const days = daysInclusive(start, end)
+  return days > 0 ? days : 1
+}
+
+function calcActualProgressForTask(plans = []) {
+  const monthlyPlans = plans.filter(isMonthlyWorkPlan)
+  if (!monthlyPlans.length) return 0
+
+  const totalWeight = monthlyPlans.reduce((sum, plan) => sum + planDurationWeight(plan), 0)
+  if (totalWeight <= 0) return 0
+
+  const weightedProgress = monthlyPlans.reduce((sum, plan) => {
+    return sum + clampPercent(plan.actualPct ?? plan.processProgress) * planDurationWeight(plan)
+  }, 0)
+
+  return roundProgress(weightedProgress / totalWeight)
+}
+
 function attachWorkPlansToTasks(tasks, plans) {
   const workPlanMap = new Map()
 
@@ -148,10 +198,14 @@ function attachWorkPlansToTasks(tasks, plans) {
 
   return tasks.map((task) => {
     const taskId = Number(task.id)
+    const taskWorkPlans = workPlanMap.get(taskId) || []
+    const actualProgress = calcActualProgressForTask(taskWorkPlans)
 
     return {
       ...task,
-      workPlans: workPlanMap.get(taskId) || [],
+      actualProgress,
+      actualPct: actualProgress,
+      workPlans: taskWorkPlans,
     }
   })
 }
@@ -173,14 +227,16 @@ function attachWorkPlansToTasks(tasks, plans) {
 function workPlanProgress(task) {
   const plans = task?.workPlans
   if (!Array.isArray(plans) || plans.length === 0) return null
+  const yearlyPlans = plans.filter(isYearlyWorkPlan)
+  const sourcePlans = yearlyPlans.length ? yearlyPlans : plans
 
   let planStart = null
   let planEnd = null
   let actualStart = null
 
-  for (const p of plans) {
+  for (const p of sourcePlans) {
     if (p.start && (!planStart || p.start < planStart)) planStart = p.start
-    const e = p.effectiveEnd ?? p.end
+    const e = p.end ?? p.effectiveEnd
     if (e && (!planEnd || e > planEnd)) planEnd = e
     if (p.actualStart && (!actualStart || p.actualStart < actualStart)) {
       actualStart = p.actualStart
@@ -210,14 +266,10 @@ function progressBarRange(task) {
   if (!wp || !wp.planStart || !wp.planEnd) return null
 
   const today = new Date().toISOString().slice(0, 10)
-
-  // 시작점: actualStart 우선, 없으면 planStart
   const fillStart = wp.actualStart ?? wp.planStart
 
-  // 오늘이 아직 시작 전이면 진행된 것 없음
   if (today < fillStart) return null
 
-  // 끝점: 오늘 vs planEnd 중 빠른 쪽
   const fillEnd = today < wp.planEnd ? today : wp.planEnd
 
   if (fillStart > fillEnd) return null
@@ -645,8 +697,8 @@ function calcPlannedProgressByToday(tasks) {
   const weightMultiplier = rawWeightSum <= 1.5 ? 100 : 1
 
   const total = tasks.reduce((sum, task) => {
-    const start = toDateOnly(task.start)
-    const end = toDateOnly(task.end)
+    const start = toDateOnly(task.baselineStart ?? task.start)
+    const end = toDateOnly(task.baselineEnd ?? task.end)
     const weightPct = getRawWeight(task) * weightMultiplier
 
     if (!start || !end || weightPct <= 0) {
@@ -672,6 +724,24 @@ function calcPlannedProgressByToday(tasks) {
   }, 0)
 
   return Math.floor(total)
+}
+
+function calcActualProgressByReports(tasks) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return 0
+  }
+
+  const rawWeightSum = tasks.reduce((sum, task) => sum + getRawWeight(task), 0)
+  const weightMultiplier = rawWeightSum <= 1.5 ? 100 : 1
+
+  const total = tasks.reduce((sum, task) => {
+    const weightPct = getRawWeight(task) * weightMultiplier
+    if (weightPct <= 0) return sum
+
+    return sum + weightPct * (clampPercent(task.actualProgress ?? task.actualPct) / 100)
+  }, 0)
+
+  return roundProgress(total)
 }
 
 // 오늘 라인
@@ -955,13 +1025,14 @@ const isLoading = ref(false)
 const loadError = ref('')
 
 async function loadGanttFromApi() {
+  const hasCachedGantt = ganttStore.tasks && ganttStore.tasks.length > 0
+
   // 1) 스토어에 이미 데이터가 있으면 그대로 사용 (FirstDocumentUpload 에서 넘어온 경우)
-  if (ganttStore.tasks && ganttStore.tasks.length > 0) {
+  if (hasCachedGantt) {
     projectInfo.value = ganttStore.projectInfo ?? {}
     aiTasks.value = ganttStore.tasks ?? []
     milestones.value = ganttStore.milestones ?? []
     resetGroupOpenByCurrentTasks(aiTasks.value)
-    return
   }
 
   // 2) 스토어가 비어 있으면 (새로고침 등) 백엔드에서 다시 로드
@@ -974,6 +1045,7 @@ async function loadGanttFromApi() {
 
     if (!rows.length) {
       // 데이터가 아예 없는 현장 — 일단 빈 상태로 두고 사용자가 등록 페이지에서 업로드하도록
+      if (hasCachedGantt) return
       projectInfo.value = {}
       aiTasks.value = []
       milestones.value = []
@@ -986,10 +1058,12 @@ async function loadGanttFromApi() {
     const tasksWithWorkPlans = attachWorkPlansToTasks(tasks, plans)
 
     const plannedProgress = calcPlannedProgressByToday(tasksWithWorkPlans)
+    const actualProgress = calcActualProgressByReports(tasksWithWorkPlans)
 
     const updatedProjectInfo = {
       ...pi,
       plannedProgress,
+      actualProgress,
     }
 
     projectInfo.value = updatedProjectInfo
