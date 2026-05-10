@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import { useAuthStore } from '@/stores/authStore'
 
 export const DEFAULT_PROJECT_ID = 1
 
@@ -27,9 +28,14 @@ export function resolveProjectId(routeLike) {
 
 export function useCurrentProject(fallbackProjectId = DEFAULT_PROJECT_ID) {
   const route = useRoute()
+  const auth = useAuthStore()
 
   const currentProjectId = computed(
-    () => resolveProjectId(route) ?? toProjectId(fallbackProjectId) ?? DEFAULT_PROJECT_ID,
+    () =>
+      resolveProjectId(route) ??
+      toProjectId(auth.projectId) ??
+      toProjectId(fallbackProjectId) ??
+      DEFAULT_PROJECT_ID,
   )
 
   return {

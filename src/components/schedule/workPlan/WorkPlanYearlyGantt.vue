@@ -53,7 +53,7 @@ defineEmits(['toggle-group', 'select-baseline', 'select-work-plan'])
       {{ yearMeta.year }}년에 표시할 기준 공정이 없습니다.
     </div>
 
-    <div v-else class="flex min-w-max">
+    <div v-else class="flex min-w-full">
       <div
         class="sticky left-0 z-10 shrink-0 border-r border-forena-200 bg-white"
         :style="{ width: NAME_COL_W + 'px' }"
@@ -113,14 +113,14 @@ defineEmits(['toggle-group', 'select-baseline', 'select-work-plan'])
         </template>
       </div>
 
-      <div class="relative shrink-0" :style="{ width: chartWidth }">
+      <div class="relative min-w-0 flex-1" :style="{ minWidth: chartWidth, width: '100%' }">
         <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
           <div
             v-for="month in yearMeta.months"
             :key="month.month"
-            class="flex shrink-0 items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
+            class="flex min-w-0 flex-1 items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
             :class="month.isCurrent ? 'bg-flare-50 text-flare-700' : 'text-forena-500'"
-            :style="{ width: GANTT_MONTH_W + 'px' }"
+            :style="{ minWidth: GANTT_MONTH_W + 'px' }"
           >
             {{ month.label }}
           </div>
@@ -142,8 +142,8 @@ defineEmits(['toggle-group', 'select-baseline', 'select-work-plan'])
                 <div
                   v-for="month in yearMeta.months"
                   :key="month.month"
-                  class="shrink-0 border-r border-forena-50"
-                  :style="{ width: GANTT_MONTH_W + 'px' }"
+                  class="min-w-0 flex-1 border-r border-forena-50"
+                  :style="{ minWidth: GANTT_MONTH_W + 'px' }"
                 ></div>
 
                 <div

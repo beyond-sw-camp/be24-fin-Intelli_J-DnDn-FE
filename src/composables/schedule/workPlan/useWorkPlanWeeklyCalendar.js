@@ -18,10 +18,6 @@ export function useWorkPlanWeeklyCalendar({
   const filtered = computed(() => {
     let result = viewMode.value === 'weekly' ? weeklyPlans.value : monthlyPlans.value
 
-    if (viewMode.value !== 'weekly' && filterTrade.value) {
-      result = result.filter((plan) => plan.trade === filterTrade.value)
-    }
-
     if (filterStatus.value) {
       result = result.filter((plan) => workPlanStatus(plan) === filterStatus.value)
     }
