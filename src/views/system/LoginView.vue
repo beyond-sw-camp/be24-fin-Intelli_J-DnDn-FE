@@ -186,12 +186,13 @@ const pageBackground = computed(
     `url(${bgImage})`,
 )
 
+const postLoginPath = () => (authStore.initialUploadRequired ? '/site/upload' : '/site/dashboard')
+
 watch(
   () => authStore.isAuthenticated,
   (v) => {
     if (v && !authStore.stayOnLogin) {
-      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
-      router.push({ path, query: { site: selectedSiteId.value } })
+      router.push({ path: postLoginPath(), query: selectedSiteQuery() })
     }
   },
   { immediate: true },
@@ -204,7 +205,11 @@ const clearAccount = () => {
   successMessage.value = ''
 }
 
-const selectedSiteQuery = () => ({ site: selectedSiteId.value })
+function selectedSiteQuery() {
+  const query = { site: selectedSiteId.value }
+  if (authStore.projectId) query.projectId = String(authStore.projectId)
+  return query
+}
 
 const goToSiteDashboard = () => {
   router.push({ path: '/site/dashboard', query: selectedSiteQuery() })
@@ -227,8 +232,7 @@ const handleLogin = async () => {
       loginId: loginIdInput,
     })
     if (!authStore.stayOnLogin) {
-      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
-      router.push({ path, query: { site: selectedSiteId.value } })
+      router.push({ path: postLoginPath(), query: selectedSiteQuery() })
     } else {
       successMessage.value = '로그인되었습니다. 현재 화면을 유지합니다.'
     }
@@ -240,8 +244,7 @@ const handleLogin = async () => {
   if (authStore.loginDemo(loginIdInput, passwordInput)) {
     errorMessage.value = ''
     if (!authStore.stayOnLogin) {
-      const path = authStore.isUpload ? '/site/dashboard' : '/site/upload'
-      router.push({ path, query: { site: selectedSiteId.value } })
+      router.push({ path: postLoginPath(), query: selectedSiteQuery() })
     } else {
       successMessage.value = 'viewer 데모(본사)로 로그인되었습니다. 현재 화면을 유지합니다.'
     }

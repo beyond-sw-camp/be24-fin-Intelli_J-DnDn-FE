@@ -6,7 +6,7 @@ const ADMIN_ACCOUNTS = '/admin/accounts'
 /**
  * 로그인 — AuthController POST /auth/login
  * @param {{ loginId: string, password: string }} body
- * @returns {Promise<{ accessToken: string, userIdx: number, name: string, role: string, siteCode?: string|null, trade?: string|null }>}
+ * @returns {Promise<{ accessToken: string, userIdx: number, projectId?: number|null, name: string, role: string, siteCode?: string|null, trade?: string|null }>}
  */
 export async function postAuthLogin(body) {
   return await api.post(`${AUTH}/login`, body)

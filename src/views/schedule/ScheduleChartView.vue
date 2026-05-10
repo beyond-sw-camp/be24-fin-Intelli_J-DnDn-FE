@@ -1039,9 +1039,12 @@ async function loadGanttFromApi() {
   isLoading.value = true
   loadError.value = ''
   try {
-    const rows = await listTradeProcessesRaw({ projectId: currentProjectId.value })
+    const rows = await listTradeProcessesRaw({
+      projectId: currentProjectId.value,
+      includeAllTrades: true,
+    })
 
-    const plans = await fetchWorkPlansByProject(currentProjectId.value)
+    const plans = await fetchWorkPlansByProject(currentProjectId.value, { includeAllTrades: true })
 
     if (!rows.length) {
       // 데이터가 아예 없는 현장 — 일단 빈 상태로 두고 사용자가 등록 페이지에서 업로드하도록

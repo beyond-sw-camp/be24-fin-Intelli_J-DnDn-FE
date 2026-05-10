@@ -178,7 +178,9 @@ export const deleteWorkPlan = (planId) => {
   return api.delete(`${PATH}/${planId}`)
 }
 
-export const fetchWorkPlansByProject = async (projectId) => {
-  const dtos = await api.get(`${PATH}/project/${projectId}`)
+export const fetchWorkPlansByProject = async (projectId, options = {}) => {
+  const params = {}
+  if (options.includeAllTrades) params.includeAllTrades = true
+  const dtos = await api.get(`${PATH}/project/${projectId}`, { params })
   return Array.isArray(dtos) ? dtos.map(toPlan) : []
 }
