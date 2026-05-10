@@ -42,24 +42,16 @@
       <!-- ── 좌·우 전환 영역 ── -->
       <div class="content-stage">
         <Transition :name="transitionName">
-          <!-- ===== 현장 로그인 모드 ===== -->
+          <!-- ===== 현장 로그인 모드 (현장 선택 없음 — 본인 현장 자동 진입) ===== -->
           <div v-if="loginMode === 'site'" key="site" class="layout layout-site">
             <!-- 좌측: 로그인 폼 -->
             <section class="panel form-panel">
               <div class="panel-head">
                 <h2>현장 계정으로 로그인</h2>
-                <p>오른쪽에서 현장을 먼저 선택한 뒤 로그인하세요.</p>
+                <p>현장 계정은 배정된 현장으로 바로 진입합니다.</p>
               </div>
 
               <form class="login-form" @submit.prevent="handleLogin">
-                <div class="selected-site-pill" :class="{ empty: !siteSelected }">
-                  <MapPin :size="14" />
-                  <template v-if="siteSelected">
-                    선택된 현장 · <strong>{{ selectedSite.name }}</strong>
-                  </template>
-                  <template v-else>현장이 선택되지 않았습니다.</template>
-                </div>
-
                 <div class="field-group">
                   <label for="userIdSite">아이디</label>
                   <input
@@ -85,24 +77,70 @@
                 <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
                 <p v-if="successMessage" class="success-message">{{ successMessage }}</p>
 
-                <button
-                  type="submit"
-                  class="primary-action"
-                  :class="{ disabled: !canSubmitSiteLogin }"
-                  :disabled="!canSubmitSiteLogin"
-                >
+                <button type="submit" class="primary-action">
                   <LogIn :size="16" />
                   현장 대시보드 로그인
                 </button>
               </form>
             </section>
 
-            <!-- 우측: 현장 선택 -->
+            <!-- 우측: 안내 패널 (현장 자동 매칭) -->
+            <section class="panel info-panel admin-info">
+              <div class="admin-info-inner">
+                <div class="panel-head light">
+                  <span class="panel-kicker">현장 진입 안내</span>
+                  <h2>본인 현장으로 바로 이동</h2>
+                  <p>현장 계정은 별도 선택 없이 배정된 현장으로 자동 진입합니다.</p>
+                </div>
+
+                <div class="admin-feature-list">
+                  <div class="admin-feature">
+                    <div class="admin-feature-icon">
+                      <MapPin :size="16" />
+                    </div>
+                    <div class="admin-feature-text">
+                      <strong>현장 자동 매칭</strong>
+                      <small>로그인 즉시 본인 현장 대시보드로 이동합니다.</small>
+                    </div>
+                  </div>
+
+                  <div class="admin-feature">
+                    <div class="admin-feature-icon">
+                      <Layers :size="16" />
+                    </div>
+                    <div class="admin-feature-text">
+                      <strong>일정 · 인력 운영</strong>
+                      <small>공정표·작업 지시·인력 배치 등 현장 운영 메뉴 제공.</small>
+                    </div>
+                  </div>
+
+                  <div class="admin-feature">
+                    <div class="admin-feature-icon">
+                      <UserCog :size="16" />
+                    </div>
+                    <div class="admin-feature-text">
+                      <strong>역할 기반 화면</strong>
+                      <small>계정 권한에 맞는 메뉴와 데이터만 노출됩니다.</small>
+                    </div>
+                  </div>
+                </div>
+
+                <p class="admin-hint">
+                  <LockKeyhole :size="12" />
+                  다른 현장으로의 진입은 본사 · 시스템 관리자 계정만 가능합니다.
+                </p>
+              </div>
+            </section>
+          </div>
+
+          <!-- ===== 시스템 관리자 / 본사 로그인 모드 (현장 선택 필요) ===== -->
+          <div v-else key="admin" class="layout layout-admin">
+            <!-- 좌측: 진입할 현장 선택 -->
             <section class="panel info-panel site-info">
               <div class="panel-head light">
-                <span class="panel-kicker">현장별 대시보드</span>
-                <h2>현장을 선택하세요</h2>
-                <p>선택한 현장의 일정/인력 정보로 로그인합니다.</p>
+                <span class="panel-kicker">현장 선택</span>
+                <h2>진입할 현장을 선택하세요</h2>
+                <p>본사 · 시스템 관리자는 모든 현장의 일정·지표를 모니터링할 수 있습니다.</p>
               </div>
 
               <div class="site-grid-wrap">
@@ -137,60 +175,7 @@
 
               <div class="site-permission-note">
                 <LockKeyhole :size="13" />
-                선택한 현장 권한이 부여된 계정으로만 접속이 가능합니다.
-              </div>
-            </section>
-          </div>
-
-          <!-- ===== 시스템 관리자 / 본사 로그인 모드 ===== -->
-          <div v-else key="admin" class="layout layout-admin">
-            <!-- 좌측: 안내/장식 패널 -->
-            <section class="panel info-panel admin-info">
-              <div class="admin-info-inner">
-                <div class="panel-head light">
-                  <span class="panel-kicker">통합 운영</span>
-                  <h2>전사 관리 콘솔</h2>
-                  <p>
-                    본사 · 시스템 관리자는 전체 현장의 운영 지표와 계정/권한을 관리할 수 있습니다.
-                  </p>
-                </div>
-
-                <div class="admin-feature-list">
-                  <div class="admin-feature">
-                    <div class="admin-feature-icon">
-                      <Layers :size="16" />
-                    </div>
-                    <div class="admin-feature-text">
-                      <strong>전체 현장 통합 모니터링</strong>
-                      <small>운영 현장 6개소 · 투입 인원 1,224명</small>
-                    </div>
-                  </div>
-
-                  <div class="admin-feature">
-                    <div class="admin-feature-icon">
-                      <UserCog :size="16" />
-                    </div>
-                    <div class="admin-feature-text">
-                      <strong>계정 · 권한 관리</strong>
-                      <small>가입 요청 승인 · 역할 부여 · 비밀번호 초기화</small>
-                    </div>
-                  </div>
-
-                  <div class="admin-feature">
-                    <div class="admin-feature-icon">
-                      <BarChart3 :size="16" />
-                    </div>
-                    <div class="admin-feature-text">
-                      <strong>지표 모니터링 · 보고</strong>
-                      <small>공정 · ESG · 인력 KPI 통합 리포트</small>
-                    </div>
-                  </div>
-                </div>
-
-                <p class="admin-hint">
-                  <LockKeyhole :size="12" />
-                  본사 · 시스템 관리자 권한 계정만 진입할 수 있습니다.
-                </p>
+                로그인 후에도 사이드바 상단에서 다른 현장으로 전환할 수 있습니다.
               </div>
             </section>
 
@@ -198,10 +183,18 @@
             <section class="panel form-panel">
               <div class="panel-head">
                 <h2>관리자 로그인</h2>
-                <p>본사 / 시스템 관리자 계정으로 진입합니다.</p>
+                <p>본사 / 시스템 관리자 계정으로 선택한 현장에 진입합니다.</p>
               </div>
 
               <form class="login-form" @submit.prevent="handleLogin">
+                <div class="selected-site-pill" :class="{ empty: !adminSiteSelected }">
+                  <MapPin :size="14" />
+                  <template v-if="adminSiteSelected">
+                    선택된 현장 · <strong>{{ selectedSite.name }}</strong>
+                  </template>
+                  <template v-else>좌측에서 진입할 현장을 먼저 선택해 주세요.</template>
+                </div>
+
                 <div class="field-group">
                   <label for="userIdAdmin">아이디</label>
                   <input
@@ -227,7 +220,12 @@
                 <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
                 <p v-if="successMessage" class="success-message">{{ successMessage }}</p>
 
-                <button type="submit" class="primary-action">
+                <button
+                  type="submit"
+                  class="primary-action"
+                  :class="{ disabled: !canSubmitAdminLogin }"
+                  :disabled="!canSubmitAdminLogin"
+                >
                   <LogIn :size="16" />
                   관리 콘솔 로그인
                 </button>
@@ -264,7 +262,6 @@ import {
   LogIn,
   Layers,
   UserCog,
-  BarChart3,
 } from 'lucide-vue-next'
 import bgImage from '@/assets/hanwha-bg.png'
 import leftLogoSrc from '@/assets/dndn-logo.png'
@@ -353,13 +350,15 @@ const selectedSite = computed(() => {
   return projects.value.find((p) => p.id === id) ?? { name: '', id }
 })
 
-const siteSelected = computed(
+/** 관리자 탭 — 현장 선택 여부 (현장 탭은 자동 매칭이라 검사 불필요) */
+const adminSiteSelected = computed(
   () =>
     selectedProjectId.value != null && projects.value.some((p) => p.id === selectedProjectId.value),
 )
 
-const canSubmitSiteLogin = computed(
-  () => !projectsLoading.value && projects.value.length > 0 && siteSelected.value,
+/** 관리자 탭 — 로그인 버튼 활성 조건: 목록 로딩 끝났고 현장 선택됨 */
+const canSubmitAdminLogin = computed(
+  () => !projectsLoading.value && projects.value.length > 0 && adminSiteSelected.value,
 )
 
 const pageBackground = computed(() => `url(${bgImage})`)
@@ -425,23 +424,20 @@ const handleLogin = async () => {
     return
   }
 
-  if (loginMode.value === 'site' && !siteSelected.value) {
+  // 관리자 탭에서는 진입할 현장을 반드시 골라야 한다 (현장 탭은 자동 매칭).
+  if (loginMode.value === 'admin' && !adminSiteSelected.value) {
     errorMessage.value = '진입할 현장을 먼저 선택해주세요.'
     return
   }
 
   let didLogin = false
   try {
-    // 1차: 서버 인증 — 자격 증명 + 탭(loginMode) ↔ 권한 + 선택 현장(siteProjectId)
-    // 일치 여부를 모두 백엔드에서 검증한다.
+    // 서버 인증 — 자격 증명 + 탭(loginMode) ↔ 권한 일치 여부를 백엔드에서 검증한다.
+    // 현장 선택은 백엔드 검증 대상이 아니므로 전송하지 않는다.
     const res = await postAuthLogin({
       loginId: loginIdInput,
       password: passwordInput,
       loginMode: backendLoginMode(),
-      siteProjectId:
-        loginMode.value === 'site' && selectedProjectId.value != null
-          ? selectedProjectId.value
-          : null,
     })
     authStore.applyLoginSuccess(res, {
       stayOnLogin: false,
@@ -473,7 +469,8 @@ const handleLogin = async () => {
     return
   }
 
-  if (loginMode.value === 'site' && selectedProjectId.value != null) {
+  // 관리자 탭에서 고른 현장으로 진입 — 현장 탭은 서버 응답의 projectId(본인 배정 현장)를 그대로 사용.
+  if (loginMode.value === 'admin' && selectedProjectId.value != null) {
     authStore.setProjectId(selectedProjectId.value)
   }
 

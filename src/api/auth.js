@@ -9,11 +9,10 @@ const ADMIN_ACCOUNTS = '/admin/accounts'
  *   loginId: string,
  *   password: string,
  *   loginMode?: 'SITE'|'ADMIN',
- *   siteProjectId?: number|null,
  * }} body
  *  - {@code loginMode} 가 있으면 백엔드에서 탭(현장/관리자) ↔ 계정 권한 일치를 검증한다.
- *  - {@code siteProjectId} 가 있으면 현장 로그인 시 사용자가 선택한 현장이 계정의 배정 현장과
- *    동일한지 백엔드에서 추가 검증한다.
+ *  - 현장 계정은 본인 배정 현장으로 자동 진입하며, 본사·관리자는 어떤 현장이든 접근 가능하다.
+ *    선택한 현장은 프론트 라우팅 쿼리에서만 사용한다.
  * @returns {Promise<{ accessToken: string, userIdx: number, projectId?: number|null, name: string, role: string, siteCode?: string|null, trade?: string|null }>}
  */
 export async function postAuthLogin(body) {
