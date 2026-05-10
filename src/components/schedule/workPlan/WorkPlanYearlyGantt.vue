@@ -113,13 +113,14 @@ defineEmits(['toggle-group', 'select-baseline', 'select-work-plan'])
         </template>
       </div>
 
-      <div class="relative flex-1 w-full min-w-[1000px]" :style="{ width: chartWidth }">
+      <div class="relative shrink-0" :style="{ width: chartWidth }">
         <div class="sticky top-0 z-[5] flex h-10 border-b border-forena-200 bg-white">
           <div
             v-for="month in yearMeta.months"
             :key="month.month"
-            class="flex-1 flex items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
+            class="flex shrink-0 items-center justify-center border-r border-forena-100 text-[11px] font-semibold tabular-nums"
             :class="month.isCurrent ? 'bg-flare-50 text-flare-700' : 'text-forena-500'"
+            :style="{ width: GANTT_MONTH_W + 'px' }"
           >
             {{ month.label }}
           </div>
@@ -141,7 +142,7 @@ defineEmits(['toggle-group', 'select-baseline', 'select-work-plan'])
                 <div
                   v-for="month in yearMeta.months"
                   :key="month.month"
-                  class="border-r border-forena-50"
+                  class="shrink-0 border-r border-forena-50"
                   :style="{ width: GANTT_MONTH_W + 'px' }"
                 ></div>
 

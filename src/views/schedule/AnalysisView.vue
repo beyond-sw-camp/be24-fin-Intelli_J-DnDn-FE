@@ -241,6 +241,7 @@ async function refreshScheduleContext() {
 const {
   changeRequests,
   changeHistory,
+  applyingScheduleIds,
   loadScheduleChangeData,
   requestForm,
   submitRequest,
@@ -566,6 +567,7 @@ const riskColor = (r) =>
       :visible-requests="visibleRequests"
       :visible-history="visibleHistory"
       :pending-count="kpi.pendingCount"
+      :applying-schedule-ids="applyingScheduleIds"
       @select-sub-view="selectChangeSubView"
       @reject="openRejectModal"
       @approve="approveRequest"

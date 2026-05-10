@@ -23,6 +23,7 @@ export function useScheduleChangeActions({
 }) {
   const changeRequests = ref([])
   const changeHistory = ref([])
+  const applyingScheduleIds = ref([])
 
   async function loadScheduleChangeData() {
     const [requests, history] = await Promise.all([
@@ -128,13 +129,19 @@ export function useScheduleChangeActions({
   }
 
   async function applyToSchedule(id) {
+    if (applyingScheduleIds.value.includes(id)) return
+    applyingScheduleIds.value = [...applyingScheduleIds.value, id]
+
     try {
       await applyScheduleChange(id)
+      changeRequests.value = changeRequests.value.filter((request) => request.id !== id)
       await Promise.all([refreshScheduleContext(), loadScheduleChangeData()])
       alert('공정표에 반영했습니다.')
     } catch (err) {
       console.error('공정표 반영 실패:', err)
       alert(err?.response?.data?.message || err?.message || '공정표 반영에 실패했습니다.')
+    } finally {
+      applyingScheduleIds.value = applyingScheduleIds.value.filter((requestId) => requestId !== id)
     }
   }
 
@@ -157,6 +164,7 @@ export function useScheduleChangeActions({
   return {
     changeRequests,
     changeHistory,
+    applyingScheduleIds,
     loadScheduleChangeData,
     requestForm,
     submitRequest,

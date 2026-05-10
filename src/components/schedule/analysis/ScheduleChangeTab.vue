@@ -9,12 +9,13 @@ import {
   requestStatusLabel as reqStatusLabel,
 } from '@/utils/schedule/analysis/scheduleChangeHelpers.js'
 
-defineProps({
+const props = defineProps({
   isSupervisor: { type: Boolean, default: false },
   changeSubView: { type: String, default: 'active' },
   visibleRequests: { type: Array, default: () => [] },
   visibleHistory: { type: Array, default: () => [] },
   pendingCount: { type: Number, default: 0 },
+  applyingScheduleIds: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['select-sub-view', 'reject', 'approve', 'apply'])
@@ -39,7 +40,12 @@ function approveRequest(id) {
   emit('approve', id)
 }
 
+function isApplying(id) {
+  return props.applyingScheduleIds.includes(id)
+}
+
 function applyRequest(id) {
+  if (isApplying(id)) return
   emit('apply', id)
 }
 </script>
@@ -364,9 +370,10 @@ function applyRequest(id) {
               <button
                 v-if="r.status === 'approved'"
                 @click="applyRequest(r.id)"
-                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-flare-600"
+                :disabled="isApplying(r.id)"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-flare-500 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-flare-600 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none"
               >
-                <Send class="h-3.5 w-3.5" /> 공정표 반영
+                <Send class="h-3.5 w-3.5" /> {{ isApplying(r.id) ? '반영 중' : '공정표 반영' }}
               </button>
             </div>
           </div>

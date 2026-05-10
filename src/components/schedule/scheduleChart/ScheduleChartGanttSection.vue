@@ -301,10 +301,14 @@ const emit = defineEmits([
                     >
                       <!-- 라인: 계획 (파란) -->
                       <div
-                        v-if="barStyle(t.start, t.end)"
+                        v-if="barStyle(t.baselineStart ?? t.start, t.baselineEnd ?? t.end)"
                         class="absolute z-[2] flex items-center"
-                        :style="{ ...barStyle(t.start, t.end), top: '14px', height: '4px' }"
-                        :title="`계획: ${t.start} ~ ${t.end}`"
+                        :style="{
+                          ...barStyle(t.baselineStart ?? t.start, t.baselineEnd ?? t.end),
+                          top: '14px',
+                          height: '4px',
+                        }"
+                        :title="`계획: ${t.baselineStart ?? t.start} ~ ${t.baselineEnd ?? t.end}`"
                       >
                         <span
                           class="absolute -left-[3px] h-2.5 w-2.5 rounded-full bg-blue-600 ring-2 ring-white"
