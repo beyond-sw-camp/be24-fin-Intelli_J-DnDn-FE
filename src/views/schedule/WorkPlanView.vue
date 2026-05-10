@@ -56,7 +56,19 @@ const tradeFilterOptions = computed(() =>
 
 function scopedByTrade(plans) {
   if (!isTradeScope.value || !assignedTrade.value) return plans
-  return plans.filter((plan) => tradeMatches(plan.trade, assignedTrade.value))
+  return plans.filter((plan) => {
+    if (tradeMatches(plan.trade, assignedTrade.value)) return true
+
+    const tradeProcessId = plan.tradeProcessId ?? plan.trade_process_id ?? plan.baseId ?? null
+    if (tradeProcessId == null) return false
+
+    const linkedBaseline = baselinePlans.value.find((baseline) => {
+      const baselineId = baseline.tradeProcessId ?? baseline.idx ?? baseline.id ?? null
+      return String(baselineId) === String(tradeProcessId)
+    })
+
+    return tradeMatches(linkedBaseline?.trade, assignedTrade.value)
+  })
 }
 
 const scopedWeeklyPlans = computed(() => scopedByTrade(weeklyPlans.value))

@@ -379,13 +379,13 @@ async function reloadWaitingPool() {
 
 async function reloadBoard() {
   try {
-    const mains = await getStaffingZones()
+    const mains = await getStaffingZones({ rosterDate: rosterDate.value })
     const groups = []
     for (const zm of mains || []) {
       const subZones = []
       for (const szSum of zm.subZones || []) {
         const [detail, assignedList] = await Promise.all([
-          getZoneSubDetail(szSum.idx),
+          getZoneSubDetail(szSum.idx, rosterDate.value),
           getZoneSubWorkers(szSum.idx, rosterDate.value),
         ])
         const tradeNeeds = tradeNeedsFromZoneSubRes(detail?.tradeNeeds)
@@ -393,6 +393,11 @@ async function reloadBoard() {
         subZones.push({
           id: String(szSum.idx),
           title: detail?.title ?? szSum.title,
+          location: detail?.location ?? szSum.location ?? '',
+          tradeName: detail?.tradeName ?? szSum.tradeName ?? '',
+          workTime: detail?.workTime ?? szSum.workTime ?? '',
+          workDate: detail?.workDate ?? szSum.workDate ?? rosterDate.value,
+          workPlanId: detail?.workPlanId ?? szSum.workPlanId ?? null,
           expanded: true,
           required: detail?.required ?? szSum.required,
           tradeNeeds,
@@ -1033,6 +1038,18 @@ function zoneGroupAssignedSum(group) {
                   <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-400" />
                   <span class="truncate text-xs font-bold text-forena-900">{{ sz.title }}</span>
                 </button>
+
+                <div class="flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-bold text-forena-500">
+                  <span v-if="sz.location" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ sz.location }}
+                  </span>
+                  <span v-if="sz.workTime" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ sz.workTime }}
+                  </span>
+                  <span v-if="sz.tradeName" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ sz.tradeName }}
+                  </span>
+                </div>
 
                 <div
                   class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 leading-tight sm:gap-x-3"

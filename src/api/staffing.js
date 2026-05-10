@@ -58,13 +58,17 @@ export async function postStaffingSave(rosterDate) {
 }
 
 /** STAFFING_003 — 기본구역 트리 */
-export async function getStaffingZones() {
-  return await api.get(`${PATH}/zones`)
+export async function getStaffingZones(opts = {}) {
+  const params = {}
+  if (opts.rosterDate) params.rosterDate = opts.rosterDate
+  return await api.get(`${PATH}/zones`, { params })
 }
 
 /** STAFFING_004 — 상세구역 단건 */
-export async function getZoneSubDetail(zoneSubIdx) {
-  return await api.get(`${PATH}/zones/${zoneSubIdx}`)
+export async function getZoneSubDetail(zoneSubIdx, rosterDate) {
+  const params = {}
+  if (rosterDate) params.rosterDate = rosterDate
+  return await api.get(`${PATH}/zones/${zoneSubIdx}`, { params })
 }
 
 /**
