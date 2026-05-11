@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore, pathAllowedForRole } from '../stores/authStore'
+import { fetchMasterSchedules } from '../api/masterSchedule'
 
 const meta = (title) => ({ title })
 
@@ -160,17 +161,75 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+function firstRouteValue(value) {
+  return Array.isArray(value) ? value[0] : value
+}
+
+function numericProjectId(value) {
+  const n = Number(firstRouteValue(value))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function projectIdFromRoute(to, auth) {
+  return (
+    numericProjectId(to.params.projectId) ??
+    numericProjectId(to.params.projectIdx) ??
+    numericProjectId(to.query.projectId) ??
+    numericProjectId(to.query.projectIdx) ??
+    numericProjectId(to.query.siteId) ??
+    numericProjectId(auth.projectId)
+  )
+}
+
+function routeWithProject(path, to, projectId) {
+  const query = { ...to.query }
+  if (projectId) query.projectId = String(projectId)
+  return { path, query }
+}
+
+async function hasRegisteredSchedule(projectId) {
+  if (!projectId) return false
+  const schedules = await fetchMasterSchedules({ projectId })
+  return Array.isArray(schedules) && schedules.length > 0
+}
+
+async function clearInitialUploadIfRegistered(auth, to) {
+  const projectId = projectIdFromRoute(to, auth)
+  if (!projectId) return { registered: false, projectId: null }
+
+  try {
+    if (await hasRegisteredSchedule(projectId)) {
+      if (numericProjectId(auth.projectId) !== projectId) {
+        auth.setProjectId(projectId)
+      }
+      auth.markInitialUploadComplete()
+      return { registered: true, projectId }
+    }
+  } catch {
+    // 조회 실패 시 기존 라우팅 판단을 유지한다.
+  }
+
+  return { registered: false, projectId }
+}
+
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   const uploadRoute = () => {
-    const query = auth.projectId ? { ...to.query, projectId: String(auth.projectId) } : to.query
-    return { path: '/site/upload', query }
+    return routeWithProject('/site/upload', to, projectIdFromRoute(to, auth))
   }
+  const dashboardRoute = (projectId = projectIdFromRoute(to, auth)) =>
+    routeWithProject('/site/dashboard', to, projectId)
+  const shouldCheckInitialUpload = () =>
+    auth.initialUploadRequired && pathAllowedForRole(auth.userRole, '/site/upload')
 
   if (to.path === '/login') {
     if (auth.isAuthenticated) {
       if (auth.stayOnLogin) return true
-      return auth.initialUploadRequired ? uploadRoute() : { path: '/site/dashboard' }
+      if (shouldCheckInitialUpload()) {
+        const checked = await clearInitialUploadIfRegistered(auth, to)
+        return checked.registered ? dashboardRoute(checked.projectId) : uploadRoute()
+      }
+      return dashboardRoute()
     }
     return true
   }
@@ -179,19 +238,19 @@ router.beforeEach((to) => {
     return { path: '/login' }
   }
 
-  if (
-    auth.initialUploadRequired &&
-    to.path !== '/site/upload' &&
-    to.path !== '/account/password' &&
-    pathAllowedForRole(auth.userRole, '/site/upload')
-  ) {
-    return uploadRoute()
+  if (shouldCheckInitialUpload()) {
+    const checked = await clearInitialUploadIfRegistered(auth, to)
+    if (checked.registered) {
+      if (to.path === '/site/upload') return dashboardRoute(checked.projectId)
+    } else if (to.path !== '/site/upload' && to.path !== '/account/password') {
+      return uploadRoute()
+    }
   }
 
   if (!pathAllowedForRole(auth.userRole, to.path)) {
-    return auth.initialUploadRequired && pathAllowedForRole(auth.userRole, '/site/upload')
+    return shouldCheckInitialUpload()
       ? uploadRoute()
-      : { path: '/site/dashboard' }
+      : dashboardRoute()
   }
   return true
 })

@@ -1,5 +1,11 @@
 import api from './index.js'
 
+export function fetchMasterSchedules({ projectId, docType } = {}) {
+  const params = { projectId }
+  if (docType) params.docType = docType
+  return api.get('/master-schedule', { params })
+}
+
 /**
  * 공정표 파일 업로드 + AI 분석 (OpenAI 기반 추출)
  *
