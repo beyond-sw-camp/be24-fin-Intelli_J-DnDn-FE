@@ -78,6 +78,8 @@ export function mapRowToTask(row) {
     name: row.processName ?? '(이름 없음)',
     start,
     end,
+    baselineStart: start,
+    baselineEnd: end,
     durDays: calcDurDays(start, end),
     prev: '',
     next: '',
