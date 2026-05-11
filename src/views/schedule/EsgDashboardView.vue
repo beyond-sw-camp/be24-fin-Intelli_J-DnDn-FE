@@ -60,6 +60,8 @@ const selectedProjectId = ref(resolveInitialProjectId())
 const selectedZoneId = ref('')
 const activeEsgKey = ref('E')
 let refreshTimer = null
+let loadRunning = false
+let loadQueued = false
 
 const projects = ref([])
 const backendRankings = ref([])
@@ -383,22 +385,69 @@ const riskActions = computed(() => {
 })
 
 async function loadAll() {
+  if (loadRunning) {
+    loadQueued = true
+    return
+  }
+
+  loadRunning = true
   loading.value = true
+
   try {
-    await loadEsgDashboardMeta()
-    await Promise.all([
-      loadDashboard(),
-      loadEquipments(),
-      loadWorkPlans(),
-      loadReports(),
-      loadWorkers(),
-    ])
-    await persistCurrentSnapshot()
-    await loadEsgDashboardMeta(false)
-    lastUpdatedAt.value = formatTime(new Date())
+    do {
+      loadQueued = false
+      await runDashboardLoad()
+    } while (loadQueued)
   } finally {
+    loadRunning = false
     loading.value = false
   }
+}
+
+async function runDashboardLoad() {
+  await loadEsgDashboardMeta()
+
+  if (isFutureReportDate.value) {
+    clearOperationalData()
+    await loadDashboard()
+    // 미래 날짜: 첫 번째 loadEsgDashboardMeta 호출에서 오늘 기준선 포함 모든 데이터를 이미 조회하므로 재호출 불필요
+    lastUpdatedAt.value = formatTime(new Date())
+    return
+  }
+
+  if (isPastReportDate.value && backendCurrentZoneSnapshots.value.length) {
+    clearOperationalData()
+    await loadDashboard()
+    // 과거 날짜(스냅샷 존재): 첫 번째 호출 이후 데이터 변경이 없으므로 재호출 불필요
+    lastUpdatedAt.value = formatTime(new Date())
+    return
+  }
+
+  await Promise.all([
+    loadDashboard(),
+    loadEquipments(),
+    loadReports(),
+    loadWorkers(),
+  ])
+
+  if (gateEquipmentsForCurrentProject.value.length) {
+    workPlansData.value = []
+  } else {
+    await loadWorkPlans()
+  }
+
+  await persistCurrentSnapshot()
+  // 오늘 날짜: persistCurrentSnapshot 저장 후 서버에 반영된 스냅샷을 반영하기 위해 재조회
+  await loadEsgDashboardMeta(false)
+  lastUpdatedAt.value = formatTime(new Date())
+}
+
+function clearOperationalData() {
+  equipmentsData.value = []
+  workPlansData.value = []
+  reportsData.value = []
+  workersData.value = []
+  staffingWorkersData.value = []
 }
 
 async function loadEsgDashboardMeta(useCurrentSelection = true) {
