@@ -40,29 +40,31 @@ function colorClass(color, type) {
 </script>
 
 <template>
-  <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
-    <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
-      <div class="flex items-center justify-between">
-        <div>
-          <h2 class="text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
+  <section class="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]">
+    <article class="min-w-0 rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h2 class="truncate text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
         </div>
-        <Target class="h-6 w-6 text-emerald-600" />
+        <Target class="h-6 w-6 shrink-0 text-emerald-600" />
       </div>
 
-      <div class="mt-5 grid gap-3 lg:grid-cols-3">
+      <div class="mt-5 grid min-w-0 gap-3 lg:grid-cols-3">
         <div
           v-for="mission in missions"
           :key="mission.id"
-          class="rounded-2xl border p-4"
+          class="min-w-0 rounded-2xl border p-4"
           :class="colorClass(mission.color, 'soft')"
         >
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <p class="text-sm font-black text-forena-900">{{ mission.title }}</p>
-              <p class="mt-1 text-[11px] text-forena-500">{{ mission.description }}</p>
-              <p v-if="mission.progressCaption" class="mt-2 text-[10px] font-bold text-forena-400">{{ mission.progressCaption }}</p>
+          <div class="flex min-w-0 items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="line-clamp-2 text-sm font-black leading-5 text-forena-900">{{ mission.title }}</p>
+              <p class="mt-1 line-clamp-2 text-[11px] leading-4 text-forena-500">{{ mission.description }}</p>
+              <p v-if="mission.progressCaption" class="mt-2 truncate text-[10px] font-bold text-forena-400">{{ mission.progressCaption }}</p>
             </div>
-            <p class="text-lg font-black tabular-nums" :class="colorClass(mission.color, 'text')">{{ mission.progressLabel }}</p>
+            <p class="shrink-0 whitespace-nowrap text-right text-base font-black tabular-nums 2xl:text-lg" :class="colorClass(mission.color, 'text')">
+              {{ mission.progressLabel }}
+            </p>
           </div>
           <div class="mt-4 h-2 overflow-hidden rounded-full bg-white">
             <div class="h-full rounded-full" :class="colorClass(mission.color, 'bar')" :style="{ width: `${mission.progress}%` }" />
@@ -71,18 +73,20 @@ function colorClass(color, type) {
       </div>
     </article>
 
-    <article class="rounded-2xl border border-sky-100 bg-white p-5 shadow-card">
-      <div class="flex items-center justify-between">
-        <div>
+    <article class="min-w-0 rounded-2xl border border-sky-100 bg-white p-5 shadow-card">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
           <p class="text-[11px] font-bold uppercase tracking-wide text-sky-700">Safety</p>
-          <h2 class="mt-1 text-xl font-black text-forena-900">안전 무사고 일수</h2>
+          <h2 class="mt-1 truncate text-xl font-black text-forena-900">안전 무사고 일수</h2>
         </div>
-        <ShieldCheck class="h-6 w-6 text-sky-600" />
+        <ShieldCheck class="h-6 w-6 shrink-0 text-sky-600" />
       </div>
 
       <div class="mt-4 rounded-2xl bg-gradient-to-br from-sky-600 to-emerald-700 p-5 text-white shadow-lg">
-        <p class="text-sm font-black text-sky-100">현재 현장 무사고 운영</p>
-        <p class="mt-3 text-5xl font-black tabular-nums">{{ safetyDays }}<span class="text-xl text-sky-100">일</span></p>
+        <p class="truncate text-sm font-black text-sky-100">현재 현장 무사고 운영</p>
+        <p class="mt-3 whitespace-nowrap text-[clamp(2.6rem,4vw,4.2rem)] font-black leading-none tabular-nums">
+          {{ safetyDays }}<span class="ml-1 text-[clamp(1.1rem,1.6vw,1.5rem)] text-sky-100">일</span>
+        </p>
       </div>
     </article>
   </section>
