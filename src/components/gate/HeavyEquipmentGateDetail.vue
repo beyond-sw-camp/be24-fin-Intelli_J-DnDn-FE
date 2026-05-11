@@ -38,12 +38,12 @@ const emit = defineEmits({
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div class="flex h-[var(--gate-panel-height)] min-h-0 flex-col">
     <div
       v-if="selectedGate"
-      class="overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50"
+      class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50"
     >
-      <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-6 py-4">
+      <div class="flex shrink-0 items-center justify-between border-b border-forena-100 bg-forena-50/50 px-6 py-4">
         <div class="flex items-center gap-3">
           <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm">
             <span class="text-sm font-black text-forena-900">{{ selectedGate.businessKey }}</span>
@@ -101,7 +101,7 @@ const emit = defineEmits({
         </div>
       </div>
 
-      <div class="p-6">
+      <div class="min-h-0 flex-1 overflow-y-auto p-6">
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="rounded-2xl border border-sky-100 bg-sky-50/70 p-4">
             <p class="text-xs font-bold text-sky-700">작업지시서 배정</p>
@@ -239,7 +239,7 @@ const emit = defineEmits({
 
     <div
       v-else-if="gates.length === 0"
-      class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-forena-100 bg-white/60 p-8 text-center"
+      class="flex h-full min-h-0 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-forena-100 bg-white/60 p-8 text-center"
     >
       <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-flare-50 text-flare-600">
         <MapIcon class="h-6 w-6" />
@@ -252,7 +252,7 @@ const emit = defineEmits({
 
     <div
       v-else
-      class="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-3xl border border-forena-100 bg-white/60 p-8 text-center shadow-card"
+      class="flex h-full min-h-0 flex-col items-center justify-center gap-3 rounded-3xl border border-forena-100 bg-white/60 p-8 text-center shadow-card"
     >
       <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-forena-50 text-forena-600">
         <Navigation class="h-6 w-6" />

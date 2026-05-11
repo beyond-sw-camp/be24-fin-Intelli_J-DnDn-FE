@@ -385,7 +385,7 @@ watch(targetDate, () => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
+  <div class="flex min-h-full flex-col gap-4 pb-6">
     <HeavyEquipmentHeader
       :target-date="targetDate"
       :equipment-count="todayEquipments.length"
@@ -401,7 +401,7 @@ watch(targetDate, () => {
       @change="handleBlueprintUpload"
     />
 
-    <div class="grid gap-6 lg:grid-cols-3">
+    <div class="grid gap-6 [--gate-panel-height:clamp(560px,calc(100vh-220px),720px)] lg:grid-cols-3 lg:items-stretch">
       <HeavyEquipmentMapPanel
         :active-blueprint="activeBlueprint"
         :blueprint-aspect-ratio="blueprintAspectRatio"

@@ -44,12 +44,12 @@ function selectMonthWeek(weekId) {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+  <div class="shrink-0 overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
     <div class="flex items-center justify-between border-b border-forena-100 bg-forena-50/50 px-5 py-0">
       <div class="flex">
         <button
           type="button"
-          class="flex items-center gap-1.5 border-b-2 px-4 py-3.5 text-sm font-medium transition-colors"
+          class="flex items-center gap-1.5 border-b-2 px-4 py-3 text-sm font-medium transition-colors"
           :class="forecastTab === 'week' ? 'border-forena-700 text-forena-900' : 'border-transparent text-forena-500 hover:text-forena-700'"
           @click="updateForecastTab('week')"
         >
@@ -58,7 +58,7 @@ function selectMonthWeek(weekId) {
         </button>
         <button
           type="button"
-          class="flex items-center gap-1.5 border-b-2 px-4 py-3.5 text-sm font-medium transition-colors"
+          class="flex items-center gap-1.5 border-b-2 px-4 py-3 text-sm font-medium transition-colors"
           :class="forecastTab === 'month' ? 'border-forena-700 text-forena-900' : 'border-transparent text-forena-500 hover:text-forena-700'"
           @click="updateForecastTab('month')"
         >
@@ -69,7 +69,7 @@ function selectMonthWeek(weekId) {
       <span class="pr-4 text-xs font-medium text-forena-400">{{ locationLabel }}</span>
     </div>
 
-    <div v-if="forecastTab === 'week'" class="p-5">
+    <div v-if="forecastTab === 'week'" class="p-3">
       <div class="overflow-x-auto">
         <table class="w-full min-w-[560px] border-collapse text-sm">
           <thead>
@@ -127,8 +127,8 @@ function selectMonthWeek(weekId) {
       </div>
     </div>
 
-    <div v-else-if="forecastTab === 'month'" class="p-5">
-      <p class="mb-4 text-xs text-forena-500">
+    <div v-else-if="forecastTab === 'month'" class="p-3">
+      <p class="mb-3 text-xs text-forena-500">
         월간 예보는 기상청 단기·중기 예보를 주차 단위로 묶어 표시합니다. 주차를 누르면 해당 주의 일별 상세가 펼쳐집니다.
       </p>
 
@@ -138,7 +138,7 @@ function selectMonthWeek(weekId) {
           :key="weekItem.id"
           role="button"
           tabindex="0"
-          class="relative cursor-pointer overflow-hidden rounded-xl border bg-white/95 p-4 transition"
+          class="relative cursor-pointer overflow-hidden rounded-xl border bg-white/95 p-3.5 transition"
           :class="[
             selectedMonthWeekId === weekItem.id
               ? weekItem.risk === '주의'
@@ -208,7 +208,7 @@ function selectMonthWeek(weekId) {
 
           <div
             v-if="selectedMonthWeekId === weekItem.id"
-            class="mt-4 overflow-hidden rounded-2xl border border-forena-100 bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-sm"
+            class="mt-3 overflow-hidden rounded-2xl border border-forena-100 bg-gradient-to-br from-slate-50 via-white to-sky-50/40 shadow-sm"
           >
             <div class="flex flex-wrap items-center justify-between gap-2 border-b border-forena-100 px-5 py-3">
               <div>
@@ -220,12 +220,12 @@ function selectMonthWeek(weekId) {
               </span>
             </div>
 
-            <div class="p-4">
+            <div class="p-3">
               <div class="grid gap-2 md:grid-cols-7">
                 <article
                   v-for="day in weekItem.days"
                   :key="day.id"
-                  class="rounded-xl border border-forena-100 bg-white px-3 py-3 shadow-sm transition hover:-translate-y-0.5"
+                  class="rounded-xl border border-forena-100 bg-white px-3 py-2.5 shadow-sm transition hover:-translate-y-0.5"
                 >
                   <div class="flex items-start justify-between gap-2">
                     <div>
@@ -235,14 +235,14 @@ function selectMonthWeek(weekId) {
                     <span class="text-xl leading-none">{{ weatherEmoji(day.weatherLabel, day.precipitationProbability) }}</span>
                   </div>
 
-                  <p class="mt-3 text-xs font-semibold text-slate-700">{{ day.weatherLabel }}</p>
+                  <p class="mt-2 text-xs font-semibold text-slate-700">{{ day.weatherLabel }}</p>
 
                   <p class="mt-2 tabular-nums text-sm font-bold text-forena-800">
                     {{ day.maxTemp ?? '--' }}°
                     <span class="font-normal text-slate-400"> / {{ day.minTemp ?? '--' }}°</span>
                   </p>
 
-                  <div class="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+                  <div class="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
                     <span>강수 {{ day.precipitationProbability }}%</span>
                     <span>{{ formatWindSpeed(day.windSpeed) }}</span>
                   </div>

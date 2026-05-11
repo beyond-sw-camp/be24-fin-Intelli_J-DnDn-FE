@@ -28,12 +28,12 @@ defineProps({
       <span class="text-xs font-medium text-forena-400">{{ locationLabel }}</span>
     </div>
 
-    <div class="p-5">
+    <div class="p-4">
       <div class="grid gap-3 md:grid-cols-3">
         <article
           v-for="day in days"
           :key="day.date"
-          class="rounded-xl border border-forena-100 bg-forena-50/40 p-4"
+          class="rounded-xl border border-forena-100 bg-forena-50/40 p-3"
         >
           <div class="flex items-center justify-between">
             <p class="text-xs font-bold text-forena-600">{{ day.dayLabel }}</p>
@@ -49,7 +49,7 @@ defineProps({
             <span class="text-sm font-normal text-slate-500">/ {{ day.minTemp ?? '--' }}°C</span>
           </p>
 
-          <div class="my-3 border-t border-forena-100" />
+          <div class="my-2.5 border-t border-forena-100" />
 
           <div class="flex items-center justify-between text-xs text-slate-600">
             <span class="flex items-center gap-1">

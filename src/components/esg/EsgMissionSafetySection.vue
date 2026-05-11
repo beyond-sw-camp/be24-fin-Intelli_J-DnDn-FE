@@ -1,0 +1,89 @@
+<script setup>
+import { ShieldCheck, Target } from 'lucide-vue-next'
+
+defineProps({
+  missions: {
+    type: Array,
+    default: () => [],
+  },
+  safetyDays: {
+    type: Number,
+    default: 1,
+  },
+})
+
+function colorClass(color, type) {
+  const map = {
+    emerald: {
+      text: 'text-emerald-800',
+      bar: 'bg-emerald-500',
+      soft: 'bg-emerald-50 border-emerald-100',
+    },
+    sky: {
+      text: 'text-sky-800',
+      bar: 'bg-sky-500',
+      soft: 'bg-sky-50 border-sky-100',
+    },
+    violet: {
+      text: 'text-violet-800',
+      bar: 'bg-violet-500',
+      soft: 'bg-violet-50 border-violet-100',
+    },
+    lime: {
+      text: 'text-lime-800',
+      bar: 'bg-lime-500',
+      soft: 'bg-lime-50 border-lime-100',
+    },
+  }
+  return map[color]?.[type] ?? map.emerald[type]
+}
+</script>
+
+<template>
+  <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+    <article class="rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-black text-forena-900">이번 주 ESG 미션</h2>
+        </div>
+        <Target class="h-6 w-6 text-emerald-600" />
+      </div>
+
+      <div class="mt-5 grid gap-3 lg:grid-cols-3">
+        <div
+          v-for="mission in missions"
+          :key="mission.id"
+          class="rounded-2xl border p-4"
+          :class="colorClass(mission.color, 'soft')"
+        >
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <p class="text-sm font-black text-forena-900">{{ mission.title }}</p>
+              <p class="mt-1 text-[11px] text-forena-500">{{ mission.description }}</p>
+              <p v-if="mission.progressCaption" class="mt-2 text-[10px] font-bold text-forena-400">{{ mission.progressCaption }}</p>
+            </div>
+            <p class="text-lg font-black tabular-nums" :class="colorClass(mission.color, 'text')">{{ mission.progressLabel }}</p>
+          </div>
+          <div class="mt-4 h-2 overflow-hidden rounded-full bg-white">
+            <div class="h-full rounded-full" :class="colorClass(mission.color, 'bar')" :style="{ width: `${mission.progress}%` }" />
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="rounded-2xl border border-sky-100 bg-white p-5 shadow-card">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-wide text-sky-700">Safety</p>
+          <h2 class="mt-1 text-xl font-black text-forena-900">안전 무사고 일수</h2>
+        </div>
+        <ShieldCheck class="h-6 w-6 text-sky-600" />
+      </div>
+
+      <div class="mt-4 rounded-2xl bg-gradient-to-br from-sky-600 to-emerald-700 p-5 text-white shadow-lg">
+        <p class="text-sm font-black text-sky-100">현재 현장 무사고 운영</p>
+        <p class="mt-3 text-5xl font-black tabular-nums">{{ safetyDays }}<span class="text-xl text-sky-100">일</span></p>
+      </div>
+    </article>
+  </section>
+</template>
