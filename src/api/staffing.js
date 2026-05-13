@@ -26,6 +26,23 @@ export async function postStaffingReset(rosterDate) {
 }
 
 /**
+ * TEST — `data/staffing-zone-demo.json` 등으로 구역 트리 DB 시드
+ * @param {object} [opts]
+ * @param {boolean} [opts.replaceExisting=true] 기존 인력배치 구역 데이터 비운 뒤 삽입
+ * @param {string} [opts.resource] classpath 리소스 (미지정 시 백엔드 기본 JSON)
+ */
+export async function postStaffingDummySeedZones(opts = {}) {
+  const params = {}
+  if (opts.replaceExisting !== undefined && opts.replaceExisting !== null) {
+    params.replaceExisting = opts.replaceExisting
+  }
+  if (opts.resource != null && String(opts.resource).trim() !== '') {
+    params.resource = String(opts.resource).trim()
+  }
+  return await api.post(`${PATH}/dummy/seed-zones`, {}, { params })
+}
+
+/**
  * 최종배치(확정): 현재 staffing_assignment → 해당 일 attendance_record zone_main/zone_sub 반영, confirmed=true
  * @param {string} [rosterDate] yyyy-MM-dd
  * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
@@ -41,13 +58,17 @@ export async function postStaffingSave(rosterDate) {
 }
 
 /** STAFFING_003 — 기본구역 트리 */
-export async function getStaffingZones() {
-  return await api.get(`${PATH}/zones`)
+export async function getStaffingZones(opts = {}) {
+  const params = {}
+  if (opts.rosterDate) params.rosterDate = opts.rosterDate
+  return await api.get(`${PATH}/zones`, { params })
 }
 
 /** STAFFING_004 — 상세구역 단건 */
-export async function getZoneSubDetail(zoneSubIdx) {
-  return await api.get(`${PATH}/zones/${zoneSubIdx}`)
+export async function getZoneSubDetail(zoneSubIdx, rosterDate) {
+  const params = {}
+  if (rosterDate) params.rosterDate = rosterDate
+  return await api.get(`${PATH}/zones/${zoneSubIdx}`, { params })
 }
 
 /**

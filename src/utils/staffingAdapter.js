@@ -42,11 +42,17 @@ function affiliationKindToUiString(kind, partnerCompany) {
 export function inferSkillsFromAffiliationLine(line) {
   const s = String(line ?? '').toLowerCase()
   const skills = []
-  if (s.includes('목공')) skills.push('carpenter')
+  if (s.includes('목공') || s.includes('목수') || s.includes('형틀')) skills.push('carpenter')
   if (s.includes('철근')) skills.push('rebar')
   if (s.includes('용접')) skills.push('welder')
   if (s.includes('타일')) skills.push('labor')
   if (s.includes('인부')) skills.push('labor')
+  if (s.includes('보통공')) skills.push('labor')
+  if (s.includes('토공')) skills.push('labor')
+  if (s.includes('굴착')) skills.push('labor')
+  if (s.includes('배수')) skills.push('labor')
+  if (s.includes('정리')) skills.push('labor')
+  if (s.includes('장비')) skills.push('labor')
   if (!skills.length) skills.push('labor')
   return [...new Set(skills)]
 }

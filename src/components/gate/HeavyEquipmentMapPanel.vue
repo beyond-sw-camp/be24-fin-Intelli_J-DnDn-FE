@@ -1,0 +1,259 @@
+<script setup>
+import { ref } from 'vue'
+import { AlertCircle, Map as MapIcon, RefreshCw, RotateCcw, Truck, Upload } from 'lucide-vue-next'
+import { clampPercent } from '@/utils/heavyEquipmentGateMapper.js'
+
+defineProps({
+  activeBlueprint: {
+    type: String,
+    required: true,
+  },
+  blueprintAspectRatio: {
+    type: String,
+    required: true,
+  },
+  blueprintZoom: {
+    type: Number,
+    required: true,
+  },
+  blueprintZoomPercent: {
+    type: String,
+    required: true,
+  },
+  customBlueprint: {
+    type: String,
+    default: null,
+  },
+  draggingGateId: {
+    type: [Number, null],
+    default: null,
+  },
+  gateMarkerScale: {
+    type: Number,
+    required: true,
+  },
+  gates: {
+    type: Array,
+    default: () => [],
+  },
+  isAddMode: {
+    type: Boolean,
+    default: false,
+  },
+  isLoading: {
+    type: Boolean,
+    default: false,
+  },
+  mapCursorClass: {
+    type: String,
+    required: true,
+  },
+})
+
+const emit = defineEmits({
+  'add-gate': (payload) => typeof payload.x === 'number' && typeof payload.y === 'number',
+  'marker-click': (payload) => typeof payload.gateId === 'number' && payload.event instanceof MouseEvent,
+  'marker-drag-end': (payload) => Boolean(payload.gate) && typeof payload.x === 'number' && typeof payload.y === 'number',
+  'marker-drag-start': (payload) => Boolean(payload.gate) && payload.event instanceof DragEvent,
+  'reset-blueprint': () => true,
+  'reset-zoom': () => true,
+  'toggle-add-mode': () => true,
+  'trigger-blueprint-upload': () => true,
+  'zoom-in': () => true,
+  'zoom-out': () => true,
+})
+
+const mapAreaRef = ref(null)
+const mapViewportRef = ref(null)
+const isPanning = ref(false)
+const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
+const lastDragPoint = ref({ x: 0, y: 0 })
+
+function emitAddGate(event) {
+  const rect = event.currentTarget.getBoundingClientRect()
+  emit('add-gate', {
+    x: clampPercent(((event.clientX - rect.left) / rect.width) * 100),
+    y: clampPercent(((event.clientY - rect.top) / rect.height) * 100),
+  })
+}
+
+function emitMarkerDrag(event) {
+  if (event.clientX === 0 && event.clientY === 0) return
+  lastDragPoint.value = { x: event.clientX, y: event.clientY }
+}
+
+function emitMarkerDragEnd(gate, event) {
+  const point = event.clientX === 0 && event.clientY === 0
+    ? lastDragPoint.value
+    : { x: event.clientX, y: event.clientY }
+
+  if (!mapAreaRef.value) return
+
+  const rect = mapAreaRef.value.getBoundingClientRect()
+  emit('marker-drag-end', {
+    gate,
+    x: clampPercent(((point.x - rect.left) / rect.width) * 100),
+    y: clampPercent(((point.y - rect.top) / rect.height) * 100),
+  })
+}
+
+function startPan(event) {
+  if (!event.currentTarget || event.button !== 0) return
+  isPanning.value = true
+  panStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    scrollLeft: event.currentTarget.scrollLeft,
+    scrollTop: event.currentTarget.scrollTop,
+  }
+}
+
+function movePan(event) {
+  if (!isPanning.value || !mapViewportRef.value) return
+
+  const dx = event.clientX - panStart.value.x
+  const dy = event.clientY - panStart.value.y
+  mapViewportRef.value.scrollLeft = panStart.value.scrollLeft - dx
+  mapViewportRef.value.scrollTop = panStart.value.scrollTop - dy
+}
+
+function endPan() {
+  isPanning.value = false
+}
+</script>
+
+<template>
+  <div class="lg:col-span-2 relative flex h-[var(--gate-panel-height)] min-h-0 flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card">
+    <div class="absolute right-4 top-4 z-20 flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
+        :class="isAddMode ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse' : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'"
+        @click.stop="emit('toggle-add-mode')"
+      >
+        <MapIcon class="h-4 w-4" />
+        게이트 추가 모드
+      </button>
+
+      <button
+        type="button"
+        class="inline-flex items-center gap-2 rounded-xl border border-forena-100 bg-white px-3 py-2 text-xs font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
+        @click.stop="emit('trigger-blueprint-upload')"
+      >
+        <Upload class="h-4 w-4" />
+        도면 업로드
+      </button>
+
+      <button
+        v-if="customBlueprint"
+        type="button"
+        class="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-bold text-rose-600 shadow-sm transition hover:bg-rose-50"
+        @click.stop="emit('reset-blueprint')"
+      >
+        <RotateCcw class="h-4 w-4" />
+        기본 도면
+      </button>
+
+      <span class="inline-flex h-8 items-center rounded-xl border border-forena-100 bg-white px-3 text-xs font-bold text-forena-700 shadow-sm">
+        총 {{ gates.length }}개
+      </span>
+    </div>
+
+    <div class="absolute left-4 top-4 z-20 flex items-center gap-1 rounded-xl border border-forena-100 bg-white/95 px-2 py-1 shadow-sm">
+      <button
+        type="button"
+        class="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-forena-700 hover:bg-forena-50 disabled:opacity-40"
+        :disabled="blueprintZoom <= 0.75"
+        @click.stop="emit('zoom-out')"
+      >
+        -
+      </button>
+      <span class="min-w-12 text-center text-xs font-black text-forena-700">{{ blueprintZoomPercent }}</span>
+      <button
+        type="button"
+        class="flex h-7 w-7 items-center justify-center rounded-lg text-sm font-bold text-forena-700 hover:bg-forena-50 disabled:opacity-40"
+        :disabled="blueprintZoom >= 1.4"
+        @click.stop="emit('zoom-in')"
+      >
+        +
+      </button>
+      <button
+        type="button"
+        class="ml-1 flex h-7 w-7 items-center justify-center rounded-lg text-forena-500 hover:bg-forena-50"
+        title="도면 크기 초기화"
+        @click.stop="emit('reset-zoom')"
+      >
+        <RefreshCw class="h-3.5 w-3.5" />
+      </button>
+    </div>
+
+    <div
+      ref="mapViewportRef"
+      class="h-full min-h-0 overflow-auto bg-slate-100/70"
+      :class="mapCursorClass"
+      @mousedown="startPan"
+      @mousemove="movePan"
+      @mouseup="endPan"
+      @mouseleave="endPan"
+    >
+      <div
+        ref="mapAreaRef"
+        class="relative mx-auto my-6 transition-transform duration-200"
+        :style="{
+          width: `${Math.round(blueprintZoom * 100)}%`,
+          minWidth: '960px',
+          aspectRatio: blueprintAspectRatio,
+          backgroundImage: `url(${activeBlueprint})`,
+          backgroundSize: 'contain',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'center',
+        }"
+        @click="isAddMode && emitAddGate($event)"
+        @dragover.prevent
+      >
+        <button
+          v-for="gate in gates"
+          :key="gate.idx"
+          class="absolute flex flex-col items-center gap-1 transition-all"
+          :class="draggingGateId === gate.idx ? 'scale-110 cursor-grabbing opacity-50' : 'cursor-grab'"
+          :style="{
+            left: gate.x + '%',
+            top: gate.y + '%',
+            transform: `translate(-50%, -50%) scale(${gateMarkerScale})`,
+            zIndex: draggingGateId === gate.idx ? 50 : 10,
+          }"
+          :draggable="!isAddMode"
+          @dragstart="emit('marker-drag-start', { gate, event: $event })"
+          @drag="emitMarkerDrag"
+          @dragend="emitMarkerDragEnd(gate, $event)"
+          @click="emit('marker-click', { gateId: gate.idx, event: $event })"
+        >
+          <div
+            class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"
+            :class="[gate.markerColor, draggingGateId === gate.idx ? 'shadow-2xl ring-2 ring-white/80' : 'drop-shadow-xl']"
+          >
+            <Truck class="h-5 w-5" />
+            <AlertCircle
+              v-if="gate.displayCongestion !== 'SMOOTH'"
+              class="absolute -right-2 -top-2 h-5 w-5 fill-amber-500 text-white rounded-full"
+            />
+          </div>
+
+          <div class="flex flex-col items-center gap-0.5 rounded-lg border border-forena-100 bg-white/95 px-2 py-1 text-[10px] font-bold shadow-sm">
+            <span class="whitespace-nowrap">{{ gate.name }}</span>
+            <span class="whitespace-nowrap text-forena-500">
+              배정 {{ gate.plannedEquipmentCount }}대 · 현재 {{ gate.vehicles ?? 0 }}대
+            </span>
+          </div>
+        </button>
+
+        <div
+          v-if="isLoading"
+          class="absolute inset-0 flex items-center justify-center bg-white/50 text-sm font-semibold text-forena-600"
+        >
+          게이트 정보를 불러오는 중입니다...
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
