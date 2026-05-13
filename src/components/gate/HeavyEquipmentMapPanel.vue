@@ -1,9 +1,9 @@
 <script setup>
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { AlertCircle, Map as MapIcon, RefreshCw, RotateCcw, Truck, Upload } from 'lucide-vue-next'
 import { clampPercent } from '@/utils/heavyEquipmentGateMapper.js'
 
-defineProps({
+const props = defineProps({
   activeBlueprint: {
     type: String,
     required: true,
@@ -97,14 +97,47 @@ function emitMarkerDragEnd(gate, event) {
   })
 }
 
+function captureViewportCenter() {
+  const viewport = mapViewportRef.value
+  const mapArea = mapAreaRef.value
+  if (!viewport || !mapArea) return null
+
+  const width = Math.max(1, mapArea.offsetWidth)
+  const height = Math.max(1, mapArea.offsetHeight)
+
+  return {
+    xRatio: (viewport.scrollLeft + viewport.clientWidth / 2) / width,
+    yRatio: (viewport.scrollTop + viewport.clientHeight / 2) / height,
+  }
+}
+
+function restoreViewportCenter(center) {
+  if (!center) return
+
+  nextTick(() => {
+    const viewport = mapViewportRef.value
+    const mapArea = mapAreaRef.value
+    if (!viewport || !mapArea) return
+
+    const nextLeft = center.xRatio * mapArea.offsetWidth - viewport.clientWidth / 2
+    const nextTop = center.yRatio * mapArea.offsetHeight - viewport.clientHeight / 2
+
+    viewport.scrollLeft = Math.max(0, nextLeft)
+    viewport.scrollTop = Math.max(0, nextTop)
+  })
+}
+
 function startPan(event) {
-  if (!event.currentTarget || event.button !== 0) return
+  if (!mapViewportRef.value || event.button !== 0) return
+  if (props.isAddMode || props.blueprintZoom <= 1.01) return
+  if (event.target instanceof Element && event.target.closest('button')) return
+
   isPanning.value = true
   panStart.value = {
     x: event.clientX,
     y: event.clientY,
-    scrollLeft: event.currentTarget.scrollLeft,
-    scrollTop: event.currentTarget.scrollTop,
+    scrollLeft: mapViewportRef.value.scrollLeft,
+    scrollTop: mapViewportRef.value.scrollTop,
   }
 }
 
@@ -120,11 +153,31 @@ function movePan(event) {
 function endPan() {
   isPanning.value = false
 }
+
+function handleBlueprintWheel(event) {
+  if (event.ctrlKey) return
+  event.preventDefault()
+
+  if (event.deltaY < 0) {
+    emit('zoom-in')
+    return
+  }
+
+  emit('zoom-out')
+}
+
+watch(
+  () => props.blueprintZoom,
+  () => {
+    restoreViewportCenter(captureViewportCenter())
+  },
+  { flush: 'pre' },
+)
 </script>
 
 <template>
-  <div class="lg:col-span-2 relative flex h-[var(--gate-panel-height)] min-h-0 flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card">
-    <div class="absolute right-4 top-4 z-20 flex flex-wrap items-center gap-2">
+  <div class="relative flex h-[var(--gate-panel-height)] min-h-0 flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card min-[1440px]:col-span-2">
+    <div class="absolute right-4 top-4 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center justify-end gap-2">
       <button
         type="button"
         class="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
@@ -189,16 +242,17 @@ function endPan() {
 
     <div
       ref="mapViewportRef"
-      class="h-full min-h-0 overflow-auto bg-slate-100/70"
+      class="h-full min-h-0 overflow-auto bg-slate-100/70 select-none"
       :class="mapCursorClass"
       @mousedown="startPan"
       @mousemove="movePan"
       @mouseup="endPan"
       @mouseleave="endPan"
+      @wheel="handleBlueprintWheel"
     >
       <div
         ref="mapAreaRef"
-        class="relative mx-auto my-6 transition-transform duration-200"
+        class="relative mx-auto my-6 transition-[width] duration-200"
         :style="{
           width: `${Math.round(blueprintZoom * 100)}%`,
           minWidth: '960px',
@@ -226,7 +280,7 @@ function endPan() {
           @dragstart="emit('marker-drag-start', { gate, event: $event })"
           @drag="emitMarkerDrag"
           @dragend="emitMarkerDragEnd(gate, $event)"
-          @click="emit('marker-click', { gateId: gate.idx, event: $event })"
+          @click.stop="emit('marker-click', { gateId: gate.idx, event: $event })"
         >
           <div
             class="relative flex h-10 w-10 items-center justify-center rounded-full border-4 border-white text-white shadow-xl transition-colors"

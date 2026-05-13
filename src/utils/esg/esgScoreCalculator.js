@@ -1,4 +1,9 @@
 export const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
+export const ESG_SITE_FLOOR_POINT = 300
+export const ESG_ZONE_FLOOR_POINT = 500
+export const ESG_FLOOR_POINT = ESG_SITE_FLOOR_POINT
+export const ESG_CATEGORY_WEIGHTS = Object.freeze({ E: 50, S: 30, G: 20 })
+export const ESG_METRIC_CARD_WEIGHTS = Object.freeze([40, 30, 20, 10])
 
 export const HIGH_RISK_EQUIPMENT_KEYWORDS = [
   '타워크레인',
@@ -67,6 +72,61 @@ export function resolveLevel(score) {
 
 export function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(Number(value || 0) * 10) / 10))
+}
+
+export function normalizeCumulativeScore(value) {
+  const score = Number(value)
+  if (!Number.isFinite(score)) return 0
+  return Math.max(0, Math.round(score * 10) / 10)
+}
+
+function normalizeFloorPoint(value, fallback = ESG_SITE_FLOOR_POINT) {
+  const floorPoint = Number(value)
+  return Number.isFinite(floorPoint) && floorPoint > 0 ? floorPoint : fallback
+}
+
+export function resolveEsgFloor(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeScore = normalizeCumulativeScore(score)
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.floor(safeScore / safeFloorPoint)
+}
+
+export function getEsgFloorPoint(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeScore = normalizeCumulativeScore(score)
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.round((safeScore % safeFloorPoint) * 10) / 10
+}
+
+export function getEsgFloorProgress(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.min(100, Math.round((getEsgFloorPoint(score, safeFloorPoint) / safeFloorPoint) * 100))
+}
+
+export function getNextEsgFloorPoint(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.round((safeFloorPoint - getEsgFloorPoint(score, safeFloorPoint)) * 10) / 10
+}
+
+export function formatEsgFloorScore(
+  score,
+  { decimals = 1, showMax = false, floorPoint = ESG_SITE_FLOOR_POINT } = {},
+) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const floor = resolveEsgFloor(score, safeFloorPoint)
+  const point = getEsgFloorPoint(score, safeFloorPoint)
+  const pointText = Number(point.toFixed(decimals)).toLocaleString('ko-KR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })
+  const suffix = showMax ? ` / ${safeFloorPoint}점` : ''
+  return `${floor}층 ${pointText}점${suffix}`
+}
+
+export function formatEsgFloorScoreCompact(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const floor = resolveEsgFloor(score, safeFloorPoint)
+  const point = Math.round(getEsgFloorPoint(score, safeFloorPoint))
+  return `${floor}층${point}점`
 }
 function resolveMetricInput(context = {}) {
   const metricInputs = normalizeList(context.metricInputs)
@@ -182,23 +242,23 @@ export function buildEsgMetrics(equipments, context = {}) {
   const waterScore = clampScore(100 - Math.min(35, wastewaterRisk * 3.5))
   const fineDustScore = clampScore(100 - fineDustRiskLevel * 12 - dustWorkCount * 2)
   const powerScore = clampScore(100 - Math.min(25, powerPeakRisk * 2.5))
-  const environmentScore = clampScore(
-    carbonScore * 0.35
-      + waterScore * 0.25
-      + fineDustScore * 0.25
-      + powerScore * 0.15,
-  )
+  const environmentScore = buildWeightedMetricScore([
+    carbonScore,
+    waterScore,
+    fineDustScore,
+    powerScore,
+  ])
 
   const staffingRate = firstFiniteNumber(metricInput.staffingRate, workerMetrics.staffingRate) ?? (totalEquipmentCount > 0 ? missionRate : 0)
   const safetyEducationRate = firstFiniteNumber(metricInput.safetyEducationRate, workerMetrics.safetyEducationRate) ?? (totalEquipmentCount > 0 ? missionRate : 0)
   const weatherProtectionScore = clampScore(100 - weatherRiskCount * 6 - fineDustRiskLevel * 4 - (windSpeed >= 8 ? 6 : 0))
   const routeSafetyScore = clampScore(100 - Math.min(35, highRiskEquipmentCount * 4 + gateCount * 1.5))
-  const socialScore = clampScore(
-    safetyEducationRate * 0.4
-      + staffingRate * 0.3
-      + weatherProtectionScore * 0.2
-      + routeSafetyScore * 0.1,
-  )
+  const socialScore = buildWeightedMetricScore([
+    safetyEducationRate,
+    staffingRate,
+    weatherProtectionScore,
+    routeSafetyScore,
+  ])
 
   const reportMetrics = buildReportMetrics(context.reports, equipmentList, weatherRiskCount)
   const resolvedReportRate = firstFiniteNumber(metricInput.reportRate, reportRate, reportMetrics.reportRate) ?? 0
@@ -209,12 +269,12 @@ export function buildEsgMetrics(equipments, context = {}) {
     Math.round((100 - resolvedReportRate) / 25) + Math.max(0, weatherRiskCount - 2),
   )
   const checkScore = clampScore(100 - missingCheckCount * 8)
-  const governanceScore = clampScore(
-    resolvedReportRate * 0.35
-      + resolvedActionTrackingRate * 0.3
-      + resolvedDataLinkRate * 0.2
-      + checkScore * 0.15,
-  )
+  const governanceScore = buildWeightedMetricScore([
+    resolvedReportRate,
+    resolvedActionTrackingRate,
+    resolvedDataLinkRate,
+    checkScore,
+  ])
 
   const metrics = {
     totalEquipmentCount,
@@ -311,10 +371,22 @@ export function createEmptyMetrics() {
 
 export function buildTotalScore(metrics) {
   return clampScore(
-    metrics.environmentScore * 0.4
-      + metrics.socialScore * 0.35
-      + metrics.governanceScore * 0.25,
+    (Number(metrics.environmentScore || 0) * ESG_CATEGORY_WEIGHTS.E
+      + Number(metrics.socialScore || 0) * ESG_CATEGORY_WEIGHTS.S
+      + Number(metrics.governanceScore || 0) * ESG_CATEGORY_WEIGHTS.G) / 100,
   )
+}
+
+function buildWeightedMetricScore(scores = []) {
+  const safeWeights = ESG_METRIC_CARD_WEIGHTS
+  const weightSum = safeWeights.reduce((sum, weight) => sum + Number(weight || 0), 0)
+  if (!weightSum) return 0
+
+  const weightedScore = safeWeights.reduce((sum, weight, index) => {
+    return sum + clampScore(scores[index] ?? 0) * Number(weight || 0)
+  }, 0)
+
+  return clampScore(weightedScore / weightSum)
 }
 
 function buildWorkerMetrics(workers, staffingWorkers, zoneName = '') {

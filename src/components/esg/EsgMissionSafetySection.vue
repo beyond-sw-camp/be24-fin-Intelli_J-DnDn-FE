@@ -40,7 +40,7 @@ function colorClass(color, type) {
 </script>
 
 <template>
-  <section class="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]">
+  <section class="grid items-stretch gap-4 min-[1760px]:grid-cols-[minmax(0,1fr)_360px] min-[1920px]:grid-cols-[minmax(0,1fr)_400px]">
     <article class="min-w-0 rounded-2xl border border-forena-100 bg-white p-5 shadow-card">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">

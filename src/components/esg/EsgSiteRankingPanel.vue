@@ -1,5 +1,6 @@
 <script setup>
 import { Target, Trophy } from 'lucide-vue-next'
+import { ESG_SITE_FLOOR_POINT, formatEsgFloorScoreCompact, getEsgFloorProgress } from '@/utils/esg/esgScoreCalculator.js'
 
 defineProps({
   currentSiteRank: {
@@ -22,7 +23,7 @@ defineProps({
 </script>
 
 <template>
-  <article class="flex h-full min-h-[720px] flex-col rounded-2xl border border-amber-100 bg-white p-5 shadow-card">
+  <article class="flex h-full min-h-[640px] flex-col rounded-2xl border border-amber-100 bg-white p-5 shadow-card min-[1440px]:h-[680px] min-[1440px]:min-h-0">
     <div class="flex items-center justify-between">
       <div>
         <h2 class="text-xl font-black text-forena-900">현장 ESG 순위</h2>
@@ -42,7 +43,7 @@ defineProps({
       </p>
     </div>
 
-    <div class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+    <div class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
       <div
         v-for="(item, index) in siteRankingItems"
         :key="item.id"
@@ -69,10 +70,10 @@ defineProps({
             </div>
             <p class="mt-0.5 text-[11px] text-forena-500">{{ item.address }}</p>
           </div>
-          <p class="text-lg font-black tabular-nums text-emerald-800">{{ item.snapshotSaved ? item.score : '0.0' }}</p>
+          <p class="text-lg font-black tabular-nums text-emerald-800">{{ formatEsgFloorScoreCompact(item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT) }}</p>
         </div>
         <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
-          <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${item.snapshotSaved ? item.score : 0}%` }" />
+          <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${getEsgFloorProgress(item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT)}%` }" />
         </div>
       </div>
     </div>

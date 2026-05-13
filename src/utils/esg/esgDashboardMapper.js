@@ -1,4 +1,6 @@
 import {
+  ESG_CATEGORY_WEIGHTS,
+  ESG_METRIC_CARD_WEIGHTS,
   METRIC_COLOR_CLASS,
   buildEsgMetrics,
   buildTotalScore,
@@ -612,7 +614,8 @@ export function buildEsgBreakdown(zone, context = {}) {
   const fineDustValue = metrics.fineDustValue || context.airQuality?.value || 0
   const safetyDays = Math.max(1, Number(context.safetyDays || metrics.safetyDays || 1))
 
-  // 작업구역 점수 = E × 0.40 + S × 0.35 + G × 0.25 (mapper buildTotalScore 기준)
+  // 작업구역 점수는 E/S/G 중요도 50/30/20을 반영하고,
+  // E/S/G 내부 카드는 중요도 순서대로 40/30/20/10 가중치를 적용합니다.
   const eScoreRounded = Math.round(metrics.environmentScore)
   const sScoreRounded = Math.round(metrics.socialScore)
   const gScoreRounded = Math.round(metrics.governanceScore)
@@ -623,8 +626,9 @@ export function buildEsgBreakdown(zone, context = {}) {
       title: 'Environment',
       subtitle: '탄소 · 세척수/오염수 · PM10 · 전력 피크',
       score: metrics.environmentScore,
-      weight: 40,
-      weightedScore: Math.round(eScoreRounded * 0.4 * 10) / 10,
+      weight: ESG_CATEGORY_WEIGHTS.E,
+      contributionLabel: '작업구역 점수 50% 반영',
+      weightedScore: Math.round((eScoreRounded * ESG_CATEGORY_WEIGHTS.E / 100) * 10) / 10,
       color: 'emerald',
       description: '장비 탄소부하, 세척수·오염수, PM10, 전력 피크 위험을 합산한 환경 점수입니다.',
       details: [
@@ -639,8 +643,9 @@ export function buildEsgBreakdown(zone, context = {}) {
       title: 'Social',
       subtitle: '안전교육 · 구역 배치 · 기상 보호 · 민원 동선',
       score: metrics.socialScore,
-      weight: 35,
-      weightedScore: Math.round(sScoreRounded * 0.35 * 10) / 10,
+      weight: ESG_CATEGORY_WEIGHTS.S,
+      contributionLabel: '작업구역 점수 30% 반영',
+      weightedScore: Math.round((sScoreRounded * ESG_CATEGORY_WEIGHTS.S / 100) * 10) / 10,
       color: 'sky',
       description: '작업자 안전교육, 구역별 배치, 기상 위험 보호, 민원·동선 안전을 반영한 사회 점수입니다.',
       details: [
@@ -655,8 +660,9 @@ export function buildEsgBreakdown(zone, context = {}) {
       title: 'Governance',
       subtitle: '작업일보 · 위험 조치 · 데이터 연동 · 점검 누락',
       score: metrics.governanceScore,
-      weight: 25,
-      weightedScore: Math.round(gScoreRounded * 0.25 * 10) / 10,
+      weight: ESG_CATEGORY_WEIGHTS.G,
+      contributionLabel: '작업구역 점수 20% 반영',
+      weightedScore: Math.round((gScoreRounded * ESG_CATEGORY_WEIGHTS.G / 100) * 10) / 10,
       color: 'violet',
       description: '작업일보 기록률, 위험 조치 기록, 데이터 연동률, 점검 누락 여부를 반영한 거버넌스 점수입니다.',
       details: [
@@ -673,15 +679,16 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
   const metrics = zone?.metrics ?? createEmptyMetrics()
   const safetyDays = Math.max(1, Number(context.safetyDays || metrics.safetyDays || 1))
   const fineDustLabel = metrics.fineDustValue > 0 ? `${metrics.fineDustValue}㎍/㎥` : '0㎍/㎥'
+  const [primaryWeight, secondaryWeight, tertiaryWeight, quaternaryWeight] = ESG_METRIC_CARD_WEIGHTS
 
   if (activeKey === 'S') {
     return [
       buildScoreCard({
         id: 'education',
         title: '안전교육 이수율',
-        subtitle: `40% · ${metrics.workerCount ? `이수 ${metrics.trainedWorkerCount}/${metrics.workerCount}명` : `무사고 ${safetyDays}일 참고`}`,
+        subtitle: `${primaryWeight}% · ${metrics.workerCount ? `이수 ${metrics.trainedWorkerCount}/${metrics.workerCount}명` : `무사고 ${safetyDays}일 참고`}`,
         rawScore: metrics.safetyEducationRate || 0,
-        weight: 40,
+        weight: primaryWeight,
         source: '인력 관리 · 안전교육 이수 필드',
         badge: metrics.safetyEducationRate >= 80 ? '우수' : metrics.workerCount ? '관리' : '대기',
         icon: icons.Medal,
@@ -690,9 +697,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'staffing-rate',
         title: '구역별 인력 배치율',
-        subtitle: `30% · 배치 ${metrics.assignedWorkerCount}/${metrics.workerCount || 0}명`,
+        subtitle: `${secondaryWeight}% · 배치 ${metrics.assignedWorkerCount}/${metrics.workerCount || 0}명`,
         rawScore: metrics.staffingRate || 0,
-        weight: 30,
+        weight: secondaryWeight,
         source: '인력 투입 관리 · 구역 배치 현황',
         badge: metrics.workerCount ? '연동' : '대기',
         icon: icons.Users,
@@ -701,9 +708,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'weather-protection',
         title: '기상 위험 작업자 보호',
-        subtitle: `20% · 기상 위험 ${metrics.weatherRiskCount}건`,
+        subtitle: `${tertiaryWeight}% · 기상 위험 ${metrics.weatherRiskCount}건`,
         rawScore: metrics.weatherProtectionScore,
-        weight: 20,
+        weight: tertiaryWeight,
         source: '기상관제 · 기상 AI 위험 분석',
         badge: metrics.weatherProtectionScore < 70 ? '주의' : '관리',
         icon: icons.AlertTriangle,
@@ -712,9 +719,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'route-safety',
         title: '민원·동선 안전',
-        subtitle: `10% · 고위험 장비 ${metrics.highRiskEquipmentCount}대`,
+        subtitle: `${quaternaryWeight}% · 고위험 장비 ${metrics.highRiskEquipmentCount}대`,
         rawScore: metrics.routeSafetyScore,
-        weight: 10,
+        weight: quaternaryWeight,
         source: '중장비 입출차 · 게이트 동선',
         badge: metrics.routeSafetyScore < 70 ? '주의' : '관리',
         icon: icons.ShieldCheck,
@@ -728,9 +735,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'daily-log',
         title: '작업일보 기록률',
-        subtitle: '35% · 선택일 공사일보 저장 기준',
+        subtitle: `${primaryWeight}% · 선택일 공사일보 저장 기준`,
         rawScore: metrics.reportRate || 0,
-        weight: 35,
+        weight: primaryWeight,
         source: '공사일보 · 일별 저장 현황',
         badge: metrics.reportRate >= 80 ? '우수' : '관리',
         icon: icons.Gauge,
@@ -739,9 +746,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'action-done',
         title: '위험 조치 기록률',
-        subtitle: '30% · 조치/통제/점검/확인 키워드 기준',
+        subtitle: `${secondaryWeight}% · 조치/통제/점검/확인 키워드 기준`,
         rawScore: metrics.actionTrackingRate || 0,
-        weight: 30,
+        weight: secondaryWeight,
         source: '공사일보 본문 · 조치 키워드 추출',
         badge: metrics.actionTrackingRate >= 80 ? '우수' : '주의',
         icon: icons.ShieldCheck,
@@ -750,9 +757,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'data-link',
         title: '데이터 연동 완성도',
-        subtitle: '20% · 날씨·작업·인력·일보 연동 기준',
+        subtitle: `${tertiaryWeight}% · 날씨·작업·인력·일보 연동 기준`,
         rawScore: metrics.dataLinkRate || 0,
-        weight: 20,
+        weight: tertiaryWeight,
         source: '대시보드 연동 · 4개 모듈 입력 상태',
         badge: metrics.dataLinkRate >= 80 ? '우수' : '연동',
         icon: icons.Medal,
@@ -761,9 +768,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
       buildScoreCard({
         id: 'missing-check',
         title: '점검 누락 여부',
-        subtitle: `15% · 누락 ${Math.max(0, metrics.missingCheckCount || 0)}건`,
+        subtitle: `${quaternaryWeight}% · 누락 ${Math.max(0, metrics.missingCheckCount || 0)}건`,
         rawScore: metrics.checkScore || 0,
-        weight: 15,
+        weight: quaternaryWeight,
         source: '공사일보 + 기상관제 위험 매칭',
         badge: metrics.missingCheckCount > 2 ? '위험' : '관리',
         icon: icons.AlertTriangle,
@@ -776,9 +783,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
     buildScoreCard({
       id: 'carbon',
       title: '탄소/장비부하',
-      subtitle: `35% · 탄소부하지수 ${metrics.carbonLoadIndex}pt`,
+      subtitle: `${primaryWeight}% · 탄소부하지수 ${metrics.carbonLoadIndex}pt`,
       rawScore: metrics.carbonScore,
-      weight: 35,
+      weight: primaryWeight,
       source: '중장비 입출차 + 작업지시 · 장비 종류·대수',
       badge: metrics.carbonScore >= 80 ? '우수' : '관리',
       icon: icons.Leaf,
@@ -787,9 +794,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
     buildScoreCard({
       id: 'wash-water',
       title: '세척수/오염수',
-      subtitle: `25% · 세척수 ${metrics.estimatedWashWaterLiters}L · 위험 ${metrics.wastewaterRisk}/10`,
+      subtitle: `${secondaryWeight}% · 세척수 ${metrics.estimatedWashWaterLiters}L · 위험 ${metrics.wastewaterRisk}/10`,
       rawScore: metrics.waterScore,
-      weight: 25,
+      weight: secondaryWeight,
       source: '중장비 입출차 · 세척대상 장비 + 우천 조건',
       badge: metrics.wastewaterRisk >= 6 ? '주의' : '관리',
       icon: icons.Droplets,
@@ -798,9 +805,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
     buildScoreCard({
       id: 'fine-dust',
       title: '미세먼지/분진',
-      subtitle: `25% · ${fineDustLabel} · 분진작업 ${metrics.dustWorkCount}건`,
+      subtitle: `${tertiaryWeight}% · ${fineDustLabel} · 분진작업 ${metrics.dustWorkCount}건`,
       rawScore: metrics.fineDustScore,
-      weight: 25,
+      weight: tertiaryWeight,
       source: '기상관제 PM10 + 작업지시 외부작업',
       badge: metrics.fineDustRiskLevel >= 3 ? '주의' : '관리',
       icon: icons.Factory,
@@ -809,9 +816,9 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
     buildScoreCard({
       id: 'power-peak',
       title: '전력/피크관리',
-      subtitle: `15% · 피크 위험 ${metrics.powerPeakRisk}/10`,
+      subtitle: `${quaternaryWeight}% · 피크 위험 ${metrics.powerPeakRisk}/10`,
       rawScore: metrics.powerScore,
-      weight: 15,
+      weight: quaternaryWeight,
       source: '게이트 세척기계 + 장비 집중도',
       badge: metrics.powerPeakRisk >= 7 ? '위험' : '관리',
       icon: icons.Zap,
@@ -822,7 +829,7 @@ export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) 
 
 function buildScoreCard({ id, title, subtitle, rawScore, weight, badge, icon, color }) {
   // 표시 점수: 0~100 정수 (사용자 화면 기준)
-  // 가중 기여: 표시 점수 × 가중치 (반올림 후 합산이 ESG 점수와 일치하도록)
+  // 카드 기여도: E/S/G 내부 카드는 중요도 순서대로 차등 반영합니다.
   const displayScore = Math.round(clampScore(rawScore || 0))
   const safeWeight = Math.max(0, Number(weight) || 0)
   const weightedScore = Math.round(displayScore * safeWeight) / 100
