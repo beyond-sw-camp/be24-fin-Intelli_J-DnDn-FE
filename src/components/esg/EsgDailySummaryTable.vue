@@ -1,5 +1,6 @@
 <script setup>
 import { ArrowUpRight, Medal } from 'lucide-vue-next'
+import { formatEsgFloorScore } from '@/utils/esg/esgScoreCalculator.js'
 
 defineProps({
   currentSite: {
@@ -60,10 +61,10 @@ function levelTone(level) {
               <p class="font-bold text-forena-900">{{ zone.name }}</p>
               <p class="mt-0.5 text-[11px] text-forena-500">{{ zone.type }}</p>
             </td>
-            <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ zone.score }}</td>
+            <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ formatEsgFloorScore(zone.score, { decimals: 1, showMax: true }) }}</td>
             <td class="py-3 pr-4">
               <span class="rounded-full border border-forena-200 bg-white px-2 py-0.5 text-[11px] font-bold text-forena-700">
-                Lv.{{ zone.level }}
+                {{ zone.level }}층
               </span>
             </td>
             <td class="py-3 pr-4 text-xs text-forena-600">

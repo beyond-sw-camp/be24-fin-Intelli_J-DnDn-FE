@@ -1,4 +1,12 @@
-import { clampScore, normalizeList, resolveLevel, roundOne } from './esgScoreCalculator.js'
+import {
+  ESG_SITE_FLOOR_POINT,
+  ESG_ZONE_FLOOR_POINT,
+  clampScore,
+  normalizeCumulativeScore,
+  normalizeList,
+  resolveEsgFloor,
+  roundOne,
+} from './esgScoreCalculator.js'
 
 function buildShortSiteName(name = '') {
   const cleaned = String(name || '').replace(/신축|재건축|공구|공사|현장/g, '').trim()
@@ -44,8 +52,8 @@ export function buildProjectSiteItems(projects = [], rankings = [], currentProje
       address: project.location ?? ranking.address ?? '',
       contractor: ranking.contractor ?? project.contractor ?? '',
       manager: ranking.manager ?? project.manager ?? '',
-      score: clampScore(totalScore),
-      level: resolveLevel(totalScore),
+      score: normalizeCumulativeScore(totalScore),
+      level: resolveEsgFloor(totalScore, ESG_SITE_FLOOR_POINT),
       carbon: Math.round(Number(ranking.carbonKg ?? ranking.carbon ?? 0)),
       powerSaving: Math.round(Number(ranking.powerSavingKwh ?? ranking.powerSaving ?? 0)),
       riskCount: Math.round(Number(ranking.riskCount ?? 0)),
@@ -77,13 +85,13 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
   const socialScore = averageBy((zone) => zone.metrics?.socialScore)
   const governanceScore = averageBy((zone) => zone.metrics?.governanceScore)
   const totalScore = targetCount
-    ? clampScore(scoreTargets.reduce((sum, zone) => sum + Number(zone.score || 0), 0) / targetCount)
-    : clampScore(currentSite?.score ?? 0)
+    ? clampScore(scoreTargets.reduce((sum, zone) => sum + Number(zone.dailyScore ?? zone.metrics?.totalScore ?? zone.score ?? 0), 0) / targetCount)
+    : clampScore(currentSite?.dailyScore ?? currentSite?.score ?? 0)
   const contributionWeight = targetCount ? roundOne(100 / targetCount) : 0
   const scoreTargetIds = new Set(scoreTargets.map((zone) => zone.id))
   const zoneSnapshots = zones.map((zone) => {
     const contributesToSiteScore = scoreTargetIds.has(zone.id)
-    const zoneScore = clampScore(zone.score ?? zone.metrics?.totalScore ?? 0)
+    const zoneScore = clampScore(zone.dailyScore ?? zone.metrics?.totalScore ?? zone.score ?? 0)
 
     return {
       zoneName: zone.name,
@@ -92,7 +100,7 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
       socialScore: clampScore(zone.metrics?.socialScore ?? 0),
       governanceScore: clampScore(zone.metrics?.governanceScore ?? 0),
       totalScore: zoneScore,
-      level: resolveLevel(zoneScore),
+      level: resolveEsgFloor(zoneScore, ESG_ZONE_FLOOR_POINT),
       carbonKg: Math.round(Number(zone.carbon || zone.metrics?.estimatedCarbonKg || 0)),
       powerSavingKwh: Math.round(Number(zone.powerSaving || zone.metrics?.powerSavingKwh || 0)),
       riskCount: Math.round(Number(zone.risk || zone.metrics?.operatingRisk || 0)),
@@ -119,7 +127,7 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
     projectId: currentSite?.projectId ?? Number(currentSite?.id),
     reportDate,
     totalScore,
-    level: resolveLevel(totalScore),
+    level: resolveEsgFloor(totalScore, ESG_SITE_FLOOR_POINT),
     environmentScore,
     socialScore,
     governanceScore,
@@ -150,9 +158,7 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
 }
 
 function selectSiteScoreZones(zones) {
-  const list = normalizeList(zones)
-  const workZones = list.filter((zone) => zone.zoneType === 'work')
-  return workZones.length ? workZones : list
+  return normalizeList(zones)
 }
 
 export function calculateSafetyDays(project, reportDate) {

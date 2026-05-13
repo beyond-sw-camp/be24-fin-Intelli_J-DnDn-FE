@@ -401,7 +401,7 @@ watch(targetDate, () => {
       @change="handleBlueprintUpload"
     />
 
-    <div class="grid gap-6 [--gate-panel-height:clamp(560px,calc(100vh-220px),720px)] lg:grid-cols-3 lg:items-stretch">
+    <div class="grid gap-6 [--gate-panel-height:clamp(560px,calc(100vh-220px),720px)] min-[1440px]:grid-cols-3 min-[1440px]:items-stretch">
       <HeavyEquipmentMapPanel
         :active-blueprint="activeBlueprint"
         :blueprint-aspect-ratio="blueprintAspectRatio"
