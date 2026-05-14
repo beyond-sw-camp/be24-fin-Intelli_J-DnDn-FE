@@ -1,10 +1,19 @@
 <script setup>
-import { CalendarDays, Factory, Leaf, RefreshCw, ShieldCheck, Target, Trophy } from 'lucide-vue-next'
+import { CalendarDays, Factory, Leaf, RefreshCw, ShieldCheck, Trophy } from 'lucide-vue-next'
+import {
+  ESG_SITE_FLOOR_POINT,
+  ESG_ZONE_FLOOR_POINT,
+  formatEsgFloorProgressScore,
+} from '@/utils/esg/esgScoreCalculator.js'
 
 defineProps({
   currentSite: {
     type: Object,
     required: true,
+  },
+  selectedZone: {
+    type: Object,
+    default: null,
   },
   lastUpdatedAt: {
     type: String,
@@ -21,10 +30,6 @@ defineProps({
   safetyDays: {
     type: Number,
     default: 1,
-  },
-  zoneCount: {
-    type: Number,
-    default: 0,
   },
 })
 
@@ -85,10 +90,17 @@ const emit = defineEmits({
         <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
           <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
             <Trophy class="h-3.5 w-3.5 text-amber-300" />
-            ESG 현장 점수
+            {{ currentSite.shortName }}현장점수
           </p>
-          <p class="mt-2 text-4xl font-black tabular-nums">{{ currentSite.score }}<span class="text-lg text-emerald-100">/100</span></p>
-          <p class="mt-1 text-xs text-emerald-100">Lv.{{ currentSite.level }} 시공 단계</p>
+          <p class="mt-2 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorProgressScore(currentSite.level ?? 0, currentSite.score, { decimals: 1, showMax: true, floorPoint: ESG_SITE_FLOOR_POINT }) }}</p>
+        </div>
+
+        <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
+          <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
+            <Leaf class="h-3.5 w-3.5 text-emerald-200" />
+            {{ selectedZone?.name || '작업구역' }} 구역점수
+          </p>
+          <p class="mt-2 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorProgressScore(selectedZone?.level ?? 0, selectedZone?.score ?? 0, { decimals: 1, showMax: true, floorPoint: ESG_ZONE_FLOOR_POINT }) }}</p>
         </div>
 
         <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
@@ -107,15 +119,6 @@ const emit = defineEmits({
           </p>
           <p class="mt-2 text-4xl font-black tabular-nums">{{ safetyDays }}<span class="text-lg text-emerald-100">일</span></p>
           <p class="mt-1 text-xs text-emerald-100">현장 시작일 기준</p>
-        </div>
-
-        <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
-          <p class="flex items-center gap-1.5 text-[11px] font-bold text-emerald-100">
-            <Target class="h-3.5 w-3.5 text-sky-200" />
-            ESG 관리구역
-          </p>
-          <p class="mt-2 text-4xl font-black tabular-nums">{{ zoneCount }}<span class="text-lg text-emerald-100">곳</span></p>
-          <p class="mt-1 text-xs text-emerald-100">작업구역·상시구역 기준</p>
         </div>
       </div>
     </div>

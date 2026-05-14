@@ -273,7 +273,9 @@ function mapReportToDoc(rp) {
 }
 
 /* ── API 호출 (마운트 시 + 수동 새로고침) ── */
-const API_BASE = 'http://localhost:8080'
+const API_BASE = window.location.hostname === 'localhost'
+    ? 'http://localhost:8080'
+    : 'https://www.dndn24.kro.kr/api'
 const isLoading = ref(false)
 const apiError = ref('')
 
@@ -674,16 +676,23 @@ const submitUpload = async () => {
 /* ───── 파일 다운로드 ───── */
 const downloadFile = async (id, fileName) => {
   try {
+    // 1. 백엔드에서 Presigned URL 받기
     const res = await fetch(`${API_BASE}/document-management/download/${id}`)
+    const json = await res.json()
 
-    if (!res.ok) {
-      throw new Error(`다운로드 실패: ${res.status}`)
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || `다운로드 실패: ${res.status}`)
     }
 
-    // 응답을 Blob(바이너리)으로 받기
-    const blob = await res.blob()
+    const presignedUrl = json.result   // BaseResponse 의 result 필드
 
-    // 임시 다운로드 링크 생성 후 자동 클릭
+    // 2. Presigned URL 로 S3에서 직접 blob 다운로드
+    const fileRes = await fetch(presignedUrl)
+    if (!fileRes.ok) throw new Error(`S3 다운로드 실패: ${fileRes.status}`)
+
+    const blob = await fileRes.blob()
+
+    // 3. 임시 링크로 자동 클릭 (기존 로직 그대로)
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -691,7 +700,6 @@ const downloadFile = async (id, fileName) => {
     document.body.appendChild(a)
     a.click()
 
-    // 정리
     window.URL.revokeObjectURL(url)
     document.body.removeChild(a)
   } catch (e) {
@@ -953,26 +961,28 @@ const generatePdf = async () => {
 }
 
 // 미리보기에서 실제 다운로드 실행
-const downloadPdfFromPreview = () => {
-  if (!pdfBlob.value) return
-  const a = document.createElement('a')
-  const url = URL.createObjectURL(pdfBlob.value)
-  a.href = url
-  a.download = pdfFileName.value || 'document.pdf'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  // download용 임시 URL은 즉시 해제 (미리보기 URL은 유지)
-  URL.revokeObjectURL(url)
+const downloadPdfFromPreview = async () => {
+  if (!pdfPreviewUrl.value) return
+  try {
+    const res = await fetch(pdfPreviewUrl.value)
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = pdfFileName.value || 'document.pdf'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    console.error('다운로드 실패:', e)
+  }
 }
 
 // 미리보기 모달 닫기 (Blob URL 정리)
 const closePdfPreview = () => {
   showPdfPreview.value = false
-  if (pdfPreviewUrl.value) {
-    URL.revokeObjectURL(pdfPreviewUrl.value)
-    pdfPreviewUrl.value = ''
-  }
+  pdfPreviewUrl.value = ''  // ★ revokeObjectURL 제거
   pdfBlob.value = null
   pdfPageLink.value = ''
 }
@@ -1008,14 +1018,12 @@ async function previewDoc(doc) {
 
 // 파일 기반 문서 (시공계획서 등) 미리보기
 async function previewFileDoc(doc) {
-  // WO- / RP- 접두어가 붙은 id는 download API에 보낼 수 없으므로 차단
   const docId = doc.id
   if (typeof docId === 'string' && /^(WO|RP)-/.test(docId)) {
     console.warn('[previewFileDoc] 작업지시서/공사일보는 이 함수로 처리할 수 없습니다:', docId)
     return
   }
 
-  // 파일이 서버에 없는 경우 안내 (fileUrl을 알 수 있을 때만 체크)
   if (doc.fileUrl && doc.fileUrl.startsWith('dummy')) {
     alert('이 문서는 아직 파일이 등록되지 않아 미리보기가 불가합니다.')
     return
@@ -1025,39 +1033,30 @@ async function previewFileDoc(doc) {
   try {
     console.log('[previewFileDoc] download URL:', `${API_BASE}/document-management/download/${docId}`)
 
-    const res = await fetch(`${API_BASE}/document-management/download/${docId}`)
+    // ★ 변경: Presigned URL 받아서 S3에서 blob 가져오기
+    const res = await fetch(`${API_BASE}/document-management/preview/${docId}`)
+    const json = await res.json()
 
-    if (!res.ok) throw new Error(`파일 로드 실패: ${res.status}`)
+    console.log('[preview 응답]', json)
 
-    const blob = await res.blob()
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || `파일 로드 실패: ${res.status}`)
+    }
+
     const fileName = doc.fileName || 'document'
-
-    // PDF 파일인지 확인 (확장자 기반)
     const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : ''
     const isPdf = ext === 'pdf'
 
     if (isPdf) {
-      // PDF → 미리보기 모달에 iframe으로 표시
-      if (pdfPreviewUrl.value) {
-        URL.revokeObjectURL(pdfPreviewUrl.value)
-      }
-      // blob을 PDF 타입으로 재생성 (백엔드가 octet-stream으로 보내므로)
-      const pdfBlob2 = new Blob([blob], { type: 'application/pdf' })
-      pdfBlob.value = pdfBlob2
-      pdfPreviewUrl.value = URL.createObjectURL(pdfBlob2)
+      // ★ blob 변환 없이 presigned URL 직접 iframe에 넣기
+      pdfPreviewUrl.value = json.data
+      pdfBlob.value = null
       pdfFileName.value = fileName
       pdfPageLink.value = ''
       showPdfPreview.value = true
     } else {
-      // PDF가 아닌 파일(xlsx 등) → 바로 다운로드
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = fileName
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      // PDF 아닌 파일은 그냥 새 탭으로 열기
+      window.open(json.result, '_blank')
     }
   } catch (e) {
     console.error('[파일 미리보기 오류]', e)
@@ -1069,11 +1068,32 @@ async function previewFileDoc(doc) {
 
 // 다운로드 버튼 클릭 핸들러 — 미리보기를 먼저 띄우고 모달에서 다운로드
 async function handleDownload(doc) {
-  // 먼저 미리보기 모달을 띄움 (PDF 생성 or 서버에서 파일 로드)
-  await previewDoc(doc)
-  // pdfFileName을 doc.fileName으로 맞춰줌 (원래 파일명으로 다운로드)
-  if (pdfBlob.value && doc.fileName) {
-    pdfFileName.value = doc.fileName
+  try {
+    // 1. presigned URL 받기 (download = attachment)
+    const res = await fetch(`${API_BASE}/document-management/download/${doc.id}`)
+    const json = await res.json()
+
+    if (!res.ok || !json.success) {
+      throw new Error(json.message || `다운로드 실패: ${res.status}`)
+    }
+
+    // 2. blob으로 받아서 바로 다운로드
+    const fileRes = await fetch(json.data)
+    if (!fileRes.ok) throw new Error(`S3 다운로드 실패: ${fileRes.status}`)
+
+    const blob = await fileRes.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = doc.fileName || 'download'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+  } catch (e) {
+    console.error('[다운로드 오류]', e)
+    alert(`다운로드 중 오류가 발생했습니다.\n${e.message}`)
   }
 }
 

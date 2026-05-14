@@ -10,6 +10,14 @@ defineProps({
     type: Number,
     default: 0,
   },
+  activeFloorPoint: {
+    type: Number,
+    default: 0,
+  },
+  activeFloorScoreLabel: {
+    type: String,
+    default: '0층 0.0점',
+  },
   nextLevelPoint: {
     type: [Number, String],
     default: 0,
@@ -26,13 +34,13 @@ defineProps({
 </script>
 
 <template>
-  <article class="flex h-full min-h-[720px] flex-col overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-card">
+  <article class="flex h-full min-h-[640px] flex-col overflow-hidden rounded-2xl border border-emerald-100 bg-white shadow-card min-[1440px]:h-[680px] min-[1440px]:min-h-0">
     <div class="flex items-start justify-between gap-3 border-b border-emerald-100 bg-gradient-to-r from-emerald-50 to-white px-5 py-4">
       <div>
         <h2 class="text-xl font-black text-forena-900">ESG 빌딩 성장</h2>
       </div>
       <span class="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-black text-emerald-700">
-        Lv.{{ activeLevel }}
+        {{ activeLevel }}층
       </span>
     </div>
 
@@ -42,7 +50,7 @@ defineProps({
         <div class="absolute inset-x-10 top-20 h-px border-t border-dashed border-slate-200" />
         <div class="absolute inset-x-12 top-32 h-px border-t border-dashed border-slate-200" />
         <span class="absolute right-7 top-6 z-10 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-600 text-center text-sm font-black leading-4 text-white shadow-xl ring-4 ring-white">
-          Lv.<br />{{ activeLevel }}
+          {{ activeLevel }}층
         </span>
 
         <div class="absolute bottom-9 left-1/2 w-48 -translate-x-1/2">
@@ -78,7 +86,7 @@ defineProps({
       <div class="mt-4 text-center">
         <h3 class="text-xl font-black text-forena-900">시공 단계</h3>
         <p class="mt-2 text-sm font-medium text-forena-600">
-          현재 점수 <span class="font-black text-emerald-700">{{ activeScore }}</span>점 · 다음 레벨까지
+          구역 누적 <span class="font-black text-emerald-700">{{ activeFloorScoreLabel }}</span> · 다음 층까지
           <span class="font-black text-emerald-700">{{ nextLevelPoint }}</span>점 남음
         </p>
       </div>
@@ -90,9 +98,9 @@ defineProps({
       <div class="mt-auto rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
         <p class="flex items-center gap-2 text-sm font-black text-emerald-900">
           <Sparkles class="h-4 w-4" />
-          레벨업 가이드
+          층수 성장 가이드
         </p>
-        <p class="mt-1 text-xs leading-6 text-emerald-700">
+        <p class="mt-1 break-keep text-xs leading-5 text-emerald-700 min-[1440px]:leading-6">
           중장비 공회전을 낮추고 탄소 배출을 줄이면 다음 층이 올라갑니다.
         </p>
       </div>
