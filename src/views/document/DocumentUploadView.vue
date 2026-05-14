@@ -275,7 +275,7 @@ function mapReportToDoc(rp) {
 /* ── API 호출 (마운트 시 + 수동 새로고침) ── */
 const API_BASE = window.location.hostname === 'localhost'
     ? 'http://localhost:8080'
-    : 'https://dndn24.kro.kr/api'
+    : 'https://www.dndn24.kro.kr/api'
 const isLoading = ref(false)
 const apiError = ref('')
 
