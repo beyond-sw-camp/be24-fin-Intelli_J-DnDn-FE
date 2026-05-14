@@ -38,12 +38,28 @@ api.interceptors.response.use(
     return body
   },
   (error) => {
-    const message =
-      error.response?.data?.message ||
-      error.response?.data?.error ||
-      error.message ||
-      '서버와의 통신 중 오류가 발생했습니다.'
-    return Promise.reject(new Error(message))
+    const status = error.response?.status ?? null
+    const responseAvailable = Boolean(error.response)
+
+    let message
+    if (status === 401 || status === 403) {
+      message = '권한이 없습니다. 데모 계정이 아니라 실제 서버 계정으로 다시 로그인해 주세요.'
+    } else {
+      message =
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        '서버와의 통신 중 오류가 발생했습니다.'
+    }
+
+    const wrapped = new Error(message)
+    /** HTTP status code (있을 때만, 네트워크 오류면 null). */
+    wrapped.status = status
+    /** 서버가 응답을 돌려줬는지 여부. false 이면 네트워크/타임아웃 추정. */
+    wrapped.responseAvailable = responseAvailable
+    /** 백엔드 BaseResponse 의 code (3201, 3202 등) — 가능하면 보존. */
+    wrapped.responseCode = error.response?.data?.code ?? null
+    return Promise.reject(wrapped)
   },
 )
 

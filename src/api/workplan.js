@@ -42,12 +42,20 @@ const toPlan = (dto) => {
     start: dto.startDate,
     end: dto.endDate,
     actualStart: dto.actualStart || null,
-    actualPct: dto.actualPct ?? dto.actualProgress ?? null,
-    progressPct: dto.progressPct ?? dto.progress ?? null,
-    processProgress: dto.processProgress ?? null,
+    effectiveEnd: dto.effectiveEnd || dto.endDate || null,
+    actualPct:
+      dto.actualPct ??
+      dto.actualProgressPct ??
+      dto.monthlyProgressPct ??
+      dto.actualProgress ??
+      null,
+    progressPct: dto.progressPct ?? dto.progress ?? dto.actualProgressPct ?? null,
+    processProgress: dto.processProgress ?? dto.actualProgressPct ?? null,
     requiredCount: dto.requiredCount ?? 0,
     workers: normalizeStringList(dto.workers),
     equipment: normalizeStringList(dto.equipment),
+    workersDisplay: dto.workersDisplay ?? dto.workers_display ?? '',
+    equipmentDisplay: dto.equipmentDisplay ?? dto.equipment_display ?? '',
     partner: dto.partner || dto.partnerName || dto.partnerCompany || weeklyInfo.partner || '',
     manager: dto.manager || dto.managerName || dto.managerNm || weeklyInfo.manager || '',
     contact: dto.contact || dto.contactPhone || dto.managerContact || weeklyInfo.contact || '',
@@ -170,4 +178,11 @@ export const startWorkPlan = (planId) => {
  */
 export const deleteWorkPlan = (planId) => {
   return api.delete(`${PATH}/${planId}`)
+}
+
+export const fetchWorkPlansByProject = async (projectId, options = {}) => {
+  const params = {}
+  if (options.includeAllTrades) params.includeAllTrades = true
+  const dtos = await api.get(`${PATH}/project/${projectId}`, { params })
+  return Array.isArray(dtos) ? dtos.map(toPlan) : []
 }

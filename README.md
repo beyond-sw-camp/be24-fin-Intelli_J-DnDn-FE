@@ -1,39 +1,31 @@
-# hanwha
+# be24-fin-Intelli_J-DnDn-FE
 
-This template should help get you started developing with Vue 3 in Vite.
 
-## Recommended IDE Setup
+### 🛠 무중단 배포 전략 (Blue/Green)
 
-[VS Code](https://code.visualstudio.com/) + [Vue (Official)](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur).
+건설 현장의 실시간 공정 관리 및 공사일보 작성을 지원하는 **dndn** 서비스의 고가용성을 위해 **Blue/Green 무중단 배포** 방식을 채택하였습니다.
+이를 통해 새로운 기능 배포 중에도 현장 업무의 연속성을 완벽하게 보장합니다.
 
-## Recommended Browser Setup
+<details>
+<summary>🎬 Sequence.01.mp4</summary>
+<br />
 
-- Chromium-based browsers (Chrome, Edge, Brave, etc.):
-  - [Vue.js devtools](https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
-  - [Turn on Custom Object Formatter in Chrome DevTools](http://bit.ly/object-formatters)
-- Firefox:
-  - [Vue.js devtools](https://addons.mozilla.org/en-US/firefox/addon/vue-js-devtools/)
-  - [Turn on Custom Object Formatter in Firefox DevTools](https://fxdx.dev/firefox-devtools-custom-object-formatters/)
+| 무중단 배포 전환 테스트 |
+| :--- |
+| <video src="https://github.com/user-attachments/assets/cce7ef7b-47be-46a5-b4a5-2defe1740e63" width="100%" controls></video> |
 
-## Customize configuration
+</details>
 
-See [Vite Configuration Reference](https://vite.dev/config/).
+#### 1. 도입 배경
+- **업무 연속성 보장:** 공사일보 작성 및 작업 지시서(Work Order) 전달 중 서비스가 중단되면 데이터 유실 및 현장 혼선이 발생할 수 있습니다.
+- **Zero Downtime:** 다수의 현장 관계자가 실시간으로 접속하므로 배포를 위한 다운타임을 허용하지 않습니다.
 
-## Project Setup
+#### 2. 동작 프로세스
+1. **배포 준비:** 현재 운영 중인 슬롯(**Green**)은 실시간 트래픽을 처리합니다.
+2. **신규 배포:** 새 버전의 애플리케이션을 비활성 슬롯(**Blue**)에 배포합니다.
+3. **검증 및 전환:** **Blue** 슬롯의 헬스체크(Health Check)가 성공하면, Service(Load Balancer)가 트래픽을 **Blue**로 즉시 전환합니다.
+4. **자원 최적화:** 전환이 완료된 후 이전 슬롯(**Green**)은 자동으로 스케일 다운(Scale down)되어 자원을 회수합니다.
 
-```sh
-npm install
-```
-
-### Compile and Hot-Reload for Development
-
-```sh
-npm run dev
-```
-
-### Compile and Minify for Production
-
-```sh
-npm run build
-```
-# dndn-front-test
+#### 3. 검증 결과
+- **Backend 무중단 전환 검증:** 배포 과정 중 서비스 중단 여부를 확인하기 위해 `curl` 명령어를 0.1초 간격으로 반복 호출하여 응답 상태를 모니터링했습니다.
+- **결과:** 신규 버전 배포 및 전환 시점에도 유실 없이 정상 응답 확인
