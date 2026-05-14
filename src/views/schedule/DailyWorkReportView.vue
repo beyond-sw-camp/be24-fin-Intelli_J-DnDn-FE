@@ -53,6 +53,15 @@ const processOptions = computed(() =>
 )
 
 const selectedDate = ref(todayStr())
+
+const dateInputRef = ref(null) // HTML의 input 태그를 가리킬 변수
+
+function openDatePicker() {    // 달력을 강제로 여는 함수
+  if (dateInputRef.value && typeof dateInputRef.value.showPicker === 'function') {
+    dateInputRef.value.showPicker()
+  }
+}
+
 function prevDay() {
   selectedDate.value = addDays(selectedDate.value, -1)
 }
@@ -647,11 +656,21 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         >
           <ChevronLeft class="h-3.5 w-3.5" />
         </button>
-        <input
-          type="date"
-          v-model="selectedDate"
-          class="rounded-md border border-forena-200 bg-white px-2 py-1 text-xs font-semibold tabular-nums text-forena-800 outline-none focus:border-flare-400"
-        />
+        <div class="relative flex items-center">
+  <button
+    @click="openDatePicker"
+    class="rounded-md border border-forena-200 bg-white px-3 py-1.5 text-xs font-bold tabular-nums text-forena-800 hover:bg-forena-50 transition min-w-[140px]"
+  >
+     {{ fmtKor(selectedDate) }}
+  </button>
+  
+  <input
+    type="date"
+    ref="dateInputRef"
+    v-model="selectedDate"
+    class="absolute left-1/2 top-1/2 -z-10 h-0 w-0 opacity-0 cursor-pointer"
+  />
+</div>
         <button
           @click="nextDay"
           class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 hover:bg-forena-50"
@@ -672,9 +691,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
         </button>
       </div>
 
-      <span class="text-xs font-semibold text-forena-700 tabular-nums">{{
-        fmtKor(selectedDate)
-      }}</span>
+      <span class="text-xs font-semibold text-forena-400 tabular-nums">
+         오늘:  {{ fmtKor(todayStr()) }}
+      </span>
 
       <div class="ml-auto flex items-center gap-2">
         <span

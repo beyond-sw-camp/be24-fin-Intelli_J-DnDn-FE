@@ -11,11 +11,15 @@ defineProps({
     type: Array,
     default: () => [],
   },
+  isFutureReportDate: {
+    type: Boolean,
+    default: false,
+  },
 })
 </script>
 
 <template>
-  <div class="flex h-[588px] flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
+  <div class="flex min-h-[540px] flex-col overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card min-[1760px]:h-[588px]">
     <div class="border-b border-forena-100 bg-gradient-to-r from-violet-50/70 via-white to-rose-50/60 px-5 py-3">
       <div class="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -65,6 +69,10 @@ defineProps({
           </div>
         </div>
 
+        <p v-else-if="isFutureReportDate" class="flex flex-1 items-center justify-center px-4 text-center text-sm font-medium leading-6 text-slate-600">
+          미래 날짜는 저장된 기상 예보만 제공되며, 작업계획 AI 대조는 제공되지 않습니다.
+        </p>
+
         <p v-else class="flex flex-1 items-center justify-center text-sm font-medium text-slate-600">
           현재 계획 연동 위험은 감지되지 않았습니다.
         </p>
@@ -101,6 +109,10 @@ defineProps({
             </p>
           </div>
         </div>
+
+        <p v-else-if="isFutureReportDate" class="flex flex-1 items-center justify-center px-4 text-center text-sm font-medium leading-6 text-slate-600">
+          미래 날짜는 저장된 기상 예보만 제공되며, 장비 AI 대조는 제공되지 않습니다.
+        </p>
 
         <p v-else class="flex flex-1 items-center justify-center text-sm font-medium text-slate-600">
           현재 장비 통제 위험은 감지되지 않았습니다.

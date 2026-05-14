@@ -50,8 +50,9 @@ const isEquipmentLoading = ref(false)
 const draggingGateId = ref(null)
 
 const blueprintInputRef = ref(null)
+const DEFAULT_BLUEPRINT_ASPECT_RATIO = '16 / 10'
 const customBlueprint = ref(null)
-const blueprintAspectRatio = ref('16 / 10')
+const blueprintAspectRatio = ref(DEFAULT_BLUEPRINT_ASPECT_RATIO)
 const blueprintZoom = ref(1)
 
 const activeBlueprint = computed(() => customBlueprint.value || siteLayout)
@@ -304,10 +305,35 @@ function toggleAddMode() {
   isAddMode.value = !isAddMode.value
 }
 
+function applyBlueprintAspectRatio(imageSource) {
+  if (!imageSource || typeof Image === 'undefined') {
+    blueprintAspectRatio.value = DEFAULT_BLUEPRINT_ASPECT_RATIO
+    return
+  }
+
+  const image = new Image()
+  image.onload = () => {
+    if (!image.naturalWidth || !image.naturalHeight) {
+      blueprintAspectRatio.value = DEFAULT_BLUEPRINT_ASPECT_RATIO
+      return
+    }
+
+    blueprintAspectRatio.value = `${image.naturalWidth} / ${image.naturalHeight}`
+  }
+  image.onerror = () => {
+    blueprintAspectRatio.value = DEFAULT_BLUEPRINT_ASPECT_RATIO
+  }
+  image.src = imageSource
+}
+
 function loadBlueprintFromStorage() {
   try {
     const saved = window.localStorage.getItem(BLUEPRINT_STORAGE_KEY)
-    if (saved) customBlueprint.value = saved
+    if (saved) {
+      customBlueprint.value = saved
+      blueprintZoom.value = 1
+      applyBlueprintAspectRatio(saved)
+    }
   } catch (error) {
     console.error(error)
   }
@@ -340,6 +366,7 @@ function handleBlueprintUpload(event) {
 
     customBlueprint.value = dataUrl
     blueprintZoom.value = 1
+    applyBlueprintAspectRatio(dataUrl)
 
     try {
       window.localStorage.setItem(BLUEPRINT_STORAGE_KEY, dataUrl)
@@ -354,6 +381,7 @@ function handleBlueprintUpload(event) {
 function resetBlueprint() {
   customBlueprint.value = null
   blueprintZoom.value = 1
+  blueprintAspectRatio.value = DEFAULT_BLUEPRINT_ASPECT_RATIO
 
   try {
     window.localStorage.removeItem(BLUEPRINT_STORAGE_KEY)
