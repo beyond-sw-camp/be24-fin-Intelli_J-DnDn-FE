@@ -1,6 +1,5 @@
 <script setup>
-import { ArrowUpRight, Medal } from 'lucide-vue-next'
-import { formatEsgFloorScore } from '@/utils/esg/esgScoreCalculator.js'
+import { ArrowUpRight, Award, Medal, Trophy } from 'lucide-vue-next'
 
 defineProps({
   currentSite: {
@@ -18,6 +17,19 @@ function levelTone(level) {
   if (level === '주의' || level === '관리' || level === '대기') return 'bg-amber-100 text-amber-800 border-amber-200'
   return 'bg-emerald-100 text-emerald-800 border-emerald-200'
 }
+
+function rankBadgeClass(rank) {
+  if (rank === 1) return 'rounded-full border-amber-200 bg-amber-50 text-amber-800'
+  if (rank === 2) return 'rounded-xl border-slate-200 bg-slate-100 text-slate-700'
+  if (rank === 3) return 'rounded-lg border-orange-200 bg-orange-50 text-orange-800'
+  return 'rounded-md border-forena-100 bg-forena-50 text-forena-700'
+}
+
+function rankIcon(rank) {
+  if (rank === 1) return Trophy
+  if (rank === 2) return Award
+  return Medal
+}
 </script>
 
 <template>
@@ -29,7 +41,7 @@ function levelTone(level) {
       </div>
       <span class="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
         <ArrowUpRight class="h-3.5 w-3.5" />
-        {{ currentSite.snapshotSaved ? `${currentSite.shortName} 현장 ESG 스냅샷 반영` : `${currentSite.shortName} 현장 ESG 계산 결과` }}
+        {{ currentSite.snapshotSaved ? `${currentSite.shortName} 저장된 ESG 기록 기준` : `${currentSite.shortName} 실시간 ESG 계산 기준` }}
       </span>
     </div>
 
@@ -52,8 +64,8 @@ function levelTone(level) {
             class="border-b border-forena-50 transition hover:bg-forena-50/40"
           >
             <td class="py-3 pr-4">
-              <span class="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">
-                <Medal class="h-3 w-3" />
+              <span class="inline-flex items-center gap-1 border px-2 py-1 text-[11px] font-bold" :class="rankBadgeClass(zone.rank)">
+                <component :is="rankIcon(zone.rank)" class="h-3 w-3" />
                 {{ zone.rank }}위
               </span>
             </td>
@@ -61,14 +73,14 @@ function levelTone(level) {
               <p class="font-bold text-forena-900">{{ zone.name }}</p>
               <p class="mt-0.5 text-[11px] text-forena-500">{{ zone.type }}</p>
             </td>
-            <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ formatEsgFloorScore(zone.score, { decimals: 1, showMax: true }) }}</td>
+            <td class="py-3 pr-4 font-black tabular-nums text-emerald-800">{{ zone.score }}</td>
             <td class="py-3 pr-4">
               <span class="rounded-full border border-forena-200 bg-white px-2 py-0.5 text-[11px] font-bold text-forena-700">
-                {{ zone.level }}층
+                Lv.{{ zone.level }}
               </span>
             </td>
             <td class="py-3 pr-4 text-xs text-forena-600">
-              탄소 {{ zone.carbon }}kg · 전력 {{ zone.powerSaving }}kWh · 리스크 {{ zone.risk }}건
+              탄소 {{ zone.carbon }}kg · 세척수 {{ zone.metrics?.estimatedWashWaterLiters ?? 0 }}L · 리스크 {{ zone.risk }}건
             </td>
             <td class="py-3 text-right">
               <span class="rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="levelTone(zone.status)">
