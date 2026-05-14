@@ -1,9 +1,9 @@
 <script setup>
-import { Factory, Leaf, RefreshCw, ShieldCheck, Trophy } from 'lucide-vue-next'
+import { CalendarDays, Factory, Leaf, RefreshCw, ShieldCheck, Trophy } from 'lucide-vue-next'
 import {
   ESG_SITE_FLOOR_POINT,
   ESG_ZONE_FLOOR_POINT,
-  formatEsgFloorScore,
+  formatEsgFloorProgressScore,
 } from '@/utils/esg/esgScoreCalculator.js'
 
 defineProps({
@@ -72,6 +72,7 @@ const emit = defineEmits({
               <p class="text-[10px] font-bold text-emerald-100">기준 일자</p>
               <input v-model="reportDate" type="date" class="mt-1 bg-transparent text-sm font-black text-white focus:outline-none" />
             </div>
+            <CalendarDays class="h-4 w-4 text-emerald-100" />
           </label>
           <button
             type="button"
@@ -91,7 +92,7 @@ const emit = defineEmits({
             <Trophy class="h-3.5 w-3.5 text-amber-300" />
             {{ currentSite.shortName }}현장점수
           </p>
-          <p class="mt-4 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorScore(currentSite.score, { decimals: 1, showMax: true, floorPoint: ESG_SITE_FLOOR_POINT }) }}</p>
+          <p class="mt-2 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorProgressScore(currentSite.level ?? 0, currentSite.score, { decimals: 1, showMax: true, floorPoint: ESG_SITE_FLOOR_POINT }) }}</p>
         </div>
 
         <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
@@ -99,7 +100,7 @@ const emit = defineEmits({
             <Leaf class="h-3.5 w-3.5 text-emerald-200" />
             {{ selectedZone?.name || '작업구역' }} 구역점수
           </p>
-          <p class="mt-4 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorScore(selectedZone?.score ?? 0, { decimals: 1, showMax: true, floorPoint: ESG_ZONE_FLOOR_POINT }) }}</p>
+          <p class="mt-2 text-[28px] font-black leading-tight tabular-nums">{{ formatEsgFloorProgressScore(selectedZone?.level ?? 0, selectedZone?.score ?? 0, { decimals: 1, showMax: true, floorPoint: ESG_ZONE_FLOOR_POINT }) }}</p>
         </div>
 
         <div class="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">

@@ -1,6 +1,10 @@
 <script setup>
 import { Target, Trophy } from 'lucide-vue-next'
-import { ESG_SITE_FLOOR_POINT, formatEsgFloorScoreCompact, getEsgFloorProgress } from '@/utils/esg/esgScoreCalculator.js'
+import {
+  ESG_SITE_FLOOR_POINT,
+  formatEsgFloorProgressScoreCompact,
+  getEsgFloorProgressByPoint,
+} from '@/utils/esg/esgScoreCalculator.js'
 
 defineProps({
   currentSiteRank: {
@@ -70,10 +74,10 @@ defineProps({
             </div>
             <p class="mt-0.5 text-[11px] text-forena-500">{{ item.address }}</p>
           </div>
-          <p class="text-lg font-black tabular-nums text-emerald-800">{{ formatEsgFloorScoreCompact(item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT) }}</p>
+          <p class="text-lg font-black tabular-nums text-emerald-800">{{ formatEsgFloorProgressScoreCompact(item.snapshotSaved ? item.level : 0, item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT) }}</p>
         </div>
         <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
-          <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${getEsgFloorProgress(item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT)}%` }" />
+          <div class="h-full rounded-full bg-emerald-500" :style="{ width: `${getEsgFloorProgressByPoint(item.snapshotSaved ? item.score : 0, ESG_SITE_FLOOR_POINT)}%` }" />
         </div>
       </div>
     </div>

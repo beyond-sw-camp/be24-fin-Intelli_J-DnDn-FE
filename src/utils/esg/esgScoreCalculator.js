@@ -2,6 +2,7 @@ export const LEVEL_THRESHOLDS = [0, 30, 50, 65, 78, 88, 95, 100]
 export const ESG_SITE_FLOOR_POINT = 300
 export const ESG_ZONE_FLOOR_POINT = 500
 export const ESG_FLOOR_POINT = ESG_SITE_FLOOR_POINT
+export const WHEEL_WASH_REPLENISHMENT_LITERS_PER_EQUIPMENT = 3
 export const ESG_CATEGORY_WEIGHTS = Object.freeze({ E: 50, S: 30, G: 20 })
 export const ESG_METRIC_CARD_WEIGHTS = Object.freeze([40, 30, 20, 10])
 
@@ -16,15 +17,6 @@ export const HIGH_RISK_EQUIPMENT_KEYWORDS = [
   '굴착기',
 ]
 
-export const WASH_TARGET_EQUIPMENT_KEYWORDS = [
-  '덤프트럭',
-  '굴착기',
-  '펌프카',
-  '콘크리트펌프카',
-  '카고트럭',
-  '지게차',
-  '로더',
-]
 
 export const DUST_WORK_KEYWORDS = [
   '굴착',
@@ -78,6 +70,63 @@ export function normalizeCumulativeScore(value) {
   const score = Number(value)
   if (!Number.isFinite(score)) return 0
   return Math.max(0, Math.round(score * 10) / 10)
+}
+
+export function normalizeFloorLevel(value) {
+  const level = Number(value)
+  if (!Number.isFinite(level)) return 0
+  return Math.max(0, Math.floor(level))
+}
+
+export function normalizeFloorProgressPoint(score, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeScore = normalizeCumulativeScore(score)
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.round((safeScore % safeFloorPoint) * 10) / 10
+}
+
+export function getEsgFloorAbsoluteScore(level, pointScore, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const safeLevel = normalizeFloorLevel(level)
+  const safePointScore = normalizeFloorProgressPoint(pointScore, safeFloorPoint)
+  return Math.round(((safeLevel * safeFloorPoint) + safePointScore) * 10) / 10
+}
+
+export function getEsgFloorProgressByPoint(pointScore, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  return Math.min(100, Math.round((normalizeFloorProgressPoint(pointScore, safeFloorPoint) / safeFloorPoint) * 100))
+}
+
+export function getNextEsgFloorPointByPoint(pointScore, floorPoint = ESG_SITE_FLOOR_POINT) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const safePointScore = normalizeFloorProgressPoint(pointScore, safeFloorPoint)
+  return Math.round((safeFloorPoint - safePointScore) * 10) / 10
+}
+
+export function formatEsgFloorProgressScore(
+  level,
+  pointScore,
+  { decimals = 1, showMax = false, floorPoint = ESG_SITE_FLOOR_POINT } = {},
+) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const safeLevel = normalizeFloorLevel(level)
+  const safePointScore = normalizeFloorProgressPoint(pointScore, safeFloorPoint)
+  const pointText = Number(safePointScore.toFixed(decimals)).toLocaleString('ko-KR', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })
+  const suffix = showMax ? ` / ${safeFloorPoint}점` : ''
+  return `${safeLevel}층 ${pointText}점${suffix}`
+}
+
+export function formatEsgFloorProgressScoreCompact(
+  level,
+  pointScore,
+  floorPoint = ESG_SITE_FLOOR_POINT,
+) {
+  const safeFloorPoint = normalizeFloorPoint(floorPoint)
+  const safeLevel = normalizeFloorLevel(level)
+  const safePointScore = Math.round(normalizeFloorProgressPoint(pointScore, safeFloorPoint))
+  return `${safeLevel}층${safePointScore}점`
 }
 
 function normalizeFloorPoint(value, fallback = ESG_SITE_FLOOR_POINT) {
@@ -152,6 +201,7 @@ function resolveMetricInput(context = {}) {
 
 function firstFiniteNumber(...values) {
   for (const value of values) {
+    if (value === null || value === undefined || value === '') continue
     const number = Number(value)
     if (Number.isFinite(number)) return number
   }
@@ -169,7 +219,7 @@ export function buildEsgMetrics(equipments, context = {}) {
   const actionTrackingRate = Number.isFinite(context.actionTrackingRate) ? Number(context.actionTrackingRate) : null
   const dataLinkRate = Number.isFinite(context.dataLinkRate) ? Number(context.dataLinkRate) : null
   const safetyDays = Number.isFinite(context.safetyDays) ? Number(context.safetyDays) : 1
-  const workerMetrics = buildWorkerMetrics(context.workers, context.staffingWorkers, context.zoneName)
+  const workerMetrics = buildWorkerMetrics(context.workers, context.staffingWorkers, context.staffingZones, context.zoneName)
 
   const totalEquipmentCount = equipmentList.reduce((sum, equipment) => {
     return sum + normalizeCount(equipment.equipmentCount)
@@ -178,10 +228,7 @@ export function buildEsgMetrics(equipments, context = {}) {
     if (!isHighRiskEquipment(equipment.equipmentName)) return sum
     return sum + normalizeCount(equipment.equipmentCount)
   }, 0)
-  const washTargetCount = equipmentList.reduce((sum, equipment) => {
-    if (!isWashTargetEquipment(equipment.equipmentName)) return sum
-    return sum + normalizeCount(equipment.equipmentCount)
-  }, 0)
+  const washTargetCount = totalEquipmentCount
   const carbonLoadIndex = roundOne(equipmentList.reduce((sum, equipment) => {
     return sum + getEquipmentCarbonFactor(equipment.equipmentName) * normalizeCount(equipment.equipmentCount)
   }, 0))
@@ -193,32 +240,68 @@ export function buildEsgMetrics(equipments, context = {}) {
       .map((equipment) => equipment.gateIdx)
       .filter((gateIdx) => gateIdx !== null && gateIdx !== undefined),
   ).size
-  const dustWorkCount = equipmentList.reduce((sum, equipment) => {
-    const mergedText = `${equipment.workDetail ?? ''} ${equipment.title ?? ''} ${equipment.equipmentName ?? ''}`
-    if (!containsAny(mergedText, DUST_WORK_KEYWORDS)) return sum
-    return sum + normalizeCount(equipment.equipmentCount)
-  }, 0)
+  const gateEquipmentCounts = equipmentList.reduce((counts, equipment) => {
+    const gateIdx = equipment.gateIdx
+    if (gateIdx === null || gateIdx === undefined || gateIdx === '') {
+      return counts
+    }
+
+    const key = String(gateIdx)
+    counts.set(key, (counts.get(key) ?? 0) + normalizeCount(equipment.equipmentCount))
+    return counts
+  }, new Map())
+  const assignedGateEquipmentCount = Array.from(gateEquipmentCounts.values()).reduce((sum, count) => sum + count, 0)
+  const maxGateEquipmentCount = Math.max(0, ...Array.from(gateEquipmentCounts.values()))
+  const gateConcentrationRate = assignedGateEquipmentCount
+    ? Math.round((maxGateEquipmentCount / assignedGateEquipmentCount) * 100)
+    : 0
+  const idealGateShare = gateCount > 0 ? 100 / gateCount : 100
+  const singleGatePenalty = gateCount <= 1 && assignedGateEquipmentCount >= 4
+    ? Math.min(40, (assignedGateEquipmentCount - 3) * 5)
+    : 0
+  const gateImbalancePenalty = gateCount >= 2
+    ? Math.max(0, gateConcentrationRate - idealGateShare - 15) * 0.8
+    : 0
+  const gateCongestionRisk = clampNumber(
+    Math.round((singleGatePenalty + gateImbalancePenalty) / 10),
+    0,
+    10,
+  )
+  const idleReductionScore = clampScore(100 - singleGatePenalty - gateImbalancePenalty)
+  const dustWorkCount = buildDustWorkCount(equipmentList)
 
   const rainPercent = Number(analysis.precipitationProbability ?? 0)
   const windSpeed = Number(analysis.maxWindSpeed ?? 0)
   const fineDustValue = Number(firstFiniteNumber(metricInput.fineDustValue, airQuality.value, analysis.fineDustValue) ?? 0)
-  const weatherFactor = 1
-    + (fineDustValue >= 80 ? 0.2 : 0)
-    + (rainPercent >= 60 ? 0.2 : 0)
-  const actualWashWaterLiters = firstFiniteNumber(metricInput.washWaterLiters, context.actualWashWaterLiters)
-  const estimatedWashWaterLiters = actualWashWaterLiters !== null
-    ? Math.round(actualWashWaterLiters)
-    : Math.round(washTargetCount * 120 * weatherFactor)
-  const actualWastewaterLiters = firstFiniteNumber(metricInput.wastewaterLiters, context.actualWastewaterLiters)
-  const wastewaterRecoveryRate = firstFiniteNumber(metricInput.wastewaterRecoveryRate, context.wastewaterRecoveryRate)
-  const wastewaterRisk = actualWastewaterLiters !== null
-    ? clampNumber(Math.round(actualWastewaterLiters / 120 + (wastewaterRecoveryRate !== null ? Math.max(0, 100 - wastewaterRecoveryRate) / 20 : 0)), 0, 10)
-    : clampNumber(
-      Math.round(washTargetCount * 0.9 + (rainPercent >= 60 ? 2 : 0) + (fineDustValue >= 80 ? 1 : 0)),
-      0,
-      10,
-    )
+  const estimatedWashWaterLiters = Math.round(
+    washTargetCount * WHEEL_WASH_REPLENISHMENT_LITERS_PER_EQUIPMENT,
+  )
+  const washWaterDemandRisk = clampNumber(
+    Math.round(
+      washTargetCount * 0.55
+        + (rainPercent >= 60 ? 1 : 0)
+        + (fineDustValue >= 80 ? 1 : 0),
+    ),
+    0,
+    10,
+  )
   const fineDustRiskLevel = fineDustValue >= 151 ? 4 : fineDustValue >= 81 ? 3 : fineDustValue >= 31 ? 1 : 0
+  const complaintCount = Math.max(0, Math.round(firstFiniteNumber(metricInput.complaintCount, context.complaintCount) ?? 0))
+  const complaintResolvedCount = Math.max(0, Math.round(firstFiniteNumber(metricInput.complaintResolvedCount, context.complaintResolvedCount) ?? 0))
+  const validComplaintResolvedCount = Math.min(complaintCount, complaintResolvedCount)
+  const unresolvedComplaintCount = Math.max(0, complaintCount - validComplaintResolvedCount)
+  const complaintResolutionRate = complaintCount > 0
+    ? clampScore((validComplaintResolvedCount / complaintCount) * 100)
+    : 100
+  const complaintRisk = clampNumber(
+    Math.round(
+      unresolvedComplaintCount * 1.5
+        + complaintCount * 0.35
+        + fineDustRiskLevel * 0.8,
+    ),
+    0,
+    10,
+  )
   const powerPeakRisk = clampNumber(
     Math.round(
       gateCount * 0.8
@@ -239,14 +322,14 @@ export function buildEsgMetrics(equipments, context = {}) {
     : (totalEquipmentCount > 0 ? Math.max(0, Math.round(42 + gateCount * 7 + Math.max(0, 10 - powerPeakRisk) * 3)) : 0)
 
   const carbonScore = clampScore(100 - Math.min(40, carbonLoadIndex * 4))
-  const waterScore = clampScore(100 - Math.min(35, wastewaterRisk * 3.5))
+  const waterScore = clampScore(100 - Math.min(35, washWaterDemandRisk * 3.5))
   const fineDustScore = clampScore(100 - fineDustRiskLevel * 12 - dustWorkCount * 2)
   const powerScore = clampScore(100 - Math.min(25, powerPeakRisk * 2.5))
   const environmentScore = buildWeightedMetricScore([
     carbonScore,
     waterScore,
     fineDustScore,
-    powerScore,
+    idleReductionScore,
   ])
 
   const staffingRate = firstFiniteNumber(metricInput.staffingRate, workerMetrics.staffingRate) ?? (totalEquipmentCount > 0 ? missionRate : 0)
@@ -260,7 +343,7 @@ export function buildEsgMetrics(equipments, context = {}) {
     routeSafetyScore,
   ])
 
-  const reportMetrics = buildReportMetrics(context.reports, equipmentList, weatherRiskCount)
+  const reportMetrics = buildReportMetrics(context.reports, equipmentList, context.zoneName, weatherRiskCount)
   const resolvedReportRate = firstFiniteNumber(metricInput.reportRate, reportRate, reportMetrics.reportRate) ?? 0
   const resolvedActionTrackingRate = firstFiniteNumber(metricInput.actionTrackingRate, actionTrackingRate, reportMetrics.actionTrackingRate) ?? 0
   const resolvedDataLinkRate = firstFiniteNumber(metricInput.dataLinkRate, dataLinkRate, buildDefaultDataLinkRate(context, totalEquipmentCount)) ?? 0
@@ -282,6 +365,11 @@ export function buildEsgMetrics(equipments, context = {}) {
     washTargetCount,
     workLocationCount,
     gateCount,
+    assignedGateEquipmentCount,
+    maxGateEquipmentCount,
+    gateConcentrationRate,
+    gateCongestionRisk,
+    idleReductionScore,
     dustWorkCount,
     weatherRiskCount,
     missionRate,
@@ -289,13 +377,16 @@ export function buildEsgMetrics(equipments, context = {}) {
     windSpeed,
     fineDustValue,
     fineDustRiskLevel,
+    complaintCount,
+    complaintResolvedCount: validComplaintResolvedCount,
+    unresolvedComplaintCount,
+    complaintResolutionRate,
+    complaintRisk,
     carbonLoadIndex,
     estimatedCarbonKg,
     carbonScore,
     estimatedWashWaterLiters,
-    actualWastewaterLiters: actualWastewaterLiters ?? 0,
-    wastewaterRecoveryRate: wastewaterRecoveryRate ?? 0,
-    wastewaterRisk,
+    washWaterDemandRisk,
     waterScore,
     fineDustScore,
     powerPeakRisk,
@@ -313,6 +404,7 @@ export function buildEsgMetrics(equipments, context = {}) {
     safetyDays,
     workerCount: workerMetrics.workerCount,
     assignedWorkerCount: workerMetrics.assignedWorkerCount,
+    requiredWorkerCount: workerMetrics.requiredWorkerCount,
     trainedWorkerCount: workerMetrics.trainedWorkerCount,
     environmentScore,
     socialScore,
@@ -331,6 +423,11 @@ export function createEmptyMetrics() {
     washTargetCount: 0,
     workLocationCount: 0,
     gateCount: 0,
+    assignedGateEquipmentCount: 0,
+    maxGateEquipmentCount: 0,
+    gateConcentrationRate: 0,
+    gateCongestionRisk: 0,
+    idleReductionScore: 0,
     dustWorkCount: 0,
     weatherRiskCount: 0,
     missionRate: 0,
@@ -338,11 +435,16 @@ export function createEmptyMetrics() {
     windSpeed: 0,
     fineDustValue: 0,
     fineDustRiskLevel: 0,
+    complaintCount: 0,
+    complaintResolvedCount: 0,
+    unresolvedComplaintCount: 0,
+    complaintResolutionRate: 0,
+    complaintRisk: 0,
     carbonLoadIndex: 0,
     estimatedCarbonKg: 0,
     carbonScore: 0,
     estimatedWashWaterLiters: 0,
-    wastewaterRisk: 0,
+    washWaterDemandRisk: 0,
     waterScore: 0,
     fineDustScore: 0,
     powerPeakRisk: 0,
@@ -360,6 +462,7 @@ export function createEmptyMetrics() {
     safetyDays: 1,
     workerCount: 0,
     assignedWorkerCount: 0,
+    requiredWorkerCount: 0,
     trainedWorkerCount: 0,
     environmentScore: 0,
     socialScore: 0,
@@ -389,68 +492,119 @@ function buildWeightedMetricScore(scores = []) {
   return clampScore(weightedScore / weightSum)
 }
 
-function buildWorkerMetrics(workers, staffingWorkers, zoneName = '') {
+function buildWorkerMetrics(workers, staffingWorkers, staffingZones, zoneName = '') {
   const workerList = normalizeList(workers)
   const staffingList = normalizeList(staffingWorkers)
-  const mergedWorkers = workerList.length ? workerList : staffingList
+  const mergedWorkers = staffingList.length ? staffingList : workerList
   const scopedWorkers = filterWorkersByZone(mergedWorkers, zoneName)
+  const staffingSummary = buildStaffingZoneSummary(staffingZones, zoneName)
   const workerCount = scopedWorkers.length
-
-  if (!workerCount) {
-    return {
-      workerCount: 0,
-      assignedWorkerCount: 0,
-      trainedWorkerCount: 0,
-      staffingRate: null,
-      safetyEducationRate: null,
-    }
-  }
-
-  const assignedWorkerCount = scopedWorkers.filter(isAssignedWorker).length
+  const assignedWorkerCount = staffingSummary.assignedCount ?? scopedWorkers.filter(isAssignedWorker).length
+  const requiredWorkerCount = staffingSummary.requiredCount ?? workerCount
   const educationKnown = scopedWorkers.some(hasSafetyEducationSignal)
   const trainedWorkerCount = educationKnown ? scopedWorkers.filter(isSafetyEducationCompleted).length : 0
+
+  const staffingRate = requiredWorkerCount > 0
+    ? clampScore((assignedWorkerCount / requiredWorkerCount) * 100)
+    : workerCount > 0
+      ? clampScore((assignedWorkerCount / workerCount) * 100)
+      : null
 
   return {
     workerCount,
     assignedWorkerCount,
+    requiredWorkerCount,
     trainedWorkerCount,
-    staffingRate: Math.round((assignedWorkerCount / workerCount) * 100),
-    safetyEducationRate: educationKnown ? Math.round((trainedWorkerCount / workerCount) * 100) : null,
+    staffingRate,
+    safetyEducationRate: educationKnown && workerCount > 0
+      ? Math.round((trainedWorkerCount / workerCount) * 100)
+      : null,
   }
 }
 
+function buildStaffingZoneSummary(staffingZones, zoneName = '') {
+  const zoneRoots = normalizeList(staffingZones)
+  const cleanZone = String(zoneName || '').trim()
+  if (!cleanZone || cleanZone === '세척장' || cleanZone === '민원 구역') {
+    return { requiredCount: null, assignedCount: null }
+  }
 
-function buildReportMetrics(reports, equipments, weatherRiskCount) {
-  const reportList = normalizeList(reports)
+  const matchedSubZones = zoneRoots.flatMap((zoneRoot) => normalizeList(zoneRoot?.subZones))
+    .filter((subZone) => {
+      const location = firstNonBlank(subZone.location)
+      const title = firstNonBlank(subZone.title)
+      return location === cleanZone || title.includes(cleanZone)
+    })
+
+  if (!matchedSubZones.length) {
+    return { requiredCount: null, assignedCount: null }
+  }
+
+  return matchedSubZones.reduce((summary, subZone) => {
+    return {
+      requiredCount: summary.requiredCount + Math.max(0, Number(subZone.required) || 0),
+      assignedCount: summary.assignedCount + Math.max(0, Number(subZone.assignedCount) || 0),
+    }
+  }, { requiredCount: 0, assignedCount: 0 })
+}
+
+function buildReportMetrics(reports, equipments, zoneName = '', weatherRiskCount = 0) {
+  const reportList = scopeReportsByZone(normalizeList(reports), zoneName)
   const equipmentList = normalizeList(equipments)
-  const zoneCount = new Set(
-    equipmentList.map((equipment) => firstNonBlank(equipment.workLocation)).filter(Boolean),
-  ).size
-  const expectedReportCount = Math.max(1, zoneCount || (equipmentList.length ? 1 : 0))
-  const reportRate = equipmentList.length
+  const workOrderRefs = new Set(
+    equipmentList
+      .map((equipment) => equipment.workOrderIdx ?? equipment.workOrderId ?? equipment.workOrderRef)
+      .filter((value) => value !== null && value !== undefined && value !== ''),
+  )
+  const expectedReportCount = workOrderRefs.size || (equipmentList.length ? 1 : 0)
+  const reportRate = expectedReportCount > 0
     ? Math.min(100, Math.round((reportList.length / expectedReportCount) * 100))
     : reportList.length
       ? 100
-      : 60
+      : 0
 
-  if (!weatherRiskCount) {
-    return { reportRate, actionTrackingRate: reportList.length ? 100 : 60 }
-  }
-
-  const actionKeywords = ['조치', '통제', '점검', '확인', '중지', '순연', '안전', '살수', '방진', '세척', '회수']
-  const actionReportCount = reportList.filter((report) => {
-    const mergedText = [report.issue, report.todayWork, report.tomorrowPlan, report.action, report.safetyAction]
-      .map((value) => String(value || ''))
-      .join(' ')
-    return containsAny(mergedText, actionKeywords)
-  }).length
+  const progressValues = reportList
+    .map((report) => firstFiniteNumber(report.todayProgress, report.progressIncrementPct, report.actualProgress))
+    .filter((progress) => progress !== null)
+    .map((progress) => clampScore(progress))
+  const actionTrackingRate = progressValues.length
+    ? Math.round(progressValues.reduce((sum, progress) => sum + progress, 0) / progressValues.length)
+    : 0
 
   return {
     reportRate,
-    actionTrackingRate: reportList.length
-      ? Math.min(100, Math.round((actionReportCount / reportList.length) * 100))
-      : Math.max(35, 100 - weatherRiskCount * 10),
+    actionTrackingRate: weatherRiskCount > 0 || reportList.length ? actionTrackingRate : 0,
   }
+}
+
+function scopeReportsByZone(reports, zoneName = '') {
+  const reportList = normalizeList(reports)
+  const cleanZone = String(zoneName || '').trim()
+  if (!cleanZone) return reportList
+
+  if (cleanZone === '세척장') {
+    return reportList.filter((report) => reportMatchesAny(report, ['세척장', '세륜', '세척']))
+  }
+
+  if (cleanZone === '민원 구역') {
+    return reportList.filter((report) => reportMatchesAny(report, ['민원', '주민', '비산', '분진']))
+  }
+
+  return reportList.filter((report) => {
+    const location = firstNonBlank(report.location)
+    return location === cleanZone || reportMatchesAny(report, [cleanZone])
+  })
+}
+
+function reportMatchesAny(report, keywords = []) {
+  const text = [
+    report.location,
+    report.process,
+    report.issue,
+    report.todayWork,
+    report.tomorrowPlan,
+  ].map((value) => String(value || '')).join(' ')
+  return containsAny(text, keywords)
 }
 
 export function hasEsgOperationData(metrics, context = {}) {
@@ -459,6 +613,7 @@ export function hasEsgOperationData(metrics, context = {}) {
     || normalizeList(context.workOrders).length > 0
     || normalizeList(context.workers).length > 0
     || normalizeList(context.staffingWorkers).length > 0
+    || normalizeList(context.staffingZones).length > 0
 }
 
 function buildDefaultDataLinkRate(context, equipmentCount) {
@@ -467,7 +622,7 @@ function buildDefaultDataLinkRate(context, equipmentCount) {
     equipmentCount > 0,
     normalizeList(context.reports).length > 0,
     normalizeList(context.workOrders).length > 0,
-    normalizeList(context.workers).length > 0 || normalizeList(context.staffingWorkers).length > 0,
+    normalizeList(context.workers).length > 0 || normalizeList(context.staffingWorkers).length > 0 || normalizeList(context.staffingZones).length > 0,
   ]
   const linked = checks.filter(Boolean).length
   return Math.round((linked / checks.length) * 100)
@@ -497,9 +652,6 @@ export function isHighRiskEquipment(equipmentName = '') {
   return HIGH_RISK_EQUIPMENT_KEYWORDS.some((keyword) => equipmentName.includes(keyword))
 }
 
-export function isWashTargetEquipment(equipmentName = '') {
-  return WASH_TARGET_EQUIPMENT_KEYWORDS.some((keyword) => equipmentName.includes(keyword))
-}
 
 export function getEquipmentCarbonFactor(equipmentName = '') {
   const matched = EQUIPMENT_CARBON_FACTORS.find((item) => {
@@ -510,6 +662,33 @@ export function getEquipmentCarbonFactor(equipmentName = '') {
 
 export function containsAny(text = '', keywords = []) {
   return keywords.some((keyword) => String(text).includes(keyword))
+}
+
+function buildDustWorkCount(equipments = []) {
+  const dustWorkOrderKeys = new Set()
+
+  normalizeList(equipments).forEach((equipment, index) => {
+    const mergedText = `${equipment.workDetail ?? ''} ${equipment.title ?? ''} ${equipment.equipmentName ?? ''}`
+    if (!containsAny(mergedText, DUST_WORK_KEYWORDS)) return
+
+    const workOrderKey = [
+      equipment.workOrderIdx,
+      equipment.workOrderId,
+      equipment.workOrderRef,
+    ].find((value) => value !== null && value !== undefined && String(value).trim().length > 0)
+
+    const fallbackKey = [
+      equipment.workDate,
+      equipment.workLocation,
+      equipment.title,
+      equipment.workDetail,
+      index,
+    ].map((value) => String(value ?? '').trim()).join('|')
+
+    dustWorkOrderKeys.add(String(workOrderKey ?? fallbackKey))
+  })
+
+  return dustWorkOrderKeys.size
 }
 
 export function normalizeList(value) {
