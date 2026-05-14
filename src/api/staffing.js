@@ -9,9 +9,10 @@ const PATH = '/staffing'
  * @param {string} [rosterDate] yyyy-MM-dd
  * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
  */
-export async function postStaffingAutoRecommend(rosterDate) {
+export async function postStaffingAutoRecommend(rosterDate, siteCode) {
   const params = {}
   if (rosterDate) params.rosterDate = rosterDate
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
   return await api.post(`${PATH}/auto-recommend`, {}, { params })
 }
 
@@ -118,6 +119,7 @@ export async function postZoneSubAssign(zoneSubIdx, workerIds, rosterDate) {
  */
 export async function getStaffingWorkerPool(opts = {}) {
   const params = {}
+  if (opts.siteCode != null && String(opts.siteCode).trim() !== '') params.siteCode = String(opts.siteCode).trim()
   if (opts.affiliationKind) params.affiliationKind = opts.affiliationKind
   if (opts.keyword != null && String(opts.keyword).trim() !== '') {
     params.keyword = String(opts.keyword).trim()

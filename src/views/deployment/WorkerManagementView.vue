@@ -15,16 +15,16 @@ import {
   CircleCheck,
 } from 'lucide-vue-next'
 import {
-  getAffiliationKind,
-  displayWorkerAffiliation,
   employmentKindDisplay,
   displayWorkerTradeLine,
   deriveAttendanceTag,
   attendanceTagBadgeClass,
 } from '@/utils/workerUi'
 import { syncWorkforce, fetchWorkerList } from '@/api/worker.js'
+import { useAuthStore } from '@/stores/authStore.js'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const isDataLoading = ref(false)
 const lastDataRefreshAt = ref(null)
 
@@ -62,21 +62,19 @@ const T = {
   filterDate: '조회 날짜',
   datePrevAria: '어제 명단 보기',
   dateNextAria: '내일 명단 보기',
-  filterAffil: '소속 구분',
+  filterAffil: '공종 구분',
   filterSearch: '작업자 이름',
   filterSearchPh: '이름을 입력하세요',
   colContact: '이름 / 연락처',
   colAffil: '소속',
   colEmployment: '상용 / 일용',
   colRank: '직급',
-  colTrade: '공정',
+  colTrade: '공종',
   colTime: '출·퇴근',
   colStatus: '상태',
   empty: '조회된 근태 내역이 없습니다.',
   manSuffix: '공수',
   colDetail: '상세보기',
-  affilDetailPartner: '협력사 지정',
-  affilPartnerAll: '전체 협력사',
   listFilteredStats: '목록 집계',
   employmentFilterHint: '고용',
   attendanceFilterHint: '근태',
@@ -99,20 +97,13 @@ function jobRankBadgeClass(rank) {
   return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
-/** 소속 구분 1단계: 본사 / 협력사 */
-const affiliationCategoryOptions = [
-  { value: '', label: '전체' },
-  { value: 'direct', label: '본사 소속 직원' },
-  { value: 'partner', label: '협력사 소속' },
-]
-
-/** 협력 건설사 소속 선택 시 특정 협력 건설사 (value는 데이터와 일치, label은 표시명만) */
-const partnerDetailOptions = [
-  { value: '', label: '전체 협력 건설사' },
-  { value: '협력사 (구산토건)', label: '구산토건' },
-  { value: '협력사 (삼보이앤씨)', label: '삼보이앤씨' },
-  { value: '협력사 (삼원)', label: '삼원' },
-]
+/** 공종 구분: 현재 조회된 근무자의 공종명 기반 동적 옵션 */
+const tradeFilterOptions = computed(() => {
+  const trades = [
+    ...new Set(attendanceList.value.map((r) => r.affiliationSubLabel).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'ko'))
+  return [{ value: '', label: '전체 공종' }, ...trades.map((t) => ({ value: t, label: t }))]
+})
 
 /** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
 function localTodayISODate() {
@@ -142,25 +133,17 @@ function formatISODateLocal(d) {
   return `${y}-${mo}-${day}`
 }
 
-/** MANAGEMENT_001 동기화 시 서버에 넘기는 현장 코드 (UI 에서는 입력하지 않음) */
-const SYNC_SITE_CODE =
-  (import.meta.env.VITE_SITE_CODE && String(import.meta.env.VITE_SITE_CODE).trim()) || 'GN-A'
+/** MANAGEMENT_001 동기화 시 서버에 넘기는 현장 코드 — 로그인한 계정의 siteCode 사용 */
+const SYNC_SITE_CODE = computed(() => authStore.siteCode)
 
 const filters = ref({
   date: localTodayISODate(),
-  /** '' | 'direct' | 'partner' */
-  affiliationCategory: '',
-  /** 협력사 세부 (해당 소속일 때만 사용) */
-  affiliationDetail: '',
+  selectedTrade: '',
   searchName: '',
 })
 
 /** 필터용 인라인 달력 — 요일 헤더 */
 const filterCalWeekDays = ['일', '월', '화', '수', '목', '금', '토']
-
-function onAffiliationCategoryChange() {
-  filters.value.affiliationDetail = ''
-}
 
 const filterCalendarOpen = ref(false)
 const datePickerRootRef = ref(null)
@@ -268,19 +251,8 @@ const preKindAttendance = computed(() => {
   let result = attendanceList.value
   if (filters.value.searchName)
     result = result.filter((a) => a.name.includes(filters.value.searchName))
-
-  const cat = filters.value.affiliationCategory
-  const detail = filters.value.affiliationDetail
-  if (cat === 'direct') {
-    result = result.filter((a) => getAffiliationKind(a.affiliationType) === 'direct')
-  } else if (cat === 'partner') {
-    result = result.filter((a) => {
-      const k = getAffiliationKind(a.affiliationType)
-      return k === 'partner' || k === 'agency'
-    })
-    if (detail) result = result.filter((a) => a.affiliationType === detail)
-  }
-
+  const trade = filters.value.selectedTrade
+  if (trade) result = result.filter((a) => a.affiliationSubLabel === trade)
   return result
 })
 
@@ -351,14 +323,6 @@ function toggleListStatusFilter(state) {
 
 function toggleListEmploymentFilter(kind) {
   listEmploymentFilter.value = listEmploymentFilter.value === kind ? '' : kind
-}
-
-/** 목록 「소속」열 — 본사 · 협력체명 · 인력사무소 일용만 `인력` */
-function formatAffiliationSogo(record) {
-  return displayWorkerAffiliation({
-    affiliationKind: record.affiliationKindApi,
-    partnerCompany: record.partnerCompanyApi,
-  })
 }
 
 function employmentBadgeClass(c) {
@@ -456,7 +420,7 @@ function mapWorkerResToAttendance(row) {
 
 /** MANAGEMENT_003 — 현재 조회일 기준 목록만 갱신 (근태는 이 날짜의 attendance_record 와 매칭) */
 async function refreshWorkerListFromApi() {
-  const listRes = await fetchWorkerList(filters.value.date)
+  const listRes = await fetchWorkerList(SYNC_SITE_CODE.value, filters.value.date)
   const rows = listRes?.rows
   if (Array.isArray(rows)) {
     attendanceList.value = rows.map(mapWorkerResToAttendance)
@@ -485,7 +449,7 @@ async function onDataLoad() {
   if (isDataLoading.value) return
   isDataLoading.value = true
   try {
-    const syncResult = await syncWorkforce(SYNC_SITE_CODE, filters.value.date)
+    const syncResult = await syncWorkforce(SYNC_SITE_CODE.value, filters.value.date)
     await refreshWorkerListFromApi()
     lastDataRefreshAt.value = new Date()
     window.alert(
@@ -717,30 +681,12 @@ async function onDataLoad() {
                 T.filterAffil
               }}</label>
               <select
-                v-model="filters.affiliationCategory"
+                v-model="filters.selectedTrade"
                 class="min-w-[11rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-                @change="onAffiliationCategoryChange"
               >
                 <option
-                  v-for="opt in affiliationCategoryOptions"
+                  v-for="opt in tradeFilterOptions"
                   :key="opt.value || 'all'"
-                  :value="opt.value"
-                >
-                  {{ opt.label }}
-                </option>
-              </select>
-            </div>
-            <div v-if="filters.affiliationCategory === 'partner'">
-              <label class="mb-1.5 block text-[11px] font-bold text-forena-500">{{
-                T.affilDetailPartner
-              }}</label>
-              <select
-                v-model="filters.affiliationDetail"
-                class="min-w-[12rem] rounded-xl border border-forena-200 bg-white px-3 py-2.5 text-sm text-forena-900 outline-none transition focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
-              >
-                <option
-                  v-for="opt in partnerDetailOptions"
-                  :key="opt.value || 'p-all'"
                   :value="opt.value"
                 >
                   {{ opt.label }}
@@ -835,10 +781,9 @@ async function onDataLoad() {
               >
                 <tr>
                   <th class="px-6 py-4 font-semibold">{{ T.colContact }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colAffil }}</th>
+                  <th class="px-6 py-4 font-semibold">{{ T.colTrade }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colEmployment }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colRank }}</th>
-                  <th class="px-6 py-4 font-semibold">{{ T.colTrade }}</th>
                   <th class="px-6 py-4 font-semibold">{{ T.colTime }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colStatus }}</th>
                   <th class="px-6 py-4 text-center font-semibold">{{ T.colDetail }}</th>
@@ -846,7 +791,7 @@ async function onDataLoad() {
               </thead>
               <tbody class="text-forena-800">
                 <tr v-if="filteredAttendance.length === 0">
-                  <td colspan="8" class="px-6 py-14 text-center text-sm text-slate-400">
+                  <td colspan="7" class="px-6 py-14 text-center text-sm text-slate-400">
                     {{ T.empty }}
                   </td>
                 </tr>
@@ -860,10 +805,8 @@ async function onDataLoad() {
                     <div class="font-semibold text-forena-900">{{ record.name }}</div>
                     <div class="text-[11px] text-slate-500">{{ record.phone }}</div>
                   </td>
-                  <td class="px-6 py-4">
-                    <div class="text-xs font-semibold text-forena-800">
-                      {{ formatAffiliationSogo(record) }}
-                    </div>
+                  <td class="px-6 py-4 text-xs font-semibold text-forena-800">
+                    {{ record.affiliationSubLabel }}
                   </td>
                   <td class="px-6 py-4">
                     <span
@@ -880,9 +823,6 @@ async function onDataLoad() {
                     >
                       {{ record.jobRank }}
                     </span>
-                  </td>
-                  <td class="px-6 py-4 text-xs font-semibold text-forena-800">
-                    {{ record.affiliationSubLabel }}
                   </td>
                   <td class="px-6 py-4 font-mono text-xs">
                     <span class="font-semibold text-flare-700">{{ record.clockIn }}</span>
