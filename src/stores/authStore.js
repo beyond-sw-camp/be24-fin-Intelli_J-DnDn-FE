@@ -264,6 +264,12 @@ export const useAuthStore = defineStore('auth', () => {
     persistAuth()
   }
 
+  function setProjectIdAndSiteCode(pid, sc) {
+    projectId.value = normalizeProjectId(pid)
+    siteCode.value = String(sc ?? '').trim()
+    persistAuth()
+  }
+
   /**
    * 로컬 데모 (API 없을 때)
    * @returns {boolean}
@@ -360,6 +366,7 @@ export const useAuthStore = defineStore('auth', () => {
     applyLoginSuccess,
     markInitialUploadComplete,
     setProjectId,
+    setProjectIdAndSiteCode,
     loginDemo,
     logout,
     persistAuth,

@@ -230,15 +230,8 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
   const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
   const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
   const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
-  const affiliationLabel =
-    affiliationKindUpper === 'DIRECT'
-      ? '본사'
-      : String(p.partnerCompany ?? '').trim() || '협력사'
-  const subAffilLabel =
-    affiliationKindUpper === 'DIRECT'
-      ? '직영'
-      : String(p.partnerCompanyDetail ?? '').trim() || pickWorkerTradeSubLabel(mergedForMeta) || '—'
-  const metaAffiliationLine = `${affiliationLabel} | ${subAffilLabel}`
+  const metaAffiliationLine =
+    affiliationKindUpper === 'DIRECT' ? '직영' : tradeText || '—'
 
   return {
     id: p.idx,

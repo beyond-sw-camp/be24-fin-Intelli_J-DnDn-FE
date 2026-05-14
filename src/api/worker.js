@@ -15,22 +15,22 @@ export const syncWorkforce = (siteCode, date) => {
 
 /**
  * MANAGEMENT_003 작업자 목록 조회
- * GET /management/list?date=
+ * GET /management/list?siteCode=&date=
  */
-export const fetchWorkerList = (date) => {
+export const fetchWorkerList = (siteCode, date) => {
   const params = {}
-  if (date != null && String(date).trim() !== '') {
-    params.date = date
-  }
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
+  if (date != null && String(date).trim() !== '') params.date = date
   return api.get(`${PATH}/list`, { params })
 }
 
 /**
  * MANAGEMENT_002 근무자 검색
- * GET /management/search
+ * GET /management/search?siteCode=&...
  */
-export const fetchWorkerSearch = ({ date, attendanceStatus, partnerCompany, searchName } = {}) => {
+export const fetchWorkerSearch = ({ siteCode, date, attendanceStatus, partnerCompany, searchName } = {}) => {
   const params = {}
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
   if (date != null && String(date).trim() !== '') params.date = date
   if (attendanceStatus != null && String(attendanceStatus).trim() !== '')
     params.attendanceStatus = attendanceStatus
