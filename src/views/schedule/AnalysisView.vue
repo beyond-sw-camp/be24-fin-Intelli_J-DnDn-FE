@@ -85,17 +85,18 @@ watch(
 
 watch([currentTrade, filterProcess], () => {
   if (processes.value.length > 0) {
-    loadDelayRiskTasks()
+    invalidateDelayRiskTasks()
   }
 })
 
 watch(selectedTradeId, () => {
   if (processes.value.length > 0) {
-    loadDelayRiskTasks()
+    invalidateDelayRiskTasks()
   }
 })
 
 // 탭
+const DELAY_RISK_TAB_KEY = 'ai'
 const activeTab = ref('overview')
 const tabs = computed(() => [
   { key: 'overview', label: '현황 분석', icon: BarChart3 },
@@ -114,6 +115,9 @@ function selectMainTab(key) {
   if (key === 'change' && !['active', 'history'].includes(changeSubView.value)) {
     changeSubView.value = 'active'
   }
+  if (key === DELAY_RISK_TAB_KEY && !loading.value) {
+    loadDelayRiskTasksIfNeeded()
+  }
 }
 
 function selectChangeSubView(view) {
@@ -126,6 +130,8 @@ const { currentProjectId } = useCurrentProject()
 
 const processes = ref([])
 const delayTasks = ref([])
+const delayTasksLoaded = ref(false)
+const delayTasksLoading = ref(false)
 
 // 재분배는 선택된 월간 계획의 하위 일정 기준
 const monthlyWorkPlans = ref([])
@@ -257,9 +263,33 @@ async function loadDelayRiskTasks() {
   }
 }
 
+async function loadDelayRiskTasksIfNeeded(force = false) {
+  if (delayTasksLoading.value) return
+  if (!force && delayTasksLoaded.value) return
+
+  try {
+    delayTasksLoading.value = true
+    await loadDelayRiskTasks()
+    delayTasksLoaded.value = true
+  } catch (e) {
+    errorMessage.value = e.message || '지연 위험 작업을 불러오지 못했습니다.'
+  } finally {
+    delayTasksLoading.value = false
+  }
+}
+
+function invalidateDelayRiskTasks() {
+  delayTasksLoaded.value = false
+  if (activeTab.value === DELAY_RISK_TAB_KEY) {
+    loadDelayRiskTasksIfNeeded(true)
+  }
+}
+
 async function refreshScheduleContext() {
   await Promise.all([loadProgressList(), loadWorkPlanDetails()])
-  await loadDelayRiskTasks()
+  if (activeTab.value === DELAY_RISK_TAB_KEY || delayTasksLoaded.value) {
+    await loadDelayRiskTasksIfNeeded(true)
+  }
 }
 
 const {
@@ -293,7 +323,9 @@ async function loadAnalysisData() {
       loadTodayReports(),
       loadScheduleChangeData(),
     ])
-    await loadDelayRiskTasks()
+    if (activeTab.value === DELAY_RISK_TAB_KEY) {
+      await loadDelayRiskTasksIfNeeded(true)
+    }
   } catch (e) {
     errorMessage.value = e.message || '공정 분석 데이터를 불러오지 못했습니다.'
   } finally {
@@ -383,13 +415,15 @@ function closeTaskDetail() {
 function gotoAiFromDetail() {
   if (!detailTask.value) return
   selectedTaskId.value = detailTask.value.id
-  activeTab.value = 'ai'
+  activeTab.value = DELAY_RISK_TAB_KEY
+  loadDelayRiskTasksIfNeeded()
   closeTaskDetail()
 }
 
 function onTradeCardClick(tradeProcessId) {
   selectedTradeId.value = tradeProcessId
-  activeTab.value = 'ai'
+  activeTab.value = DELAY_RISK_TAB_KEY
+  loadDelayRiskTasksIfNeeded()
 }
 
 function clearSelectedTrade() {
@@ -577,6 +611,7 @@ const riskColor = (r) =>
       :current-selected-trade-name="currentSelectedTradeName"
       :is-supervisor="isSupervisor"
       :current-trade-item="currentTradeItem"
+      :loading="delayTasksLoading"
       @select-task="selectedTaskId = $event"
       @clear-task-selection="selectedTaskId = null"
       @clear-selected-trade="clearSelectedTrade"

@@ -18,6 +18,10 @@ defineProps({
     type: String,
     default: '연간',
   },
+  allowYearly: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 defineEmits(['close', 'upload', 'update:trade', 'update:type'])
@@ -57,8 +61,9 @@ defineEmits(['close', 'upload', 'update:trade', 'update:type'])
 
           <div class="space-y-2">
             <label class="text-[11px] font-bold text-slate-500">계획 종류</label>
-            <div class="grid grid-cols-2 gap-2">
+            <div :class="allowYearly ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-1 gap-2'">
               <button
+                v-if="allowYearly"
                 @click="$emit('update:type', '연간')"
                 :class="
                   type === '연간'

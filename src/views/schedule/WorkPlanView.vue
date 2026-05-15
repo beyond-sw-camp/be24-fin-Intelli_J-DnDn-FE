@@ -38,8 +38,11 @@ import {
 
 const { currentProjectId: selectedProjectId } = useCurrentProject()
 const auth = useAuthStore()
-const { isTradeScope, assignedTrade } = useAuthScope(auth)
-const canManageSitePlans = computed(() => !isTradeScope.value)
+const { isManagerScope, isTradeScope, assignedTrade } = useAuthScope(auth)
+const YEARLY_PLAN_TYPE = '연간'
+const MONTHLY_PLAN_TYPE = '월간'
+const canUploadPlans = computed(() => isManagerScope.value || isTradeScope.value)
+const canUploadYearlyPlan = computed(() => isManagerScope.value)
 
 const weeklyPlans = ref([]) // 주간 작업 계획
 const monthlyPlans = ref([]) // 월간 작업 계획
@@ -100,6 +103,20 @@ const {
   selectedProjectId,
   reloadPlans: loadPlans,
 })
+const uploadTradeOptions = computed(() =>
+  isTradeScope.value && assignedTrade.value ? [assignedTrade.value] : mainTrades.value,
+)
+
+function syncUploadScope() {
+  if (!isTradeScope.value) return
+
+  if (assignedTrade.value) {
+    uploadModalTrade.value = assignedTrade.value
+  }
+  if (uploadModalType.value === YEARLY_PLAN_TYPE) {
+    uploadModalType.value = MONTHLY_PLAN_TYPE
+  }
+}
 
 // 연장 정보 헬퍼 (planStore 기반)
 function extOf(p) {
@@ -191,13 +208,14 @@ watch(
   () => {
     filterTrade.value = isTradeScope.value && assignedTrade.value ? assignedTrade.value : ''
     selectedPlan.value = null
+    syncUploadScope()
   },
   { immediate: true },
 )
 
 onMounted(() => {
   loadPlans() // 기존 계획 데이터 로드
-  loadMainTrades() // 신규 추가: 업로드용 공종 리스트 로드
+  loadMainTrades().then(syncUploadScope) // 신규 추가: 업로드용 공종 리스트 로드
 })
 
 function importAi() {
@@ -280,7 +298,7 @@ const {
         </div>
 
         <button
-          v-if="canManageSitePlans"
+          v-if="canUploadPlans"
           type="button"
           class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-700 hover:bg-forena-50"
           @click="isUploadPopupOpen = true"
@@ -706,7 +724,8 @@ const {
       :show="isUploadPopupOpen"
       v-model:trade="uploadModalTrade"
       v-model:type="uploadModalType"
-      :main-trades="mainTrades"
+      :main-trades="uploadTradeOptions"
+      :allow-yearly="canUploadYearlyPlan"
       @close="isUploadPopupOpen = false"
       @upload="triggerFileUpload"
     />

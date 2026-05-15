@@ -8,7 +8,6 @@ import {
   Paperclip,
   Plus,
   RefreshCw,
-  Save,
   Send,
   Sparkles,
   Trash2,
@@ -43,7 +42,6 @@ const emit = defineEmits([
   'remove-equipment',
   'remove-file',
   'remove-photo',
-  'save-draft',
   'submit',
 ])
 
@@ -540,12 +538,6 @@ function openFilePicker() {
               class="rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-semibold text-forena-700 hover:bg-forena-50"
             >
               취소
-            </button>
-            <button
-              @click="emit('save-draft')"
-              class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-4 py-2 text-xs font-bold text-forena-700 hover:bg-forena-50"
-            >
-              <Save class="h-3.5 w-3.5" /> 임시 저장
             </button>
             <button
               @click="emit('submit')"
