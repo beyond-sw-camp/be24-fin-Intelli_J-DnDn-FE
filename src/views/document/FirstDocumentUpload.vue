@@ -8,7 +8,12 @@ import { useAuthStore } from '@/stores/authStore.js'
 import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import { getProject, getProjectList } from '@/api/project.js'
 import { uploadAndExtractSchedule, updateTradeProcess } from '@/api/masterSchedule.js'
-import { buildGanttData, isTaskDirty, taskToReqBody } from '@/utils/scheduleMapper.js'
+import {
+  buildGanttData,
+  isMilestoneScheduleRow,
+  isTaskDirty,
+  taskToReqBody,
+} from '@/utils/scheduleMapper.js'
 import FirstDocumentUploadCards from '@/components/schedule/firstDocumentUpload/FirstDocumentUploadCards.vue'
 import FirstDocumentValidationModal from '@/components/schedule/firstDocumentUpload/FirstDocumentValidationModal.vue'
 import FirstDocumentGanttPreviewModal from '@/components/schedule/firstDocumentUpload/FirstDocumentGanttPreviewModal.vue'
@@ -56,42 +61,12 @@ const DOC_TYPES = [
   {
     key: 'master',
     label: '마스터 공정표',
-    desc: '전체 공사 일정을 담은 마스터 공정표입니다. AI가 작업 항목, 기간, 선후행 관계를 자동으로 추출합니다.',
+    desc: '기준 공정표 생성에 필요한 필수 문서입니다. 공종, 공정명, 보할, 기준 시작일, 기간, 세부 작업을 추출합니다.',
     icon: 'spreadsheet',
     required: true,
     acceptedFormats: ['.xlsx', '.xls', '.pdf', '.mpp'],
     color: 'blue',
-    aiCapabilities: ['작업 항목 자동 추출', '기간 산정', '선행/후속 관계 파악', 'CP 공정 식별'],
-  },
-  {
-    key: 'milestone',
-    label: '마일스톤 공정표',
-    desc: '착공, 골조완료, 준공 등 주요 마일스톤 일정을 담은 문서입니다. AI가 마일스톤 목록과 기준일을 추출합니다.',
-    icon: 'flag',
-    required: false,
-    acceptedFormats: ['.xlsx', '.xls', '.pdf', '.pptx'],
-    color: 'amber',
-    aiCapabilities: ['마일스톤 일자 추출', '영향도 분석', '연관 공정 매핑'],
-  },
-  {
-    key: 'trade',
-    label: '공종별 시공계획서',
-    desc: '골조, 전기, 설비 등 공종별 상세 시공계획서입니다. AI가 공종별 세부 일정과 인원/장비 계획을 추출합니다.',
-    icon: 'layers',
-    required: false,
-    acceptedFormats: ['.pdf', '.hwp', '.docx', '.xlsx'],
-    color: 'teal',
-    aiCapabilities: ['공종별 세부 일정', '인원/장비 계획', '위험 요소 식별'],
-  },
-  {
-    key: 'bohal',
-    label: '보할 공정표',
-    desc: '월/주차별 보할율(가중치)을 담은 공정표입니다. AI가 보할 분포로 각 공정의 시작/종료 시점을 자동으로 추정합니다.',
-    icon: 'spreadsheet',
-    required: false,
-    acceptedFormats: ['.xlsx', '.xls', '.pdf'],
-    color: 'violet',
-    aiCapabilities: ['보할율 추출', '월/주차별 분포 분석', '공정 시작·종료일 추정'],
+    aiCapabilities: ['공종/공정명 추출', '보할 추출', '기준 일정 산정', '세부 작업 생성'],
   },
 ]
 
@@ -145,7 +120,9 @@ function parseProjectLabel(name) {
 }
 
 function siteCodeMatches(project, siteCode) {
-  const expected = String(siteCode || '').trim().toUpperCase()
+  const expected = String(siteCode || '')
+    .trim()
+    .toUpperCase()
   if (!expected) return false
   return parseProjectLabel(project?.name).code.toUpperCase() === expected
 }
@@ -275,7 +252,8 @@ const generationReadyMessage = computed(() => {
   if (!isProjectMetaComplete.value) return '프로젝트 기본 정보를 먼저 확인해주세요.'
   if (!hasMaster.value) return '마스터 공정표를 업로드해주세요.'
   if (isAnalyzingAny.value) return 'AI 분석이 끝난 뒤 공정표를 생성할 수 있습니다.'
-  if (uploads.value.master.status === 'done') return '마스터 공정표 분석 결과로 공정표를 생성할 수 있습니다.'
+  if (uploads.value.master.status === 'done')
+    return '마스터 공정표 분석 결과로 공정표를 생성할 수 있습니다.'
   return '버튼을 누르면 등록된 마스터 공정표를 먼저 분석한 뒤 공정표를 생성합니다.'
 })
 
@@ -441,8 +419,9 @@ function runAllAnalysis() {
  */
 function summarizeResult(typeKey, rows) {
   const list = Array.isArray(rows) ? rows : []
-  const milestones = list.filter((r) => r.isMilestone).length
-  const trades = new Set(list.map((r) => r.tradeName).filter(Boolean)).size
+  const normalRows = list.filter((r) => !isMilestoneScheduleRow(r))
+  const milestones = list.filter(isMilestoneScheduleRow).length
+  const trades = new Set(normalRows.map((r) => r.tradeName).filter(Boolean)).size
 
   const startDates = list
     .map((r) => r.plannedStart)
@@ -682,8 +661,8 @@ async function confirmAndNavigate() {
         <p class="text-[11px] font-bold uppercase tracking-widest text-flare-600">일정 관리</p>
         <h1 class="text-xl font-bold text-forena-900">최초 공정표 문서 등록</h1>
         <p class="mt-1 text-xs text-forena-500">
-          마스터 공정표, 마일스톤 공정표, 공종별 시공계획서를 업로드하면 AI가 자동으로 분석하여 기준
-          공정표를 생성합니다.
+          마스터 공정표를 기준으로 공종, 세부 작업, 보할, 기준 일정을 추출해 전체 공정표를
+          생성합니다.
         </p>
       </div>
 
@@ -737,15 +716,16 @@ async function confirmAndNavigate() {
               입력해주세요.
             </p>
             <p>
-              ② <strong>마스터 공정표 · 마일스톤 공정표 · 공종별 시공계획서 · 보할 공정표</strong>
-              4가지 파일을 모두 업로드해주세요.
+              ② <strong>마스터 공정표</strong>만 필수입니다. 마스터 공정표에서 공종, 공정명, 보할,
+              기준 일정, 세부 작업을 추출합니다.
             </p>
             <p>
-              ③ <strong>AI 공정표 생성하기</strong> 버튼을 클릭하면 AI가 분석 후 간트차트를
-              미리보기로 보여드립니다.
+              ③ 마일스톤은 마스터 공정표의 MileStone 행에서 분리하고, 보할은 마스터 공정표의 보할
+              값을 기준으로 반영합니다.
             </p>
             <p>
-              ④ 내용을 확인하고 <strong>공정표 확정하기</strong>를 누르면 대시보드로 이동합니다.
+              ④ <strong>AI 공정표 생성하기</strong>를 누른 뒤 미리보기에서 내용을 확인하고
+              <strong>공정표 확정하기</strong>를 진행합니다.
             </p>
           </div>
         </div>
@@ -753,9 +733,9 @@ async function confirmAndNavigate() {
     </div>
 
     <!-- ============================================================ -->
-    <!-- 프로젝트 기본 정보 + 등록 현황                                   -->
+    <!-- 프로젝트 기본 정보 + 문서 선택 + 등록 현황                         -->
     <!-- ============================================================ -->
-    <div class="gap-4 grid lg:grid-cols-2">
+    <div class="grid gap-4 xl:grid-cols-[minmax(520px,1fr)_minmax(360px,0.72fr)_minmax(520px,1fr)]">
       <!-- 프로젝트 기본 정보 -->
       <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
         <div class="flex items-center gap-2 border-b border-forena-100 px-5 py-3">
@@ -765,11 +745,14 @@ async function confirmAndNavigate() {
           <span v-if="projectMetaLoading" class="ml-auto text-[11px] font-semibold text-forena-500">
             현장 정보 불러오는 중
           </span>
-          <span v-else-if="projectMetaError" class="ml-auto text-[11px] font-semibold text-rose-500">
+          <span
+            v-else-if="projectMetaError"
+            class="ml-auto text-[11px] font-semibold text-rose-500"
+          >
             {{ projectMetaError }}
           </span>
         </div>
-        <div class="grid gap-3 p-5 pt-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="grid gap-3 p-5 pt-4 sm:grid-cols-2 2xl:grid-cols-3">
           <!-- 현장명 -->
           <div>
             <label class="text-[10px] font-bold uppercase text-forena-400">
@@ -788,7 +771,7 @@ async function confirmAndNavigate() {
             />
           </div>
           <!-- 공사 위치 -->
-          <div class="sm:col-span-1 lg:col-span-2">
+          <div class="sm:col-span-2 2xl:col-span-2">
             <label class="text-[10px] font-bold uppercase text-forena-400">
               공사 위치 <span class="text-rose-500">*</span>
             </label>
@@ -892,6 +875,19 @@ async function confirmAndNavigate() {
         </div>
       </div>
 
+      <FirstDocumentUploadCards
+        :doc-types="DOC_TYPES"
+        :uploads="uploads"
+        :color-map="colorMap"
+        :get-status-label="getStatusLabel"
+        :get-status-class="getStatusClass"
+        @drag-over="onDragOver"
+        @drop-file="onDrop"
+        @file-select="onFileSelect"
+        @remove-file="removeFile"
+        @run-analysis="runAnalysis"
+      />
+
       <!-- 등록 현황 + 액션 -->
       <div class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card">
         <div
@@ -937,13 +933,20 @@ async function confirmAndNavigate() {
                       class="rounded bg-rose-100 px-1 py-0.5 text-[9px] font-bold text-rose-600"
                       >필수</span
                     >
+                    <span
+                      v-else-if="!dt.required"
+                      class="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500"
+                      >선택</span
+                    >
                   </div>
                 </td>
                 <td class="px-4 py-2.5 text-center">
                   <span v-if="uploads[dt.key].fileName" class="text-forena-700 font-medium">{{
                     uploads[dt.key].fileName
                   }}</span>
-                  <span v-else class="text-slate-400 italic">미등록</span>
+                  <span v-else class="text-slate-400 italic">{{
+                    dt.required ? '미등록' : '선택 미등록'
+                  }}</span>
                 </td>
                 <td class="px-4 py-2.5 text-center">
                   <div class="flex items-center justify-center gap-1.5">
@@ -963,7 +966,11 @@ async function confirmAndNavigate() {
                       class="rounded-md px-1.5 py-0.5 text-[10px] font-bold"
                       :class="getStatusClass(uploads[dt.key].status)"
                     >
-                      {{ getStatusLabel(uploads[dt.key].status) }}
+                      {{
+                        !dt.required && !uploads[dt.key].fileName
+                          ? '선택'
+                          : getStatusLabel(uploads[dt.key].status)
+                      }}
                     </span>
                   </div>
                 </td>
@@ -1018,28 +1025,27 @@ async function confirmAndNavigate() {
             <span
               v-for="dt in DOC_TYPES"
               :key="dt.key"
-              :class="uploads[dt.key].fileName ? 'text-emerald-600 font-bold' : 'text-slate-400'"
+              :class="
+                uploads[dt.key].fileName
+                  ? 'text-emerald-600 font-bold'
+                  : dt.required
+                    ? 'text-rose-500 font-semibold'
+                    : 'text-slate-400'
+              "
             >
               <CheckCircle2 v-if="uploads[dt.key].fileName" class="inline h-3 w-3 mr-0.5" />
-              {{ uploads[dt.key].fileName ? dt.label + ' 등록됨' : dt.label + ' 미등록' }}
+              {{
+                uploads[dt.key].fileName
+                  ? dt.label + ' 등록됨'
+                  : dt.required
+                    ? dt.label + ' 필수 미등록'
+                    : dt.label + ' 선택 미등록'
+              }}
             </span>
           </div>
         </div>
       </div>
     </div>
-
-    <FirstDocumentUploadCards
-      :doc-types="DOC_TYPES"
-      :uploads="uploads"
-      :color-map="colorMap"
-      :get-status-label="getStatusLabel"
-      :get-status-class="getStatusClass"
-      @drag-over="onDragOver"
-      @drop-file="onDrop"
-      @file-select="onFileSelect"
-      @remove-file="removeFile"
-      @run-analysis="runAnalysis"
-    />
 
     <!-- ============================================================ -->
     <!-- 하단 CTA: AI 공정표 생성하기                                    -->
