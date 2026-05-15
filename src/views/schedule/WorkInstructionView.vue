@@ -16,10 +16,8 @@ import {
   MapPin,
   CheckCircle2,
   AlertTriangle,
-  Clock,
   ShieldCheck,
   UserCog,
-  Sparkles,
   DoorOpen,
   Search,
 } from 'lucide-vue-next'
@@ -30,6 +28,7 @@ import {
   updateWorkOrder,
   approveWorkOrder,
 } from '@/api/workOrder'
+import { isMilestoneScheduleRow } from '@/utils/scheduleMapper.js'
 import {
   DEFAULT_SAFETY_TEXT,
   DEFAULT_TRADE_OPTIONS,
@@ -166,35 +165,21 @@ watch(
   { immediate: true },
 )
 
-const STATUS_LIST = [
-  '작성 전',
-  '초안 생성',
-  '임시 저장',
-  '승인 대기',
-  '검토 중',
-  '승인 완료',
-  '반려',
-  '작업 완료',
-]
+const STATUS_LIST = ['승인 대기', '승인 완료', '반려']
 const STATUS_META = {
-  '작성 전': { cls: 'bg-slate-100 text-slate-500 ring-slate-200', icon: Clock },
-  '초안 생성': { cls: 'bg-flare-50 text-flare-700 ring-flare-200', icon: Sparkles },
-  '임시 저장': { cls: 'bg-amber-50 text-amber-700 ring-amber-200', icon: Pencil },
   '승인 대기': { cls: 'bg-sky-50 text-sky-700 ring-sky-200', icon: Send },
-  '검토 중': { cls: 'bg-violet-50 text-violet-700 ring-violet-200', icon: Eye },
   '승인 완료': { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: CheckCircle2 },
   반려: { cls: 'bg-rose-50 text-rose-700 ring-rose-200', icon: AlertTriangle },
-  '작업 완료': { cls: 'bg-emerald-100 text-emerald-800 ring-emerald-300', icon: CheckCircle2 },
 }
 function statusMeta(s) {
-  return STATUS_META[s] || STATUS_META['작성 전']
+  return STATUS_META[s] || STATUS_META['승인 대기']
 }
 
 const canReviewViewing = computed(
   () =>
     currentRole.value === ROLES.MANAGER &&
     !!viewing.value &&
-    [STATUS_LIST[3], STATUS_LIST[4]].includes(viewing.value.status),
+    viewing.value.status === '승인 대기',
 )
 
 const workOrders = ref([])
@@ -301,7 +286,7 @@ const availableTasks = ref([])
 function canEdit(order) {
   if (currentRole.value === ROLES.MANAGER) return false
   if (order.process !== myProcess.value) return false
-  if (['승인 완료', '작업 완료'].includes(order.status)) return false
+  if (order.status === '승인 완료') return false
   return true
 }
 
@@ -328,7 +313,7 @@ function blankOrder() {
     photos: [],
     author: currentRole.value === ROLES.WORKER ? `나(${myProcess.value} 담당)` : '관리자',
     createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    status: '작성 전',
+    status: '승인 대기',
     history: [],
   }
 }
@@ -499,10 +484,6 @@ function removeFile(idx) {
   editing.value.files.splice(idx, 1)
 }
 
-function saveDraft() {
-  persist('임시 저장', '임시 저장')
-}
-
 async function submitOrder() {
   const r = editing.value
   if (!r.partner.trim() || !r.location.trim() || !r.workTime.trim() || !r.workDetail.trim()) {
@@ -551,21 +532,6 @@ async function submitOrder() {
     console.error('API 에러:', error)
     alert('저장 실패: 서버 오류가 발생했습니다.')
   }
-}
-
-function persist(newStatus, historyLabel) {
-  const r = editing.value
-  delete r.equipmentInput
-  r.status = newStatus
-  r.history.push({
-    at: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    who: r.author,
-    what: historyLabel,
-  })
-  const idx = workOrders.value.findIndex((x) => x.id === r.id)
-  if (idx >= 0) workOrders.value.splice(idx, 1, { ...r })
-  else workOrders.value.push({ ...r })
-  closeEditor()
 }
 
 const viewing = ref(null)
@@ -657,9 +623,10 @@ async function fetchTradeOptions() {
     })
     const data = unwrapApiData(response) || []
     
-    // 마스터 공정표 데이터에서 공종명 추출 ('기타' 제외)
+    // 마스터 공정표 데이터에서 실제 공종명만 추출한다. 마일스톤 행은 작업지시서 공종 탭에서 제외.
     const trades = data
-      .map(p => p.tradeName || p.name)
+      .filter((p) => !isMilestoneScheduleRow(p))
+      .map((p) => p.tradeName || p.name)
       .filter(name => name && name !== '기타')
     
     // 중복 제거 후 저장
@@ -718,7 +685,7 @@ async function fetchWorkOrders() {
               ? '반려'
               : dto.statusCode === 'OPEN'
                 ? '승인 대기'
-                : '작성 전',
+                : '승인 대기',
         author: '작성자',
         createdAt: '-',
         files: [],
@@ -1117,7 +1084,6 @@ async function fetchWorkOrders() {
       @remove-photo="removePhoto"
       @file-change="onFileChangeInput"
       @remove-file="removeFile"
-      @save-draft="saveDraft"
       @submit="submitOrder"
     />
 
