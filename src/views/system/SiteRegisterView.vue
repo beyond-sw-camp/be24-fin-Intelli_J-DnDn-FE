@@ -249,12 +249,16 @@ const form = reactive({
   siteCode: '',
   siteName: '',
   address: '',
+  startDate: '',
+  endDate: '',
 })
 
 function openSiteModal() {
   form.siteCode = ''
   form.siteName = ''
   form.address = ''
+  form.startDate = ''
+  form.endDate = ''
   siteModalOpen.value = true
 }
 
@@ -282,16 +286,20 @@ async function submitRegister() {
     window.alert('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.')
     return
   }
+  if (form.startDate && form.endDate && form.endDate < form.startDate) {
+    window.alert('종료일은 시작일보다 이후여야 합니다.')
+    return
+  }
   const combinedName = `[${code}] ${name}`
-  const start = new Date()
-  const end = new Date(start)
-  end.setFullYear(end.getFullYear() + 1)
+  const defaultStart = new Date()
+  const defaultEnd = new Date(defaultStart)
+  defaultEnd.setFullYear(defaultEnd.getFullYear() + 1)
   try {
     await createProject({
       name: combinedName,
       location: address,
-      startDate: isoDate(start),
-      endDate: isoDate(end),
+      startDate: form.startDate || isoDate(defaultStart),
+      endDate: form.endDate || isoDate(defaultEnd),
     })
     closeSiteModal()
     await refreshList()
@@ -342,6 +350,10 @@ async function submitSiteEdit() {
   }
   if (!isValidSiteCode(code)) {
     pushToast('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.', 'warning')
+    return
+  }
+  if (editSiteForm.startDate && editSiteForm.endDate && editSiteForm.endDate < editSiteForm.startDate) {
+    pushToast('종료일은 시작일보다 이후여야 합니다.', 'warning')
     return
   }
   try {
@@ -781,6 +793,26 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 maxlength="120"
               />
             </label>
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.fieldStart }}</span>
+                <input
+                  v-model="form.startDate"
+                  type="date"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm"
+                  :max="form.endDate || undefined"
+                />
+              </label>
+              <label class="block">
+                <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.fieldEnd }}</span>
+                <input
+                  v-model="form.endDate"
+                  type="date"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm"
+                  :min="form.startDate || undefined"
+                />
+              </label>
+            </div>
           </div>
           <div class="flex gap-2 border-t border-forena-50 bg-forena-50/40 px-4 py-3">
             <button
@@ -863,11 +895,17 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                   v-model="editSiteForm.startDate"
                   type="date"
                   class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm"
+                  :max="editSiteForm.endDate || undefined"
                 />
               </label>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.fieldEnd }}</span>
-                <input v-model="editSiteForm.endDate" type="date" class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm" />
+                <input
+                  v-model="editSiteForm.endDate"
+                  type="date"
+                  class="w-full rounded-lg border border-forena-200 px-3 py-2 text-sm"
+                  :min="editSiteForm.startDate || undefined"
+                />
               </label>
             </div>
           </div>
