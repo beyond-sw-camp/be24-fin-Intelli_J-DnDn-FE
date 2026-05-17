@@ -19,6 +19,7 @@ import {
   getAdminAccountRequests,
   approveAccountRequest,
   rejectAccountRequest,
+  checkEmailAvailability,
 } from '@/api/auth.js'
 import { getProjectList, getMilestoneTradeNames } from '@/api/project.js'
 import { userRoleLabel, USER_ROLE } from '@/stores/authStore'
@@ -766,6 +767,32 @@ watch(mainTab, (t) => {
   if (t === 'requests') refreshRequests()
 })
 
+/** 'idle' | 'checking' | 'available' | 'taken' */
+const emailCheckState = ref('idle')
+let emailCheckTimer = null
+
+async function checkEmailAsync(email) {
+  const normalized = normalizeEmail(email)
+  if (!normalized || !isValidEmail(normalized)) {
+    emailCheckState.value = 'idle'
+    return
+  }
+  emailCheckState.value = 'checking'
+  try {
+    const available = await checkEmailAvailability(normalized)
+    emailCheckState.value = available ? 'available' : 'taken'
+  } catch {
+    emailCheckState.value = 'idle'
+  }
+}
+
+function onCreateEmailInput() {
+  formCreate.email = formatEmailInput(formCreate.email)
+  emailCheckState.value = 'idle'
+  if (emailCheckTimer) clearTimeout(emailCheckTimer)
+  emailCheckTimer = setTimeout(() => checkEmailAsync(formCreate.email), 500)
+}
+
 function openCreateModal() {
   modalMode.value = 'create'
   formCreate.loginId = ''
@@ -776,6 +803,8 @@ function openCreateModal() {
   formCreate.role = USER_ROLE.SITE_DIRECTOR
   formCreate.projectIdx = Number.isFinite(projectIdxParam.value) ? projectIdxParam.value : null
   formCreate.trade = ''
+  emailCheckState.value = 'idle'
+  if (emailCheckTimer) clearTimeout(emailCheckTimer)
   modalOpen.value = true
 }
 
@@ -795,6 +824,8 @@ function openEditModal(row) {
 function closeModal() {
   modalOpen.value = false
   editingIdx.value = null
+  emailCheckState.value = 'idle'
+  if (emailCheckTimer) clearTimeout(emailCheckTimer)
 }
 
 function notifyPasswordResetEmailSent() {
@@ -1293,7 +1324,7 @@ watch(
   <div class="space-y-6 pb-10">
     <div
       v-if="toastMsg"
-      class="fixed top-16 left-1/2 z-[100] max-w-[min(92vw,28rem)] -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm font-semibold shadow-lg"
+      class="fixed top-16 left-1/2 z-[300] max-w-[min(92vw,28rem)] -translate-x-1/2 rounded-xl border px-4 py-2.5 text-sm font-semibold shadow-lg"
       :class="
         toastVariant === 'danger'
           ? 'border-rose-200 bg-rose-50 text-rose-900'
@@ -2116,19 +2147,38 @@ watch(
                   @input="formCreate.phone = formatPhoneNumber(formCreate.phone)"
                 />
               </label>
-              <label class="block">
+              <div class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">{{ T.email }}</span>
-                <input
-                  v-model="formCreate.email"
-                  type="email"
-                  class="w-full rounded-lg border border-forena-200 px-3 py-2"
-                  placeholder="name@example.com"
-                  maxlength="80"
-                  autocomplete="email"
-                  @input="formCreate.email = formatEmailInput(formCreate.email)"
-                  @blur="formCreate.email = normalizeEmail(formCreate.email)"
-                />
-              </label>
+                <div class="relative">
+                  <input
+                    v-model="formCreate.email"
+                    type="email"
+                    class="w-full rounded-lg border border-forena-200 px-3 py-2 pr-8"
+                    placeholder="name@example.com"
+                    maxlength="80"
+                    autocomplete="email"
+                    @input="onCreateEmailInput"
+                    @blur="formCreate.email = normalizeEmail(formCreate.email)"
+                  />
+                  <span
+                    v-if="emailCheckState === 'available'"
+                    class="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm font-bold text-emerald-500"
+                    aria-label="사용 가능한 이메일"
+                  >✓</span>
+                  <span
+                    v-else-if="emailCheckState === 'taken'"
+                    class="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-sm font-bold text-rose-500"
+                    aria-label="이미 사용 중인 이메일"
+                  >✗</span>
+                  <span
+                    v-else-if="emailCheckState === 'checking'"
+                    class="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[10px] text-forena-400"
+                  >…</span>
+                </div>
+                <p v-if="emailCheckState === 'taken'" class="mt-1 text-[11px] font-semibold text-rose-500">
+                  이미 사용 중인 이메일입니다.
+                </p>
+              </div>
               <label class="block">
                 <span class="mb-1 block text-[11px] font-bold text-forena-500">이름</span>
                 <input

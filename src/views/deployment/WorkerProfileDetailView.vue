@@ -19,7 +19,6 @@ import {
   fetchWorkerDocs,
   fetchWorkerAttendance,
   fetchWorkerDeployments,
-  fetchWorkerPenalties,
   fetchWorkerAccidents,
 } from '@/api/worker.js'
 import {
@@ -61,6 +60,7 @@ const T = {
   docBtnDownload: '다운로드',
   docNoFileUrl: '파일 주소 없음',
   colDate: '일자',
+  colDateTime: '일자/시간',
   colClock: '출·퇴근',
   colMan: '공수',
   colSite: '현장',
@@ -118,6 +118,21 @@ function normalizeApiDate(d) {
   return String(d)
 }
 
+// LocalDateTime 배열 [y,mo,day,h,min,...] 또는 문자열 → "YYYY-MM-DD HH:mm"
+function normalizeApiDateTime(dt) {
+  if (dt == null) return ''
+  if (typeof dt === 'string') {
+    // "2026-05-17T14:30:00" 또는 "2026-05-17 14:30:00"
+    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(dt)
+    return m ? `${m[1]} ${m[2]}` : dt.slice(0, 16)
+  }
+  if (Array.isArray(dt) && dt.length >= 5) {
+    const [y, mo, day, h, min] = dt
+    return `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')} ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+  }
+  return String(dt)
+}
+
 function formatRegisteredAt(raw) {
   const s = normalizeApiDate(raw)
   if (!s) return '—'
@@ -168,17 +183,19 @@ function mapAttendanceRow(a) {
 }
 
 function mapDeploymentRow(d) {
-  const date = normalizeApiDate(d.assignedAt)
+  // confirmedAt(LocalDateTime)이 있으면 날짜+시간, 없으면 날짜만
+  const dateTime = d.confirmedAt != null
+    ? normalizeApiDateTime(d.confirmedAt)
+    : normalizeApiDate(d.assignedAt)
+  const rawTrade = d.tradeName ?? d.assignedTrade
   const trade =
-    d.assignedTrade != null && String(d.assignedTrade).trim() !== ''
-      ? String(d.assignedTrade).trim()
-      : ''
+    rawTrade != null && String(rawTrade).trim() !== '' ? String(rawTrade).trim() : ''
   const note = trade || '—'
   const zoneLine =
     d.zoneDisplay != null && String(d.zoneDisplay).trim() !== ''
       ? String(d.zoneDisplay).trim()
       : formatWorkerZoneDisplay(d.zoneMain, d.zoneSub, d.zone)
-  return { date, zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—', note }
+  return { date: dateTime, zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—', note }
 }
 
 function mapSanctionRow(s) {
@@ -223,15 +240,14 @@ function tradeHintFromDeployments(deployments) {
   return first || ''
 }
 
-function buildProfile(p, docs, deployments, penalties, attendanceRows, accidentsRows) {
+function buildProfile(p, docs, deployments, attendanceRows, accidentsRows) {
   let tradeText = pickWorkerTradeSubLabel(p)
   if (!tradeText) tradeText = tradeHintFromDeployments(deployments)
-  const mergedForMeta = { ...p, subLabel: tradeText }
-  const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
-  const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
   const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
   const metaAffiliationLine =
     affiliationKindUpper === 'DIRECT' ? '직영' : tradeText || '—'
+  const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
+  const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
 
   return {
     id: p.idx,
@@ -248,7 +264,6 @@ function buildProfile(p, docs, deployments, penalties, attendanceRows, accidents
     documents: Array.isArray(docs) ? docs : [],
     attendanceRows,
     zoneHistory: Array.isArray(deployments) ? deployments.map(mapDeploymentRow) : [],
-    sanctions: Array.isArray(penalties) ? penalties.map(mapSanctionRow) : [],
     accidents: Array.isArray(accidentsRows) ? accidentsRows.map(mapAccidentRow) : [],
     fatigue: normalizeFatigueFromProfileApi(p),
   }
@@ -278,11 +293,10 @@ async function loadWorkerFromApi(workerIdx) {
   loading.value = true
   suppressAttendanceMonthWatch = true
   try {
-    const [rawP, docs, dep, pen] = await Promise.all([
+    const [rawP, docs, dep] = await Promise.all([
       fetchWorkerProfile(workerIdx),
       fetchWorkerDocs(workerIdx),
       fetchWorkerDeployments(workerIdx),
-      fetchWorkerPenalties(workerIdx),
     ])
     const p = unwrapWorkerDetailPayload(rawP)
     let accidents = []
@@ -297,7 +311,7 @@ async function loadWorkerFromApi(workerIdx) {
       attendanceCalYear.value,
       attendanceCalMonth.value,
     )
-    profile.value = buildProfile(p, docs, dep, pen, att, accidents)
+    profile.value = buildProfile(p, docs, dep, att, accidents)
     activeWorkerIdx.value = workerIdx
   } catch (e) {
     console.warn('[WorkerProfile] 상세 로드 실패', e)
@@ -839,12 +853,12 @@ const todayAttendanceChip = computed(() => {
               </div>
               <div class="p-4 sm:p-5">
                 <div class="overflow-x-auto rounded-xl border border-forena-100">
-                  <table class="w-full min-w-[280px] text-left text-sm">
+                  <table class="w-full min-w-[340px] text-left text-sm">
                     <thead
                       class="border-b border-forena-100 bg-forena-50/70 text-[10px] font-bold uppercase text-forena-500"
                     >
                       <tr>
-                        <th class="px-4 py-3">{{ T.colDate }}</th>
+                        <th class="px-4 py-3 whitespace-nowrap">{{ T.colDateTime }}</th>
                         <th class="px-4 py-3">{{ T.colZone }}</th>
                         <th class="px-4 py-3">{{ T.colNote }}</th>
                       </tr>
@@ -855,7 +869,7 @@ const todayAttendanceChip = computed(() => {
                         :key="zi"
                         class="border-b border-forena-50 last:border-0"
                       >
-                        <td class="px-4 py-3 tabular-nums text-xs text-slate-600">{{ z.date }}</td>
+                        <td class="px-4 py-3 tabular-nums text-xs text-slate-600 whitespace-nowrap">{{ z.date }}</td>
                         <td class="px-4 py-3 text-xs font-semibold">{{ z.zone }}</td>
                         <td class="px-4 py-3 text-xs">{{ z.note }}</td>
                       </tr>
@@ -865,40 +879,6 @@ const todayAttendanceChip = computed(() => {
               </div>
             </div>
 
-            <div
-              class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white/95 shadow-card"
-            >
-              <div
-                class="flex items-center gap-2 border-b border-forena-100 bg-forena-50/55 px-4 py-3 sm:px-5"
-              >
-                <AlertTriangle class="h-5 w-5 shrink-0 text-rose-500" />
-                <h2 class="text-sm font-bold text-forena-900 sm:text-base">{{ T.tabSanction }}</h2>
-              </div>
-              <div class="p-4 sm:p-5">
-                <div
-                  v-if="!profile.sanctions || profile.sanctions.length === 0"
-                  class="rounded-xl border border-dashed border-forena-200 bg-forena-50/40 py-12 text-center text-sm text-slate-500"
-                >
-                  {{ T.emptySanction }}
-                </div>
-                <ul v-else class="space-y-3">
-                  <li
-                    v-for="(s, si) in profile.sanctions"
-                    :key="si"
-                    class="rounded-xl border border-forena-100 bg-white px-4 py-3 shadow-sm"
-                  >
-                    <div class="flex flex-wrap items-start justify-between gap-2">
-                      <p class="min-w-0 flex-1 text-sm leading-snug text-forena-800">
-                        {{ formatSanctionSummary(s) }}
-                      </p>
-                      <span class="shrink-0 text-[11px] tabular-nums text-slate-500">{{
-                        s.date
-                      }}</span>
-                    </div>
-                  </li>
-                </ul>
-              </div>
-            </div>
           </div>
         </div>
       </section>
