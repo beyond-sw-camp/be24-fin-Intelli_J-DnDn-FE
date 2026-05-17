@@ -361,7 +361,7 @@ async function reloadWaitingPool() {
 
 async function reloadBoard() {
   try {
-    const mains = await getStaffingZones({ rosterDate: rosterDate.value })
+    const mains = await getStaffingZones({ rosterDate: rosterDate.value, siteCode: staffingSiteCode.value || undefined })
     const groups = []
     for (const zm of mains || []) {
       const subZones = []
@@ -468,7 +468,7 @@ async function removeFromSubZone(subZoneId, workerId) {
 
 async function resetAllZones() {
   try {
-    await postStaffingReset(rosterDate.value)
+    await postStaffingReset(rosterDate.value, staffingSiteCode.value || undefined)
     await reloadBoard()
   } catch (e) {
     pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
@@ -765,7 +765,7 @@ async function autoRecommend() {
 async function executeFinalizeSave() {
   closeSaveConfirm()
   try {
-    const raw = await postStaffingSave(rosterDate.value)
+    const raw = await postStaffingSave(rosterDate.value, staffingSiteCode.value || undefined)
     const { assignedCount } = normalizeSaveSummaryRes(raw)
     await reloadBoard()
     pushToast(
