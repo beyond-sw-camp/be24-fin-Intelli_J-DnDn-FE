@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleCheck,
+  Zap,
 } from 'lucide-vue-next'
 import {
   employmentKindDisplay,
@@ -20,12 +21,13 @@ import {
   deriveAttendanceTag,
   attendanceTagBadgeClass,
 } from '@/utils/workerUi'
-import { syncWorkforce, fetchWorkerList } from '@/api/worker.js'
+import { syncWorkforce, syncAllSites, fetchWorkerList } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const isDataLoading = ref(false)
+const isTriggerLoading = ref(false)
 const lastDataRefreshAt = ref(null)
 
 /** 상단 헤더 (근무자 관리) */
@@ -36,6 +38,8 @@ const WM = {
   sectionAttendance: '작업자 근태 현황',
   dataLoad: '데이터 불러오기',
   dataLoadLoading: '불러오는 중...',
+  triggerSync: '전체 동기화',
+  triggerSyncLoading: '동기화 중...',
   lastRefreshLabel: '최종 갱신',
 }
 
@@ -445,6 +449,28 @@ onUnmounted(() => {
   document.removeEventListener('pointerdown', closeFilterCalendarIfOutside, true)
 })
 
+async function onTriggerSync() {
+  if (isTriggerLoading.value) return
+  isTriggerLoading.value = true
+  try {
+    const bulkResult = await syncAllSites(filters.value.date)
+    await refreshWorkerListFromApi()
+    lastDataRefreshAt.value = new Date()
+    const lines = (bulkResult.results ?? []).map((r) =>
+      r.success
+        ? `✓ ${r.siteCode}: 신규 ${r.detail?.created ?? 0}명 · 갱신 ${r.detail?.updated ?? 0}명`
+        : `✗ ${r.siteCode}: ${r.errorMessage ?? '실패'}`,
+    )
+    window.alert(
+      `전체 현장 동기화 완료 (${bulkResult.siteCount}개 현장)\n\n${lines.join('\n')}`,
+    )
+  } catch (err) {
+    window.alert(err?.message || '전체 동기화에 실패했습니다.')
+  } finally {
+    isTriggerLoading.value = false
+  }
+}
+
 async function onDataLoad() {
   if (isDataLoading.value) return
   isDataLoading.value = true
@@ -476,18 +502,32 @@ async function onDataLoad() {
         </div>
       </div>
       <div class="flex flex-col items-end gap-1">
-        <button
-          type="button"
-          :disabled="isDataLoading"
-          class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-60"
-          @click="onDataLoad"
-        >
-          <RefreshCw
-            class="h-3.5 w-3.5 shrink-0 text-flare-600"
-            :class="{ 'animate-spin': isDataLoading }"
-          />
-          {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            :disabled="isTriggerLoading"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+            @click="onTriggerSync"
+          >
+            <Zap
+              class="h-3.5 w-3.5 shrink-0 text-violet-600"
+              :class="{ 'animate-pulse': isTriggerLoading }"
+            />
+            {{ isTriggerLoading ? WM.triggerSyncLoading : WM.triggerSync }}
+          </button>
+          <button
+            type="button"
+            :disabled="isDataLoading"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-60"
+            @click="onDataLoad"
+          >
+            <RefreshCw
+              class="h-3.5 w-3.5 shrink-0 text-flare-600"
+              :class="{ 'animate-spin': isDataLoading }"
+            />
+            {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
+          </button>
+        </div>
         <p
           class="text-right text-[10px] leading-tight font-medium whitespace-nowrap tabular-nums text-forena-500"
         >
