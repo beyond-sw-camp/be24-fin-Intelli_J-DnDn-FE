@@ -14,6 +14,16 @@ export const syncWorkforce = (siteCode, date) => {
 }
 
 /**
+ * MANAGEMENT_001 전체 현장 일괄 동기화 수동 트리거 (스케줄러와 동일 로직)
+ * POST /management/sync/all?date=
+ */
+export const syncAllSites = (date) => {
+  const params = {}
+  if (date != null && String(date).trim() !== '') params.date = date
+  return api.post(`${PATH}/sync/all`, null, { params })
+}
+
+/**
  * MANAGEMENT_003 작업자 목록 조회
  * GET /management/list?siteCode=&date=
  */
