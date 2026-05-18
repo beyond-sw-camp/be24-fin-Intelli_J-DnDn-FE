@@ -172,12 +172,12 @@ function numericProjectId(value) {
 
 function projectIdFromRoute(to, auth) {
   return (
+    numericProjectId(auth.projectId) ??
     numericProjectId(to.params.projectId) ??
     numericProjectId(to.params.projectIdx) ??
     numericProjectId(to.query.projectId) ??
     numericProjectId(to.query.projectIdx) ??
-    numericProjectId(to.query.siteId) ??
-    numericProjectId(auth.projectId)
+    numericProjectId(to.query.siteId)
   )
 }
 
