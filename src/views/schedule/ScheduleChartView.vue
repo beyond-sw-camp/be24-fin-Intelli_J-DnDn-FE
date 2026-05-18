@@ -5,6 +5,7 @@ import { parseFromApi } from '@/utils/ganttParser.js'
 import { listTradeProcessesRaw } from '@/api/tradeProcess.js'
 import { buildGanttData } from '@/utils/scheduleMapper.js'
 import { fetchWorkPlansByProject } from '@/api/workplan.js'
+import { fetchProgressList } from '@/api/analysis.js'
 import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import ScheduleChartAiAnalysisModal from '@/components/schedule/scheduleChart/ScheduleChartAiAnalysisModal.vue'
 import ScheduleChartChangeManagementModal from '@/components/schedule/scheduleChart/ScheduleChartChangeManagementModal.vue'
@@ -183,7 +184,25 @@ function calcActualProgressForTask(plans = []) {
   return roundProgress(weightedProgress / totalWeight)
 }
 
-function attachWorkPlansToTasks(tasks, plans) {
+function buildAnalysisProgressMap(progressRows = []) {
+  const map = new Map()
+
+  progressRows.forEach((row) => {
+    const tradeProcessId = Number(row?.tradeProcessId ?? row?.id ?? row?.idx ?? 0)
+    if (!tradeProcessId) return
+
+    map.set(tradeProcessId, {
+      actualPct: clampPercent(row.actualPct ?? 0),
+      actualSource: row.actualSource ?? 'NONE',
+      latestReportDate: row.latestReportDate ?? '',
+      analysisDate: row.analysisDate ?? row.latestReportDate ?? '',
+    })
+  })
+
+  return map
+}
+
+function attachWorkPlansToTasks(tasks, plans, analysisProgressByTrade = new Map()) {
   const workPlanMap = new Map()
 
   plans.forEach((plan) => {
@@ -199,12 +218,18 @@ function attachWorkPlansToTasks(tasks, plans) {
   return tasks.map((task) => {
     const taskId = Number(task.id)
     const taskWorkPlans = workPlanMap.get(taskId) || []
-    const actualProgress = calcActualProgressForTask(taskWorkPlans)
+    const analysisProgress = analysisProgressByTrade.get(taskId)
+    const actualProgress = analysisProgress
+      ? roundProgress(analysisProgress.actualPct)
+      : calcActualProgressForTask(taskWorkPlans)
 
     return {
       ...task,
       actualProgress,
       actualPct: actualProgress,
+      actualSource: analysisProgress?.actualSource ?? null,
+      latestReportDate: analysisProgress?.latestReportDate ?? '',
+      analysisDate: analysisProgress?.analysisDate ?? '',
       workPlans: taskWorkPlans,
     }
   })
@@ -1039,12 +1064,14 @@ async function loadGanttFromApi() {
   isLoading.value = true
   loadError.value = ''
   try {
-    const rows = await listTradeProcessesRaw({
-      projectId: currentProjectId.value,
-      includeAllTrades: true,
-    })
-
-    const plans = await fetchWorkPlansByProject(currentProjectId.value, { includeAllTrades: true })
+    const [rows, plans, progressRows] = await Promise.all([
+      listTradeProcessesRaw({
+        projectId: currentProjectId.value,
+        includeAllTrades: true,
+      }),
+      fetchWorkPlansByProject(currentProjectId.value, { includeAllTrades: true }),
+      fetchProgressList(currentProjectId.value),
+    ])
 
     if (!rows.length) {
       // 데이터가 아예 없는 현장 — 일단 빈 상태로 두고 사용자가 등록 페이지에서 업로드하도록
@@ -1058,7 +1085,8 @@ async function loadGanttFromApi() {
     // master 키 하나로 묶어 buildGanttData 에 전달 (FirstDocumentUpload 와 동일한 매핑 경로)
     const { tasks, milestones: ms, projectInfo: pi } = buildGanttData({ master: rows })
 
-    const tasksWithWorkPlans = attachWorkPlansToTasks(tasks, plans)
+    const analysisProgressByTrade = buildAnalysisProgressMap(progressRows)
+    const tasksWithWorkPlans = attachWorkPlansToTasks(tasks, plans, analysisProgressByTrade)
 
     const plannedProgress = calcPlannedProgressByToday(tasksWithWorkPlans)
     const actualProgress = calcActualProgressByReports(tasksWithWorkPlans)

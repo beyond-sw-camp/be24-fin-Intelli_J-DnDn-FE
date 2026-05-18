@@ -156,9 +156,9 @@ function onSelectProject(project) {
   closeSiteMenu()
   if (!project || !Number.isFinite(project.id)) return
   if (Number(auth.projectId) === project.id) return
-  auth.setProjectId(project.id)
-  const nextQuery = { ...route.query, projectId: String(project.id) }
-  router.replace({ path: route.path, query: nextQuery })
+  const m = /^\[([^\]]+)\]/.exec(String(project.name || '').trim())
+  const newSiteCode = m ? m[1].trim() : ''
+  auth.setProjectIdAndSiteCode(project.id, newSiteCode)
 }
 
 function onLogout() {
