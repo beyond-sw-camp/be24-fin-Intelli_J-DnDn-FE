@@ -51,7 +51,7 @@ const authStore = useAuthStore()
 const { currentProjectId } = useCurrentProject(props.projectId)
 const resolvedProjectId = ref(null)
 const activeProjectId = computed(
-  () => resolvedProjectId.value ?? authStore.projectId ?? currentProjectId.value,
+  () => authStore.projectId ?? resolvedProjectId.value ?? currentProjectId.value,
 )
 
 // =====================================================

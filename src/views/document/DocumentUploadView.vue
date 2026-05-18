@@ -33,9 +33,13 @@ import {
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import api from '@/api/index'
-import { getWorkOrderList } from '@/api/workOrder'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
+import { useAuthStore } from '@/stores/authStore.js'
 
 const router = useRouter()
+const authStore = useAuthStore()
+const { currentProjectId: routeProjectId } = useCurrentProject()
+const currentProjectId = computed(() => authStore.projectId ?? routeProjectId.value)
 
 /* ───── 한국어 라벨 ───── */
 const L = {
@@ -60,7 +64,7 @@ const L = {
   tabMasterSchedule: '마스터 공정표',
   tabSubSchedule: '보할 공정표',
   tabMilestone: '마일스톤 공정표',
-  tabConstructionPlan: '공종별 시공계획서',
+  tabConstructionPlan: '업로드 문서',
 
   colDocCode: '문서 코드',
   colDocType: '문서 유형',
@@ -128,6 +132,14 @@ const partnerList = [
 
 /* ───── 문서 목록 (DB에서 로드) ───── */
 const documents = ref([])
+const documentPage = ref({
+  currentPage: 0,
+  totalPages: 1,
+  totalElements: 0,
+  size: 10,
+  isFirst: true,
+  isLast: true,
+})
 const pinnedDocuments = ref([])   // 고정 영역 데이터
 
 /* ───── 작업지시서 / 공사 일보 (별도 API에서 로드) ───── */
@@ -146,7 +158,7 @@ const DOC_TYPE_MAP = {
   'MASTER':      '마스터 공정표',
   'MILESTONE':   '마일스톤 공정표',
   'WEIGHT':      '보할 공정표',
-  'TRADE_PLAN':  '공종별 시공계획서',
+  'TRADE_PLAN':  '업로드 문서',
 }
 
 function mapApiToFront(apiDoc) {
@@ -185,6 +197,48 @@ function mapApiToFront(apiDoc) {
 /* ── 백엔드 응답 배열 → 프론트 배열 변환 ── */
 function mapApiListToFront(apiList) {
   return (apiList || []).map(mapApiToFront)
+}
+
+const DOC_TYPE_LABEL_BY_CODE = {
+  WORK_ORDER: L.tabWorkInstruction,
+  DAILY_REPORT: L.tabDailyReport,
+  TRADE_PLAN: L.tabConstructionPlan,
+}
+
+function mapUploadedToFront(apiDoc) {
+  const docTypeCode = apiDoc.docTypeCode || apiDoc.sourceType || ''
+  const sourceId = apiDoc.sourceId ?? apiDoc.idx
+  const fileName = docTypeCode === 'DAILY_REPORT'
+    ? `[${apiDoc.tradeName || ''}] ${apiDoc.docDate || ''} ${L.tabDailyReport}`.trim()
+    : (apiDoc.fileName || '')
+  const ext = apiDoc.fileExt || (fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : '')
+
+  return {
+    id: docTypeCode === 'TRADE_PLAN' ? sourceId : (apiDoc.id || `${docTypeCode}-${sourceId}`),
+    sourceType: apiDoc.sourceType || docTypeCode,
+    sourceId,
+    docCode: apiDoc.docCode || '',
+    docType: DOC_TYPE_LABEL_BY_CODE[docTypeCode] || docTypeCode,
+    docTypeCode,
+    fileName,
+    fileExt: ext,
+    fileUrl: apiDoc.fileUrl || '',
+    origin: apiDoc.origin || 'hq',
+    partnerName: apiDoc.partnerName || null,
+    uploadDate: apiDoc.uploadDate || '',
+    docDate: apiDoc.docDate || apiDoc.uploadDate || '',
+    uploader: apiDoc.uploader || '',
+    version: apiDoc.version || 'v1.0',
+    fileSize: apiDoc.fileSize || '',
+    status: apiDoc.statusCode || '',
+    downloadable: apiDoc.downloadable !== false,
+    tradeName: apiDoc.tradeName || '',
+    _raw: apiDoc.raw || null,
+  }
+}
+
+function mapUploadedListToFront(apiList) {
+  return (apiList || []).map(mapUploadedToFront)
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -276,6 +330,12 @@ function mapReportToDoc(rp) {
 const API_BASE = window.location.hostname === 'localhost'
     ? 'http://localhost:8080'
     : 'https://www.dndn24.kro.kr/api'
+function authFetch(url, options = {}) {
+  const token = localStorage.getItem('accessToken')
+  const headers = new Headers(options.headers || {})
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  return fetch(url, { ...options, headers })
+}
 const isLoading = ref(false)
 const apiError = ref('')
 
@@ -283,23 +343,60 @@ async function fetchDocuments() {
   isLoading.value = true
   apiError.value = ''
   try {
+    const params = new URLSearchParams({
+      page: String(Math.max(0, currentPage.value - 1)),
+      size: String(rowsPerPage.value),
+      docType: activeDocTypeCode.value,
+      sortField: sortField.value,
+      sortDir: sortDir.value,
+    })
+    if (searchQuery.value.trim()) params.set('q', searchQuery.value.trim())
+    if (dateFilterStart.value) params.set('startDate', dateFilterStart.value)
+    if (dateFilterEnd.value) params.set('endDate', dateFilterEnd.value)
+    if (partnerFilter.value) params.set('partnerName', partnerFilter.value)
+
     // 시공계획서(TRADE_PLAN)만 전체 가져오기
     // (공정표 3종은 고정 영역에서 별도 조회하므로 여기선 제외)
-    const res = await fetch(
-      `${API_BASE}/document-management/${currentProjectId.value}?page=0&size=1000&docType=TRADE_PLAN`
+    const res = await authFetch(
+      `${API_BASE}/document-management/${currentProjectId.value}/uploaded?${params.toString()}`
     )
     const json = await res.json()
-    console.log('[API 응답 - TRADE_PLAN]', json)
+    console.log('[DocumentUpload] page response', json)
 
     if (json.success && json.data) {
-      documents.value = mapApiListToFront(json.data.content)
+      const page = json.data
+      documents.value = mapUploadedListToFront(page.content)
+      documentPage.value = {
+        currentPage: page.currentPage ?? 0,
+        totalPages: Math.max(1, page.totalPages ?? 1),
+        totalElements: page.totalElements ?? 0,
+        size: page.size ?? rowsPerPage.value,
+        isFirst: page.first ?? page.isFirst ?? false,
+        isLast: page.last ?? page.isLast ?? false,
+      }
     } else {
       documents.value = []
+      documentPage.value = {
+        currentPage: 0,
+        totalPages: 1,
+        totalElements: 0,
+        size: rowsPerPage.value,
+        isFirst: true,
+        isLast: true,
+      }
     }
   } catch (e) {
     apiError.value = '서버 연결 실패 — 데이터를 불러올 수 없습니다.'
     console.warn('[DocumentUpload] API fetch failed:', e)
     documents.value = []
+    documentPage.value = {
+      currentPage: 0,
+      totalPages: 1,
+      totalElements: 0,
+      size: rowsPerPage.value,
+      isFirst: true,
+      isLast: true,
+    }
   } finally {
     isLoading.value = false
   }
@@ -308,7 +405,7 @@ async function fetchDocuments() {
 // 고정 영역(공정표 현황) 데이터 가져오기
 async function fetchPinnedSchedules() {
   try {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/document-management/${currentProjectId.value}/pinned`
     )
     const json = await res.json()
@@ -390,8 +487,6 @@ async function fetchReports() {
 onMounted(() => {
   fetchDocuments()
   fetchPinnedSchedules()
-  fetchWorkOrders()
-  fetchReports()
 })
 
 /* ───── 상태 관리 ───── */
@@ -409,9 +504,18 @@ const rowsPerPage = ref(10)
 
 // 공정표 3종: 위쪽 고정 섹션에만 표시, 아래 테이블 탭에서는 제외
 const SCHEDULE_TYPES = [L.tabMasterSchedule, L.tabSubSchedule, L.tabMilestone]
-// 아래 테이블 탭: 공정표 3종 제외 (작업지시서·공사일보·공종별 시공계획서)
+// 아래 테이블 탭: 공정표 3종 제외 (작업지시서·공사일보·업로드 문서)
 const TABLE_DOC_TYPES = [L.tabWorkInstruction, L.tabDailyReport, L.tabConstructionPlan]
 const tabs = [L.tabAll, ...TABLE_DOC_TYPES]
+
+const DOC_TYPE_CODE_BY_TAB = {
+  [L.tabAll]: 'ALL',
+  [L.tabWorkInstruction]: 'WORK_ORDER',
+  [L.tabDailyReport]: 'DAILY_REPORT',
+  [L.tabConstructionPlan]: 'TRADE_PLAN',
+}
+
+const activeDocTypeCode = computed(() => DOC_TYPE_CODE_BY_TAB[currentTab.value] || 'ALL')
 
 /* ───── 새 문서 업로드 폼 ───── */
 const newDoc = ref({
@@ -426,75 +530,27 @@ const newDoc = ref({
 
 /* ───── 통계 ───── */
 /* ───── 아래 테이블 전용 ─────
- * documents: 서버에서 TRADE_PLAN만 가져옴 (공정표 3종 제외 완료)
- * workOrderDocs / reportDocs: 별도 API에서 일괄 로드 (전체)
- * → 모든 탭에서 클라이언트 페이징 사용
+ * documents: 서버에서 현재 페이지의 통합 문서 목록만 가져옴
+ * → 필터/정렬/페이징은 백엔드에서 처리
  */
 const tableDocuments = computed(() => {
-  return [...documents.value, ...workOrderDocs.value, ...reportDocs.value]
+  return documents.value
 })
 
-// 페이지/페이지당 개수 변경 시 — 클라이언트 페이징이므로 서버 재조회 불필요
-
-// ★ 탭 변경 시 페이지 리셋
-watch(currentTab, () => {
-  currentPage.value = 1
-})
-
-/* ───── 필터링 + 정렬 (공정표 3종 제외된 tableDocuments 기준) ───── */
+// 탭/검색/필터/정렬/페이지 변경 시 서버에서 현재 페이지만 재조회
 const filteredDocuments = computed(() => {
-  let result = [...tableDocuments.value]
-
-  if (currentTab.value !== L.tabAll) {
-    result = result.filter((d) => d.docType === currentTab.value)
-  }
-
-  if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    result = result.filter(
-      (d) =>
-        d.docCode.toLowerCase().includes(q) ||
-        d.fileName.toLowerCase().includes(q) ||
-        (d.partnerName && d.partnerName.toLowerCase().includes(q)) ||
-        d.uploader.toLowerCase().includes(q),
-    )
-  }
-
-  // 날짜 범위 필터 (작업지시서·공사일보 탭에서만)
-  if (showDateFilter.value && (dateFilterStart.value || dateFilterEnd.value)) {
-    result = result.filter((d) => {
-      if (dateFilterStart.value && d.docDate < dateFilterStart.value) return false
-      if (dateFilterEnd.value && d.docDate > dateFilterEnd.value) return false
-      return true
-    })
-  }
-
-  // 협력사 필터 (공종별 시공계획서 탭에서만)
-  if (showPartnerFilter.value && partnerFilter.value) {
-    result = result.filter((d) => d.partnerName === partnerFilter.value)
-  }
-
-  result.sort((a, b) => {
-    const aVal = a[sortField.value] || ''
-    const bVal = b[sortField.value] || ''
-    const cmp = aVal > bVal ? 1 : aVal < bVal ? -1 : 0
-    return sortDir.value === 'asc' ? cmp : -cmp
-  })
-
-  return result
+  return [...tableDocuments.value]
 })
 
-/* ───── 페이지네이션 (전 탭 클라이언트 페이징) ───── */
 const totalPages = computed(() => {
-  return Math.max(1, Math.ceil(filteredDocuments.value.length / rowsPerPage.value))
+  return Math.max(1, documentPage.value.totalPages || 1)
 })
 
 const paginatedDocuments = computed(() => {
-  const start = (currentPage.value - 1) * rowsPerPage.value
-  return filteredDocuments.value.slice(start, start + rowsPerPage.value)
+  return filteredDocuments.value
 })
 
-const totalElements = computed(() => filteredDocuments.value.length)
+const totalElements = computed(() => documentPage.value.totalElements || 0)
 
 const pageStart = computed(() =>
   totalElements.value === 0
@@ -538,6 +594,9 @@ const toggleSort = (field) => {
   } else {
     sortField.value = field
     sortDir.value = 'desc'
+  }
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
   }
 }
 
@@ -589,11 +648,11 @@ const DOC_TYPE_REVERSE_MAP = {
   '마스터 공정표':       'MASTER',
   '마일스톤 공정표':     'MILESTONE',
   '보할 공정표':         'WEIGHT',
-  '공종별 시공계획서':   'TRADE_PLAN',
+  '업로드 문서':   'TRADE_PLAN',
 }
 
 /* ───── 현재 프로젝트 ID (실제로는 라우터 파라미터나 store에서 가져올 것) ───── */
-const currentProjectId = ref(1)   // TODO: 실제 프로젝트 ID로 교체
+// currentProjectId is resolved from route query/params or the auth store.
 
 const submitUpload = async () => {
   if (!newDoc.value.docType || !newDoc.value.file) {
@@ -631,7 +690,7 @@ const submitUpload = async () => {
 
     // ※ docName 제거: 백엔드는 file.getOriginalFilename()으로 자동 추출
 
-    const res = await fetch(`${API_BASE}/document-management/upload`, {
+    const res = await authFetch(`${API_BASE}/document-management/upload`, {
       method: 'POST',
       body: formData,
       // ※ Content-Type 은 직접 설정하지 않습니다.
@@ -677,7 +736,7 @@ const submitUpload = async () => {
 const downloadFile = async (id, fileName) => {
   try {
     // 1. 백엔드에서 Presigned URL 받기
-    const res = await fetch(`${API_BASE}/document-management/download/${id}`)
+    const res = await authFetch(`${API_BASE}/document-management/download/${id}`)
     const json = await res.json()
 
     if (!res.ok || !json.success) {
@@ -718,6 +777,45 @@ const showDateFilter = computed(() => DATE_FILTER_TABS.includes(currentTab.value
 /* ───── 협력사 필터 (공종별 시공계획서 탭 전용) ───── */
 const partnerFilter = ref('')
 const showPartnerFilter = computed(() => currentTab.value === L.tabConstructionPlan)
+
+// ?/??/??/??/??? ?? ? ???? ?? ???? ???
+let searchFetchTimer = null
+
+const resetPageAndFetch = () => {
+  selectedRows.value.clear()
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
+  } else {
+    fetchDocuments()
+  }
+}
+
+watch(currentTab, resetPageAndFetch)
+
+watch(searchQuery, () => {
+  selectedRows.value.clear()
+  if (currentPage.value !== 1) {
+    currentPage.value = 1
+    return
+  }
+  window.clearTimeout(searchFetchTimer)
+  searchFetchTimer = window.setTimeout(fetchDocuments, 250)
+})
+
+watch(
+  [currentPage, rowsPerPage, sortField, sortDir, dateFilterStart, dateFilterEnd, partnerFilter],
+  () => {
+    selectedRows.value.clear()
+    fetchDocuments()
+  }
+)
+
+watch(currentProjectId, () => {
+  selectedRows.value.clear()
+  currentPage.value = 1
+  fetchDocuments()
+  fetchPinnedSchedules()
+})
 
 const clearPartnerFilter = () => {
   partnerFilter.value = ''
@@ -783,7 +881,7 @@ const activeDatePreset = computed(() => {
   if (s === fmt(lf) && e === fmt(ll)) return 'lastMonth'
   return 'custom'
 })
-const PINNED_TYPES = [L.tabMasterSchedule, L.tabMilestone, L.tabSubSchedule]
+const PINNED_TYPES = [L.tabMasterSchedule]
 
 const pinnedSchedules = computed(() =>
   PINNED_TYPES.map((type) => {
@@ -1034,7 +1132,7 @@ async function previewFileDoc(doc) {
     console.log('[previewFileDoc] download URL:', `${API_BASE}/document-management/download/${docId}`)
 
     // ★ 변경: Presigned URL 받아서 S3에서 blob 가져오기
-    const res = await fetch(`${API_BASE}/document-management/preview/${docId}`)
+    const res = await authFetch(`${API_BASE}/document-management/preview/${docId}`)
     const json = await res.json()
 
     console.log('[preview 응답]', json)
@@ -1068,9 +1166,13 @@ async function previewFileDoc(doc) {
 
 // 다운로드 버튼 클릭 핸들러 — 미리보기를 먼저 띄우고 모달에서 다운로드
 async function handleDownload(doc) {
+  if (!doc.downloadable) {
+    await previewDoc(doc)
+    return
+  }
   try {
     // 1. presigned URL 받기 (download = attachment)
-    const res = await fetch(`${API_BASE}/document-management/download/${doc.id}`)
+    const res = await authFetch(`${API_BASE}/document-management/download/${doc.id}`)
     const json = await res.json()
 
     if (!res.ok || !json.success) {
@@ -1294,7 +1396,7 @@ const docTypeBadgeClass = (type) => {
     '마스터 공정표':     'bg-violet-50 text-violet-700 ring-violet-200/70',
     '마일스톤 공정표':   'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200/70',
     '보할 공정표':       'bg-indigo-50 text-indigo-700 ring-indigo-200/70',
-    '공종별 시공계획서': 'bg-amber-50 text-amber-700 ring-amber-200/70',
+    '업로드 문서': 'bg-amber-50 text-amber-700 ring-amber-200/70',
   }
   return map[type] || 'bg-slate-50 text-slate-600 ring-slate-200/70'
 }
@@ -1395,7 +1497,7 @@ const docTypeBadgeClass = (type) => {
       <div class="flex items-center gap-2 border-b border-forena-50 px-6 py-3.5">
         <Pin class="h-3.5 w-3.5 text-forena-400" />
         <span class="text-xs font-bold text-forena-700">공정표 현황</span>
-        <span class="text-[11px] text-slate-400">— 유형별 최신 1건 고정</span>
+        <span class="text-[11px] text-slate-400">— 최신 마스터 공정표</span>
       </div>
       <!-- 리스트 헤더 -->
       <div class="grid grid-cols-[200px_minmax(200px,1fr)_160px_140px_140px] border-b border-forena-100 bg-forena-50/60 px-6 py-2.5 text-[11px] font-bold uppercase tracking-wider text-forena-500">

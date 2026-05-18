@@ -32,8 +32,8 @@ export function useCurrentProject(fallbackProjectId = DEFAULT_PROJECT_ID) {
 
   const currentProjectId = computed(
     () =>
-      resolveProjectId(route) ??
       toProjectId(auth.projectId) ??
+      resolveProjectId(route) ??
       toProjectId(fallbackProjectId) ??
       DEFAULT_PROJECT_ID,
   )
