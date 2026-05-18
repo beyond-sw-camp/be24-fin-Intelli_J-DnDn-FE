@@ -31,6 +31,7 @@ defineProps({
   currentSelectedTradeName: { type: String, default: '' },
   isSupervisor: { type: Boolean, default: false },
   currentTradeItem: { type: Object, default: null },
+  loading: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -199,7 +200,10 @@ function createRequestFromAi() {
               </span>
             </div>
           </div>
-          <div v-if="!visibleTasks.length" class="py-12 text-center text-xs text-slate-400">
+          <div v-if="loading" class="py-12 text-center text-xs text-slate-400">
+            지연 위험 작업을 불러오는 중입니다
+          </div>
+          <div v-else-if="!visibleTasks.length" class="py-12 text-center text-xs text-slate-400">
             지연 위험 작업이 없습니다
           </div>
         </div>

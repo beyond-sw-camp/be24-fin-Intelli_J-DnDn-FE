@@ -7,7 +7,7 @@
       <header class="login-header">
         <img :src="leftLogoSrc" alt="DnDn" class="header-logo" />
         <div class="header-text">
-          <span class="header-brand">DnDn</span>
+          <span class="header-brand">DnDn v2</span>
           <span class="header-sub">현장 일정관리 시스템</span>
         </div>
       </header>

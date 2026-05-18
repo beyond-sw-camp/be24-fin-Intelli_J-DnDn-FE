@@ -4,6 +4,10 @@ import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite' // 👈 Tailwind 추가
 
 export default defineConfig({
+    server: {
+    host: '0.0.0.0',
+    port: 5173
+  },
   plugins: [
     vue(),
     tailwindcss(), // 👈 플러그인 등록
@@ -14,3 +18,4 @@ export default defineConfig({
     }
   }
 })
+

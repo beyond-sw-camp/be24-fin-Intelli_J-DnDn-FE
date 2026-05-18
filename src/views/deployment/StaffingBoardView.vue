@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/authStore'
 import {
   X,
   ExternalLink,
@@ -15,8 +16,6 @@ import {
 } from 'lucide-vue-next'
 import {
   getAffiliationKind,
-  formatAffiliationDisplay,
-  getPartnerCompanyName,
   employmentKindDisplay,
 } from '@/utils/workerUi'
 import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
@@ -62,7 +61,6 @@ const T = {
   currentAssign: '현재 배치',
   detailToggle: '상세 구역 · 투입 인원',
   workerTableName: '작업자 이름',
-  colAffil: '소속',
   colTrade: '공종',
   colEmployment: '상용 / 일용',
   colFatigue: '피로도 점수',
@@ -71,11 +69,9 @@ const T = {
   colProfile: '상세 프로필',
   poolHeaderSelectAll: '표시된 미투입 인원 전체 선택',
   showUnassignedOnly: '미투입',
-  filterAffil: '소속 구분',
-  filterPartnerCompany: '협력사 세부',
-  allPartnerCompanies: '협력사 전체',
+  filterAffil: '공종 구분',
   searchWorker: '작업자 검색',
-  searchPh: '이름·소속·공종으로 검색',
+  searchPh: '이름·공종으로 검색',
   assignTarget: '투입 구역',
   assignBtn: '선택 인력 투입',
   assignNeedSelection: '투입할 작업자와 구역을 선택해 주세요.',
@@ -156,23 +152,6 @@ function rosterDateToday() {
 
 const rosterDate = ref(rosterDateToday())
 
-function affiliationDisplayCell(w) {
-  return w.affiliationLine ?? formatAffiliationDisplay(w.affiliation)
-}
-
-/** 소속 열: PARTNER → "구산토건 / 태양목공", DIRECT → "본사" */
-function staffingOrgCell(w) {
-  const line = String(w?.affiliationLine ?? '').trim()
-  const slashIdx = line.indexOf('/')
-  const left = slashIdx !== -1 ? line.slice(0, slashIdx).trim() : line
-  const companyName = left || formatAffiliationDisplay(w?.affiliation)
-  const detail = String(w?.partnerCompanyDetail ?? '').trim()
-  if (detail && companyName && companyName !== '본사') {
-    return `${companyName} / ${detail}`
-  }
-  return companyName
-}
-
 /** 공종 열: affiliationLine 의 공종 구간, 없으면 skills 라벨 */
 function staffingTradeCell(w) {
   const line = String(w?.affiliationLine ?? '').trim()
@@ -198,6 +177,8 @@ function poolEmploymentBadgeClass(label) {
 }
 
 const router = useRouter()
+const authStore = useAuthStore()
+const staffingSiteCode = computed(() => authStore.siteCode)
 
 /** @type {import('vue').Ref<Array<{ id: string, title: string, expanded: boolean, subZones: Array<{ id: string, title: string, expanded: boolean, required: number, tradeNeeds: { trade: string, need: number }[], workers: object[] }> }>>} */
 const zoneGroups = ref([])
@@ -368,6 +349,7 @@ async function reloadWaitingPool() {
   else if (poolAffiliationFilter.value === 'partner') affiliationKind = 'PARTNER'
   const keyword = workerPoolSearch.value.trim()
   const data = await getStaffingWorkerPool({
+    siteCode: staffingSiteCode.value || undefined,
     rosterDate: rosterDate.value,
     affiliationKind,
     keyword: keyword || undefined,
@@ -379,7 +361,7 @@ async function reloadWaitingPool() {
 
 async function reloadBoard() {
   try {
-    const mains = await getStaffingZones({ rosterDate: rosterDate.value })
+    const mains = await getStaffingZones({ rosterDate: rosterDate.value, siteCode: staffingSiteCode.value || undefined })
     const groups = []
     for (const zm of mains || []) {
       const subZones = []
@@ -486,7 +468,7 @@ async function removeFromSubZone(subZoneId, workerId) {
 
 async function resetAllZones() {
   try {
-    await postStaffingReset(rosterDate.value)
+    await postStaffingReset(rosterDate.value, staffingSiteCode.value || undefined)
     await reloadBoard()
   } catch (e) {
     pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
@@ -534,31 +516,29 @@ function closeAssignOverflow() {
 /** 작업자 현황 — 필터 */
 const showOnlyUnassignedInPool = ref(false)
 const poolAffiliationFilter = ref('')
-const poolPartnerCompanyFilter = ref('')
 const workerPoolSearch = ref('')
 
-const poolAffiliationOptions = [
-  { value: '', label: '전체' },
-  { value: 'direct', label: '본사 소속' },
-  { value: 'partner', label: '협력사' },
-]
-
-/** 화면에 등장 가능한 작업자 기준 협력사 목록 (미투입·구역 배치 모두) */
-const poolPartnerCompanyOptions = computed(() => {
-  const set = new Set()
-  const consider = (w) => {
+/** 공종 구분: 본사 + 등장하는 공종명 동적 목록 */
+const poolTradeOptions = computed(() => {
+  const tradeSet = new Set()
+  const addWorker = (w) => {
     if (!workerTagOk(w)) return
-    if (getAffiliationKind(w.affiliation) !== 'partner') return
-    const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
-    if (n) set.add(n)
+    if (getAffiliationKind(w.affiliation) === 'direct') return
+    const trade = staffingTradeCell(w)
+    if (trade && trade !== '—') tradeSet.add(trade)
   }
-  for (const w of waiting.value) consider(w)
+  for (const w of waiting.value) addWorker(w)
   for (const g of zoneGroups.value) {
     for (const sz of g.subZones) {
-      for (const w of sz.workers) consider(w)
+      for (const w of sz.workers) addWorker(w)
     }
   }
-  return [...set].sort((a, b) => a.localeCompare(b, 'ko'))
+  const trades = [...tradeSet].sort((a, b) => a.localeCompare(b, 'ko'))
+  return [
+    { value: '', label: '전체' },
+    { value: '본사', label: '본사' },
+    ...trades.map((t) => ({ value: t, label: t })),
+  ]
 })
 
 const staffingTableRows = computed(() => {
@@ -590,24 +570,17 @@ const staffingTableRows = computed(() => {
 
   let out = rows
   const cat = poolAffiliationFilter.value
-  if (cat) {
-    out = out.filter((r) => getAffiliationKind(r.worker.affiliation) === cat)
-  }
-  const partnerCo = poolPartnerCompanyFilter.value
-  if (cat === 'partner' && partnerCo) {
-    out = out.filter(
-      (r) => getPartnerCompanyName(r.worker.affiliation, r.worker.affiliationLine) === partnerCo,
-    )
+  if (cat === '본사') {
+    out = out.filter((r) => getAffiliationKind(r.worker.affiliation) === 'direct')
+  } else if (cat) {
+    out = out.filter((r) => staffingTradeCell(r.worker) === cat)
   }
   const q = workerPoolSearch.value.trim().toLowerCase()
   if (q) {
     out = out.filter((r) => {
       const name = String(r.worker.name ?? '').toLowerCase()
       const hay = [
-        affiliationDisplayCell(r.worker),
-        staffingOrgCell(r.worker),
         staffingTradeCell(r.worker),
-        String(r.worker.affiliation ?? ''),
       ]
         .join(' ')
         .toLowerCase()
@@ -617,17 +590,12 @@ const staffingTableRows = computed(() => {
   return out
 })
 
-/** 작업자 현황 — 협력체별 그룹 */
+/** 작업자 현황 — 본사 / 공종별 그룹 */
 function poolRowGroupLabel(row) {
   const w = row.worker
-  const kind = getAffiliationKind(w.affiliation)
-  if (kind === 'direct') return '본사 직영'
-  if (kind === 'agency') {
-    const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
-    return n ? `인력 · ${n}` : '인력사무소'
-  }
-  const n = getPartnerCompanyName(w.affiliation, w.affiliationLine)
-  return n || '협력사'
+  if (getAffiliationKind(w.affiliation) === 'direct') return '본사'
+  const trade = staffingTradeCell(w)
+  return trade && trade !== '—' ? trade : '기타'
 }
 
 const staffingTableGrouped = computed(() => {
@@ -639,27 +607,11 @@ const staffingTableGrouped = computed(() => {
     map.get(label).push(row)
   }
   const labels = [...map.keys()].sort((a, b) => {
-    if (a === '본사 직영') return -1
-    if (b === '본사 직영') return 1
+    if (a === '본사') return -1
+    if (b === '본사') return 1
     return a.localeCompare(b, 'ko')
   })
-  return labels.map((label) => {
-    const groupRows = map.get(label)
-    const isDirect = label === '본사 직영'
-    if (isDirect) {
-      return { label, isDirect: true, rows: groupRows, subGroups: null }
-    }
-    // 협력사: 공정별 협력업체(partnerCompanyDetail) 기준 2차 그룹
-    const subMap = new Map()
-    for (const row of groupRows) {
-      const detail = String(row.worker.partnerCompanyDetail ?? '').trim() || '—'
-      if (!subMap.has(detail)) subMap.set(detail, [])
-      subMap.get(detail).push(row)
-    }
-    const subLabels = [...subMap.keys()].sort((a, b) => a.localeCompare(b, 'ko'))
-    const subGroups = subLabels.map((sl) => ({ label: sl, rows: subMap.get(sl) }))
-    return { label, isDirect: false, rows: groupRows, subGroups }
-  })
+  return labels.map((label) => ({ label, rows: map.get(label) }))
 })
 
 /** 그룹 접기 상태 — 키 없음 / true 는 펼침, false 만 접힘 */
@@ -672,19 +624,6 @@ function poolGroupIsOpen(label) {
 function togglePoolGroupExpanded(label) {
   const open = poolGroupExpanded.value[label] !== false
   poolGroupExpanded.value = { ...poolGroupExpanded.value, [label]: !open }
-}
-
-/** 협력사 그룹 내 공정별 협력업체 2차 접기 상태 */
-const poolSubGroupExpanded = ref(/** @type Record<string, boolean> */ ({}))
-
-function poolSubGroupIsOpen(groupLabel, subLabel) {
-  return poolSubGroupExpanded.value[`${groupLabel}::${subLabel}`] !== false
-}
-
-function togglePoolSubGroupExpanded(groupLabel, subLabel) {
-  const key = `${groupLabel}::${subLabel}`
-  const open = poolSubGroupExpanded.value[key] !== false
-  poolSubGroupExpanded.value = { ...poolSubGroupExpanded.value, [key]: !open }
 }
 
 function poolGroupSelectableIds(groupRows) {
@@ -705,14 +644,6 @@ function togglePoolGroupSelectAll(groupRows) {
     selectedWaitingIds.value = [...new Set([...selectedWaitingIds.value, ...ids])]
   }
 }
-
-watch(poolAffiliationFilter, (v) => {
-  if (v !== 'partner') poolPartnerCompanyFilter.value = ''
-})
-
-watch(poolPartnerCompanyFilter, () => {
-  selectedWaitingIds.value = []
-})
 
 watch([poolAffiliationFilter, workerPoolSearch, showOnlyUnassignedInPool], () => {
   selectedWaitingIds.value = []
@@ -819,7 +750,7 @@ async function assignSelectedWorkers() {
 
 async function autoRecommend() {
   try {
-    const raw = await postStaffingAutoRecommend(rosterDate.value)
+    const raw = await postStaffingAutoRecommend(rosterDate.value, staffingSiteCode.value || undefined)
     const { assignedCount, unassignedCount } = normalizeSaveSummaryRes(raw)
     await reloadBoard()
     pushToast(
@@ -834,7 +765,7 @@ async function autoRecommend() {
 async function executeFinalizeSave() {
   closeSaveConfirm()
   try {
-    const raw = await postStaffingSave(rosterDate.value)
+    const raw = await postStaffingSave(rosterDate.value, staffingSiteCode.value || undefined)
     const { assignedCount } = normalizeSaveSummaryRes(raw)
     await reloadBoard()
     pushToast(
@@ -924,6 +855,85 @@ function onToggleUnassignedFilter() {
 function zoneGroupAssignedSum(group) {
   return group.subZones.reduce((s, z) => s + z.workers.length, 0)
 }
+
+const tradeGroupExpanded = ref({})
+
+function isTradeGroupExpanded(tradeName) {
+  return tradeGroupExpanded.value[tradeName] !== false
+}
+
+function toggleTradeGroup(tradeName) {
+  const open = tradeGroupExpanded.value[tradeName] !== false
+  tradeGroupExpanded.value = { ...tradeGroupExpanded.value, [tradeName]: !open }
+}
+
+/**
+ * WorkTrade label(공정) → 공종 카테고리 매핑
+ * 백엔드가 이미 공종명을 반환하는 경우 맵에 없으므로 그대로 통과
+ */
+const TRADE_CATEGORY_MAP = {
+  '형틀': '골조공사',
+  '철근': '골조공사',
+  '골조': '골조공사',
+  '미장': '마감공사',
+  '조적': '마감공사',
+  '도장': '마감공사',
+  '타일': '마감공사',
+  '전기': '전기공사',
+  '설비': '설비공사',
+  '방수': '방수공사',
+  '토공': '토공사',
+  '조경': '조경공사',
+  '포장': '포장공사',
+}
+
+function resolveTradeCategory(raw) {
+  const name = (raw ?? '').trim()
+  return TRADE_CATEGORY_MAP[name] ?? (name || '기타')
+}
+
+const zonesByTrade = computed(() => {
+  const map = new Map()
+  for (const g of zoneGroups.value) {
+    for (const sz of g.subZones) {
+      const category = resolveTradeCategory(sz.tradeName)
+      if (!map.has(category)) map.set(category, [])
+      map.get(category).push({ sz, group: g })
+    }
+  }
+  const categories = [...map.keys()].sort((a, b) => {
+    if (a === '기타') return 1
+    if (b === '기타') return -1
+    return a.localeCompare(b, 'ko')
+  })
+  return categories.map((tradeName) => ({
+    tradeName,
+    entries: map.get(tradeName),
+  }))
+})
+
+function tradeGroupRequiredSum(tg) {
+  return tg.entries.reduce((s, e) => s + Math.max(0, Number(e.sz.required) || 0), 0)
+}
+
+function tradeGroupAssignedSum(tg) {
+  return tg.entries.reduce((s, e) => s + e.sz.workers.length, 0)
+}
+
+function tradeGroupFillRatio(tg) {
+  const need = tradeGroupRequiredSum(tg)
+  const assigned = tradeGroupAssignedSum(tg)
+  if (!need) return 1
+  return Math.min(assigned / need, 1)
+}
+
+function tradeGroupCardBorderClass(tg) {
+  const r = tradeGroupFillRatio(tg)
+  if (r >= 1) return 'border border-emerald-200/90'
+  if (r >= 0.5) return 'border border-amber-200/90'
+  if (r > 0) return 'border border-rose-200/90'
+  return 'border border-white ring-1 ring-slate-200/75'
+}
 </script>
 
 <template>
@@ -978,26 +988,26 @@ function zoneGroupAssignedSum(group) {
 
       <div class="space-y-2">
         <div
-          v-for="group in zoneGroups"
-          :key="group.id"
+          v-for="tg in zonesByTrade"
+          :key="tg.tradeName"
           class="overflow-hidden rounded-lg bg-forena-50/30"
-          :class="zoneGroupCardBorderClass(group)"
+          :class="tradeGroupCardBorderClass(tg)"
         >
           <button
             type="button"
             class="flex w-full flex-col gap-2 px-3 py-2.5 text-left transition hover:bg-forena-100/50 sm:flex-row sm:items-center sm:gap-3"
-            @click="group.expanded = !group.expanded"
+            @click="toggleTradeGroup(tg.tradeName)"
           >
             <div class="flex shrink-0 flex-wrap items-center gap-2">
-              <ChevronRight v-if="!group.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-500" />
+              <ChevronRight v-if="!isTradeGroupExpanded(tg.tradeName)" class="h-3.5 w-3.5 shrink-0 text-forena-500" />
               <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-500" />
-              <span class="font-bold text-forena-900">{{ group.title }}</span>
-              <span class="text-[11px] text-slate-500">({{ group.subZones.length }}개 상세)</span>
+              <span class="font-bold text-forena-900">{{ tg.tradeName }}</span>
+              <span class="text-[11px] text-slate-500">({{ tg.entries.length }}개 공정)</span>
             </div>
             <div
               class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-bold leading-snug"
             >
-              <template v-for="(sz, idx) in group.subZones" :key="sz.id">
+              <template v-for="(entry, idx) in tg.entries" :key="entry.sz.id">
                 <span
                   v-if="idx > 0"
                   class="hidden font-bold text-slate-300 sm:inline"
@@ -1005,49 +1015,49 @@ function zoneGroupAssignedSum(group) {
                   >·</span
                 >
                 <span class="whitespace-nowrap tabular-nums text-forena-900">
-                  {{ sz.title
-                  }}<span>{{ ' ' }}{{ sz.workers.length }}/{{ sz.required }}{{ T.count }}</span>
+                  {{ entry.sz.title
+                  }}<span>{{ ' ' }}{{ entry.sz.workers.length }}/{{ entry.sz.required }}{{ T.count }}</span>
                 </span>
               </template>
             </div>
             <span class="shrink-0 text-[10px] font-bold tabular-nums text-forena-600 sm:ml-auto">
-              {{ zoneGroupAssignedSum(group) }}/{{ zoneGroupRequiredSum(group) }}{{ T.count }} 투입
+              {{ tradeGroupAssignedSum(tg) }}/{{ tradeGroupRequiredSum(tg) }}{{ T.count }} 투입
             </span>
           </button>
 
           <div
-            v-show="group.expanded"
+            v-show="isTradeGroupExpanded(tg.tradeName)"
             class="space-y-3 border-t border-forena-100/80 bg-white/90 px-2 py-3 sm:px-3"
           >
             <div
-              v-for="sz in group.subZones"
-              :key="sz.id"
+              v-for="entry in tg.entries"
+              :key="entry.sz.id"
               class="overflow-hidden rounded-lg border bg-white/95"
-              :class="subZoneCardBorderClass(sz)"
+              :class="subZoneCardBorderClass(entry.sz)"
             >
               <div
                 class="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5"
-                :class="sz.expanded ? 'border-b border-forena-100/90' : ''"
+                :class="entry.sz.expanded ? 'border-b border-forena-100/90' : ''"
               >
                 <button
                   type="button"
                   class="flex min-w-0 max-w-full shrink-0 items-center gap-1.5 text-left"
-                  @click="sz.expanded = !sz.expanded"
+                  @click="entry.sz.expanded = !entry.sz.expanded"
                 >
-                  <ChevronRight v-if="!sz.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-400" />
+                  <ChevronRight v-if="!entry.sz.expanded" class="h-3.5 w-3.5 shrink-0 text-forena-400" />
                   <ChevronDown v-else class="h-3.5 w-3.5 shrink-0 text-forena-400" />
-                  <span class="truncate text-xs font-bold text-forena-900">{{ sz.title }}</span>
+                  <span class="truncate text-xs font-bold text-forena-900">{{ entry.sz.title }}</span>
                 </button>
 
                 <div class="flex min-w-0 flex-wrap items-center gap-1 text-[10px] font-bold text-forena-500">
-                  <span v-if="sz.location" class="rounded-md bg-slate-50 px-1.5 py-0.5">
-                    {{ sz.location }}
+                  <span v-if="entry.sz.location" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ entry.sz.location }}
                   </span>
-                  <span v-if="sz.workTime" class="rounded-md bg-slate-50 px-1.5 py-0.5">
-                    {{ sz.workTime }}
+                  <span v-if="entry.sz.workTime" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ entry.sz.workTime }}
                   </span>
-                  <span v-if="sz.tradeName" class="rounded-md bg-slate-50 px-1.5 py-0.5">
-                    {{ sz.tradeName }}
+                  <span v-if="entry.sz.tradeName" class="rounded-md bg-slate-50 px-1.5 py-0.5">
+                    {{ entry.sz.tradeName }}
                   </span>
                 </div>
 
@@ -1055,14 +1065,12 @@ function zoneGroupAssignedSum(group) {
                   class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2.5 gap-y-1 leading-tight sm:gap-x-3"
                 >
                   <span
-                    v-for="row in zoneTradeProgress(sz)"
+                    v-for="row in zoneTradeProgress(entry.sz)"
                     :key="row.trade"
                     class="whitespace-nowrap text-xs font-bold tabular-nums"
+                    :class="row.fill >= row.need ? 'text-emerald-700' : 'text-rose-600'"
                   >
-                    <span class="text-forena-900">{{ row.label }}</span>
-                    <span :class="row.fill >= row.need ? 'text-emerald-700' : 'text-rose-600'">
-                      {{ ' ' }}{{ row.fill }}/{{ row.need }}{{ T.count }}
-                    </span>
+                    {{ row.fill }}/{{ row.need }}{{ T.count }}
                   </span>
                 </div>
 
@@ -1072,24 +1080,24 @@ function zoneGroupAssignedSum(group) {
                   >
                     <div
                       class="h-full min-w-0 rounded-full transition-all duration-300"
-                      :class="zoneBarClass(sz)"
-                      :style="{ width: Math.round(zoneFillRatio(sz) * 100) + '%' }"
+                      :class="zoneBarClass(entry.sz)"
+                      :style="{ width: Math.round(zoneFillRatio(entry.sz) * 100) + '%' }"
                     />
                   </div>
                   <span class="shrink-0 text-[10px] font-bold tabular-nums text-forena-800">
-                    총 {{ sz.workers.length }}/{{ sz.required }}{{ T.count }}
+                    총 {{ entry.sz.workers.length }}/{{ entry.sz.required }}{{ T.count }}
                   </span>
                   <button
                     type="button"
                     class="shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-forena-50 hover:text-flare-700"
                     :title="T.editZone"
-                    @click.stop="openZoneEdit(group, sz)"
+                    @click.stop="openZoneEdit(entry.group, entry.sz)"
                   >
                     <Pencil class="h-3.5 w-3.5" />
                   </button>
                 </div>
               </div>
-              <div v-if="sz.expanded" class="border-t border-forena-100 bg-white">
+              <div v-if="entry.sz.expanded" class="border-t border-forena-100 bg-white">
                 <div class="overflow-x-auto">
                   <table class="w-full min-w-[720px] text-left text-xs">
                     <thead
@@ -1098,7 +1106,6 @@ function zoneGroupAssignedSum(group) {
                       <tr>
                         <th class="w-8 px-3 py-2" />
                         <th class="px-3 py-2">{{ T.workerTableName }}</th>
-                        <th class="px-3 py-2">{{ T.colAffil }}</th>
                         <th class="px-3 py-2">{{ T.colTrade }}</th>
                         <th class="px-3 py-2 whitespace-nowrap">{{ T.colEmployment }}</th>
                         <th class="px-3 py-2">{{ T.colFatigue }}</th>
@@ -1107,18 +1114,15 @@ function zoneGroupAssignedSum(group) {
                       </tr>
                     </thead>
                     <tbody class="divide-y divide-forena-100 text-forena-800">
-                      <tr v-if="sz.workers.length === 0">
-                        <td colspan="8" class="px-3 py-5 text-center text-slate-400">
+                      <tr v-if="entry.sz.workers.length === 0">
+                        <td colspan="7" class="px-3 py-5 text-center text-slate-400">
                           {{ T.poolEmpty }}
                         </td>
                       </tr>
-                      <tr v-for="w in sz.workers" :key="w.id" class="align-middle">
+                      <tr v-for="w in entry.sz.workers" :key="w.id" class="align-middle">
                         <td class="px-3 py-1.5" />
                         <td class="px-3 py-1.5">
                           <span class="font-semibold text-forena-900">{{ w.name }}</span>
-                        </td>
-                        <td class="px-3 py-1.5 text-[11px] font-medium">
-                          {{ staffingOrgCell(w) }}
                         </td>
                         <td class="px-3 py-1.5 text-[11px] font-medium text-forena-700">
                           {{ staffingTradeCell(w) }}
@@ -1155,7 +1159,7 @@ function zoneGroupAssignedSum(group) {
                             type="button"
                             class="rounded-md p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
                             :title="T.removeZone"
-                            @click="removeFromSubZone(sz.id, w.id)"
+                            @click="removeFromSubZone(entry.sz.id, w.id)"
                           >
                             <X class="h-3.5 w-3.5" />
                           </button>
@@ -1188,29 +1192,11 @@ function zoneGroupAssignedSum(group) {
               class="w-full min-w-[9rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/25 sm:w-44"
             >
               <option
-                v-for="opt in poolAffiliationOptions"
+                v-for="opt in poolTradeOptions"
                 :key="opt.value || 'all'"
                 :value="opt.value"
               >
                 {{ opt.label }}
-              </option>
-            </select>
-          </div>
-
-          <div
-            v-if="poolAffiliationFilter === 'partner'"
-            class="flex w-full min-w-0 flex-col gap-1 sm:w-auto"
-          >
-            <label class="text-[10px] font-bold uppercase tracking-wide text-forena-500">{{
-              T.filterPartnerCompany
-            }}</label>
-            <select
-              v-model="poolPartnerCompanyFilter"
-              class="w-full min-w-[9rem] rounded-xl border border-forena-200 bg-white px-3 py-2 text-xs font-semibold text-forena-900 outline-none focus:ring-2 focus:ring-flare-400/25 sm:w-56"
-            >
-              <option value="">{{ T.allPartnerCompanies }}</option>
-              <option v-for="name in poolPartnerCompanyOptions" :key="name" :value="name">
-                {{ name }}
               </option>
             </select>
           </div>
@@ -1310,7 +1296,6 @@ function zoneGroupAssignedSum(group) {
                 </div>
               </th>
               <th class="px-3 py-3">{{ T.workerTableName }}</th>
-              <th class="px-3 py-3">{{ T.colAffil }}</th>
               <th class="px-3 py-3">{{ T.colTrade }}</th>
               <th class="px-3 py-3 whitespace-nowrap">{{ T.colEmployment }}</th>
               <th class="px-3 py-3">{{ T.colFatiguePool }}</th>
@@ -1320,10 +1305,10 @@ function zoneGroupAssignedSum(group) {
           </thead>
           <tbody class="text-forena-800">
             <tr v-if="staffingTableRows.length === 0">
-              <td colspan="8" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
+              <td colspan="7" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
             </tr>
             <template v-for="grp in staffingTableGrouped" :key="grp.label">
-              <!-- 1차 그룹 헤더 (본사 직영 / 협력 건설사) -->
+              <!-- 그룹 헤더 (본사 / 공종별) -->
               <tr class="border-b border-forena-100 bg-indigo-50/75">
                 <td class="w-11 min-w-[2.75rem] px-3 py-2 align-middle">
                   <div class="flex items-center justify-center" @click.stop>
@@ -1354,166 +1339,67 @@ function zoneGroupAssignedSum(group) {
                 </td>
               </tr>
 
-              <!-- 본사 직영: 2차 그룹 없이 평면 나열 -->
-              <template v-if="grp.isDirect">
-                <tr
-                  v-for="row in grp.rows"
-                  v-show="poolGroupIsOpen(grp.label)"
-                  :key="(row.waitingId || row.worker.id) + row.placement"
-                  class="border-b border-forena-50 transition hover:bg-flare-50/30"
-                >
-                  <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
-                    <div class="flex items-center justify-center">
-                      <input
-                        v-if="row.selectable && row.waitingId"
-                        type="checkbox"
-                        class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
-                        :checked="selectedWaitingIds.includes(row.waitingId)"
-                        @change="toggleSelectWaiting(row.waitingId)"
-                      />
-                    </div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
-                  </td>
-                  <td class="px-3 py-3 text-xs font-medium">{{ staffingOrgCell(row.worker) }}</td>
-                  <td class="px-3 py-3 text-xs font-medium text-forena-700">
-                    {{ staffingTradeCell(row.worker) }}
-                  </td>
-                  <td class="px-3 py-3">
-                    <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
-                      {{ poolEmploymentDisplay(row.worker) }}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <span
-                      class="font-bold tabular-nums"
-                      :title="fatigueTooltipForWorker(row.worker)"
-                      :class="
-                        fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
-                          ? 'text-rose-600'
-                          : 'text-forena-900'
-                      "
-                    >
-                      {{ fatigueScore(row.worker) }}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <span
-                      class="text-xs font-bold"
-                      :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
-                    >
-                      {{ row.placement }}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3 text-center">
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
-                      :title="T.workerDetail"
-                      @click="openWorkerProfile(row.worker)"
-                    >
-                      <ExternalLink class="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              </template>
-
-              <!-- 협력사: 공정별 협력업체 2차 그룹 -->
-              <template v-else>
-                <template v-for="sg in grp.subGroups" :key="sg.label">
-                  <!-- 2차 그룹 헤더 (공정별 협력업체) -->
-                  <tr
-                    v-show="poolGroupIsOpen(grp.label)"
-                    class="border-b border-forena-100 bg-purple-50/60"
+              <!-- 작업자 행 (평면) -->
+              <tr
+                v-for="row in grp.rows"
+                v-show="poolGroupIsOpen(grp.label)"
+                :key="(row.waitingId || row.worker.id) + row.placement"
+                class="border-b border-forena-50 transition hover:bg-flare-50/30"
+              >
+                <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
+                  <div class="flex items-center justify-center">
+                    <input
+                      v-if="row.selectable && row.waitingId"
+                      type="checkbox"
+                      class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
+                      :checked="selectedWaitingIds.includes(row.waitingId)"
+                      @change="toggleSelectWaiting(row.waitingId)"
+                    />
+                  </div>
+                </td>
+                <td class="px-3 py-3">
+                  <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
+                </td>
+                <td class="px-3 py-3 text-xs font-medium text-forena-700">
+                  {{ staffingTradeCell(row.worker) }}
+                </td>
+                <td class="px-3 py-3">
+                  <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
+                    {{ poolEmploymentDisplay(row.worker) }}
+                  </span>
+                </td>
+                <td class="px-3 py-3">
+                  <span
+                    class="font-bold tabular-nums"
+                    :title="fatigueTooltipForWorker(row.worker)"
+                    :class="
+                      fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
+                        ? 'text-rose-600'
+                        : 'text-forena-900'
+                    "
                   >
-                    <td class="w-11 min-w-[2.75rem] px-3 py-1.5 align-middle" />
-                    <td colspan="7" class="py-1.5 pr-3 pl-6">
-                      <div class="flex min-w-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          class="inline-flex shrink-0 items-center justify-center rounded p-0.5 text-purple-700 hover:bg-white/80"
-                          @click="togglePoolSubGroupExpanded(grp.label, sg.label)"
-                        >
-                          <ChevronDown
-                            v-if="poolSubGroupIsOpen(grp.label, sg.label)"
-                            class="h-3.5 w-3.5"
-                          />
-                          <ChevronRight v-else class="h-3.5 w-3.5" />
-                        </button>
-                        <span class="text-[11px] font-bold text-purple-900">{{ sg.label }}</span>
-                        <span class="text-[10px] text-purple-500"
-                          >({{ sg.rows.length }}{{ T.countUnit }})</span
-                        >
-                      </div>
-                    </td>
-                  </tr>
-                  <!-- 2차 그룹 작업자 행 -->
-                  <tr
-                    v-for="row in sg.rows"
-                    v-show="poolGroupIsOpen(grp.label) && poolSubGroupIsOpen(grp.label, sg.label)"
-                    :key="(row.waitingId || row.worker.id) + row.placement"
-                    class="border-b border-forena-50 transition hover:bg-flare-50/30"
+                    {{ fatigueScore(row.worker) }}
+                  </span>
+                </td>
+                <td class="px-3 py-3">
+                  <span
+                    class="text-xs font-bold"
+                    :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
                   >
-                    <td class="w-11 min-w-[2.75rem] px-3 py-3 align-middle">
-                      <div class="flex items-center justify-center">
-                        <input
-                          v-if="row.selectable && row.waitingId"
-                          type="checkbox"
-                          class="h-4 w-4 shrink-0 rounded border-forena-300 text-flare-600 focus:ring-flare-500"
-                          :checked="selectedWaitingIds.includes(row.waitingId)"
-                          @change="toggleSelectWaiting(row.waitingId)"
-                        />
-                      </div>
-                    </td>
-                    <td class="px-3 py-3">
-                      <span class="font-semibold text-forena-900">{{ row.worker.name }}</span>
-                    </td>
-                    <td class="px-3 py-3 text-xs font-medium">
-                      {{ staffingOrgCell(row.worker) }}
-                    </td>
-                    <td class="px-3 py-3 text-xs font-medium text-forena-700">
-                      {{ staffingTradeCell(row.worker) }}
-                    </td>
-                    <td class="px-3 py-3">
-                      <span :class="poolEmploymentBadgeClass(poolEmploymentDisplay(row.worker))">
-                        {{ poolEmploymentDisplay(row.worker) }}
-                      </span>
-                    </td>
-                    <td class="px-3 py-3">
-                      <span
-                        class="font-bold tabular-nums"
-                        :title="fatigueTooltipForWorker(row.worker)"
-                        :class="
-                          fatigueIsHighRisk(fatigueScore(row.worker), row.worker)
-                            ? 'text-rose-600'
-                            : 'text-forena-900'
-                        "
-                      >
-                        {{ fatigueScore(row.worker) }}
-                      </span>
-                    </td>
-                    <td class="px-3 py-3">
-                      <span
-                        class="text-xs font-bold"
-                        :class="row.placement === '미투입' ? 'text-amber-800' : 'text-emerald-800'"
-                      >
-                        {{ row.placement }}
-                      </span>
-                    </td>
-                    <td class="px-3 py-3 text-center">
-                      <button
-                        type="button"
-                        class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
-                        :title="T.workerDetail"
-                        @click="openWorkerProfile(row.worker)"
-                      >
-                        <ExternalLink class="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
-                </template>
-              </template>
+                    {{ row.placement }}
+                  </span>
+                </td>
+                <td class="px-3 py-3 text-center">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-lg border border-forena-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-forena-700 hover:bg-flare-50"
+                    :title="T.workerDetail"
+                    @click="openWorkerProfile(row.worker)"
+                  >
+                    <ExternalLink class="h-3.5 w-3.5" />
+                  </button>
+                </td>
+              </tr>
             </template>
           </tbody>
         </table>

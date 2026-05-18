@@ -54,6 +54,8 @@ const toPlan = (dto) => {
     requiredCount: dto.requiredCount ?? 0,
     workers: normalizeStringList(dto.workers),
     equipment: normalizeStringList(dto.equipment),
+    workersDisplay: dto.workersDisplay ?? dto.workers_display ?? '',
+    equipmentDisplay: dto.equipmentDisplay ?? dto.equipment_display ?? '',
     partner: dto.partner || dto.partnerName || dto.partnerCompany || weeklyInfo.partner || '',
     manager: dto.manager || dto.managerName || dto.managerNm || weeklyInfo.manager || '',
     contact: dto.contact || dto.contactPhone || dto.managerContact || weeklyInfo.contact || '',

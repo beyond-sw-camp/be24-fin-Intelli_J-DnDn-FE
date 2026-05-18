@@ -37,12 +37,15 @@ const emit = defineEmits(['drag-over', 'drop-file', 'file-select', 'remove-file'
 </script>
 
 <template>
-  <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+  <div
+    class="grid gap-4"
+    :class="docTypes.length === 1 ? 'grid-cols-1' : 'md:grid-cols-2 xl:grid-cols-4'"
+  >
     <div
       v-for="dt in docTypes"
       :key="dt.key"
       class="overflow-hidden rounded-2xl border bg-white/95 shadow-card flex flex-col transition"
-      :class="uploads[dt.key].fileName ? 'border-forena-100/90' : 'border-rose-200'"
+      :class="uploads[dt.key].fileName || !dt.required ? 'border-forena-100/90' : 'border-rose-200'"
     >
       <!-- 카드 헤더 -->
       <div
@@ -88,7 +91,11 @@ const emit = defineEmits(['drag-over', 'drop-file', 'file-select', 'remove-file'
           class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
           :class="getStatusClass(uploads[dt.key].status)"
         >
-          {{ getStatusLabel(uploads[dt.key].status) }}
+          {{
+            !dt.required && !uploads[dt.key].fileName
+              ? '선택'
+              : getStatusLabel(uploads[dt.key].status)
+          }}
         </span>
       </div>
 
@@ -278,7 +285,7 @@ const emit = defineEmits(['drag-over', 'drop-file', 'file-select', 'remove-file'
 
         <!-- AI 기능 설명 -->
         <div class="mt-auto">
-          <p class="text-[10px] font-bold uppercase text-forena-400 mb-1.5">AI 분석 항목</p>
+          <p class="text-[10px] font-bold uppercase text-forena-400 mb-1.5">추출/활용 항목</p>
           <div class="flex flex-col gap-1">
             <div
               v-for="cap in dt.aiCapabilities"

@@ -48,6 +48,8 @@ const airQuality = computed(() => dashboard.value?.airQuality ?? null)
 const analysis = computed(() => dashboard.value?.analysis ?? null)
 const forecastDays = computed(() => dashboard.value?.forecastDays ?? [])
 const locationLabel = computed(() => dashboard.value?.locationLabel || '현장')
+const todayDateText = computed(() => getTodayDateText())
+const isFutureReportDate = computed(() => reportDate.value > todayDateText.value)
 const hasWorkOrders = computed(() => workOrderEquipments.value.length > 0)
 
 const sourceLabel = computed(() => getSourceLabel(analysis.value?.sourceType))
@@ -74,7 +76,7 @@ const aiPlanRisks = computed(() =>
 const aiLiveRiskActions = computed(() => aiActionItems.value.map(toLiveRiskAction))
 
 const equipmentRisks = computed(() => {
-  if (!hasWorkOrders.value) return []
+  if (isFutureReportDate.value || !hasWorkOrders.value) return []
 
   return mergeRiskItems(
     buildEquipmentRisksFromWorkOrders(analysis.value, workOrderEquipments.value),
@@ -83,7 +85,7 @@ const equipmentRisks = computed(() => {
 })
 
 const planRisks = computed(() => {
-  if (!hasWorkOrders.value) return []
+  if (isFutureReportDate.value || !hasWorkOrders.value) return []
 
   return mergeRiskItems(
     buildPlanRisksFromWorkOrders(analysis.value, workOrderEquipments.value),
@@ -92,6 +94,8 @@ const planRisks = computed(() => {
 })
 
 const liveRiskActions = computed(() => {
+  if (isFutureReportDate.value) return []
+
   return generateLiveRiskActions(
     analysis.value,
     dashboard.value,
@@ -119,6 +123,11 @@ async function loadDashboard() {
 }
 
 async function loadWorkOrders() {
+  if (isFutureReportDate.value) {
+    workOrderEquipments.value = []
+    return
+  }
+
   try {
     workOrderEquipments.value = await fetchWeatherWorkOrderEquipments(reportDate.value)
   } catch (error) {
@@ -128,6 +137,11 @@ async function loadWorkOrders() {
 }
 
 async function loadWeatherAiAnalysis() {
+  if (isFutureReportDate.value) {
+    aiAnalysisResult.value = null
+    return
+  }
+
   try {
     aiAnalysisResult.value = await fetchWeatherAiAnalysis(reportDate.value)
   } catch (error) {
@@ -175,14 +189,14 @@ watch(monthlyForecast, (weeks) => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4 pb-6">
+  <div class="flex min-h-full flex-col gap-4 pb-8">
     <WeatherControlHeader
       :report-date="reportDate"
       :source-label="sourceLabel"
       @update:report-date="updateReportDate"
     />
 
-    <div class="grid gap-4 xl:grid-cols-[540px_minmax(0,1fr)] xl:items-stretch">
+    <div class="grid shrink-0 gap-4 min-[1760px]:grid-cols-[520px_minmax(0,1fr)] min-[1760px]:items-stretch">
       <div class="flex h-full flex-col gap-4">
         <WeatherSummaryCards
           :today="today"
@@ -201,15 +215,21 @@ watch(monthlyForecast, (weeks) => {
           :loading="loading"
           :actions="liveRiskActions"
           :action-count="liveRiskCount"
+          :is-future-report-date="isFutureReportDate"
         />
       </div>
 
-      <WeatherRiskPanel :plan-risks="planRisks" :equipment-risks="equipmentRisks" />
+      <WeatherRiskPanel
+        :plan-risks="planRisks"
+        :equipment-risks="equipmentRisks"
+        :is-future-report-date="isFutureReportDate"
+      />
     </div>
 
-    <WeatherThreeDayForecast :days="threeDayForecast" :location-label="locationLabel" />
+    <WeatherThreeDayForecast class="shrink-0" :days="threeDayForecast" :location-label="locationLabel" />
 
     <WeatherForecastTabs
+      class="shrink-0"
       :forecast-tab="forecastTab"
       :selected-month-week-id="selectedMonthWeekId"
       :weekly-forecast="weeklyForecast"
