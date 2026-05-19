@@ -15,7 +15,7 @@ import {
   getAdminAccounts,
   putAdminAccount,
 } from '@/api/auth.js'
-import { getProjectList, createProject, updateProject } from '@/api/project.js'
+import { getProjectList, createProject, updateProject, deactivateProject, activateProject } from '@/api/project.js'
 import { USER_ROLE, userRoleLabel } from '@/stores/authStore'
 import {
   formatEmailInput,
@@ -103,19 +103,7 @@ function parseProjectLabel(name) {
 
 /** @param {Record<string, unknown>} p */
 function projectSiteStatusLabel(p) {
-  const st = p.status ?? p.projectStatus ?? p.operatingStatus ?? p.state ?? p.phase
-  if (st != null && String(st).trim() !== '') return String(st).trim()
-  try {
-    if (p.active === false || p.closed === true || p.closed === 'Y') return '종료'
-    const endRaw = p.endDate
-    if (endRaw) {
-      const end = new Date(String(endRaw))
-      if (!Number.isNaN(end.valueOf()) && end < new Date()) return '종료'
-    }
-  } catch {
-    /* ignore */
-  }
-  return '운영 중'
+  return p.active === false ? '운영 종료' : '운영 중'
 }
 
 /** @typedef {{ idx: number, loginId?: string, name?: string, role?: string, siteCode?: string|null, trade?: string|null, active?: boolean, phone?: string|null, email?: string|null }} Acc */
@@ -227,6 +215,7 @@ const rows = computed(() =>
       directorPhone,
       address: p.location?.trim() ? p.location : '—',
       statusLabel: projectSiteStatusLabel(pr),
+      active: p.active !== false,
     }
   }),
 )
@@ -368,6 +357,32 @@ async function submitSiteEdit() {
     await refreshList()
   } catch (e) {
     pushToast(/** @type {Error} */ (e).message || '현장 수정에 실패했습니다.', 'danger')
+  }
+}
+
+async function deactivateSite(row) {
+  if (!row.active) return
+  const ok = window.confirm(`'${row.displayName}' 현장을 운영 종료 처리할까요?\n이후 배치 인력 동기화 대상에서 제외됩니다.`)
+  if (!ok) return
+  try {
+    await deactivateProject(row.idx)
+    pushToast('현장이 운영 종료 처리되었습니다.')
+    await refreshList()
+  } catch (e) {
+    pushToast(e?.message || '운영 종료 처리에 실패했습니다.', 'danger')
+  }
+}
+
+async function activateSite(row) {
+  if (row.active) return
+  const ok = window.confirm(`'${row.displayName}' 현장을 운영 중으로 재개할까요?`)
+  if (!ok) return
+  try {
+    await activateProject(row.idx)
+    pushToast('현장이 운영 중으로 변경되었습니다.')
+    await refreshList()
+  } catch (e) {
+    pushToast(e?.message || '운영 재개 처리에 실패했습니다.', 'danger')
   }
 }
 
@@ -684,7 +699,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
               <th class="whitespace-nowrap px-3 py-3">{{ T.colDirectorPhone }}</th>
               <th class="px-3 py-3">{{ T.colAddress }}</th>
               <th class="whitespace-nowrap px-3 py-3">{{ T.colProjectStatus }}</th>
-              <th class="whitespace-nowrap px-3 py-3 text-center">{{ T.edit }}</th>
+              <th class="whitespace-nowrap px-3 py-3 text-center">관리</th>
               <th class="w-10 px-2 py-3 text-center">
                 <span class="sr-only">상세 이동</span>
               </th>
@@ -712,7 +727,7 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 <span
                   class="inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ring-1"
                   :class="
-                    r.statusLabel === '종료'
+                    r.statusLabel === '운영 종료'
                       ? 'bg-slate-100 text-slate-700 ring-slate-200/80'
                       : 'bg-emerald-50 text-emerald-900 ring-emerald-200/80'
                   "
@@ -721,14 +736,34 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
                 </span>
               </td>
               <td class="px-3 py-3 text-center" @click.stop>
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-forena-700 hover:bg-slate-50"
-                  @click="openEditSite(r)"
-                >
-                  <Pencil class="h-3 w-3" />
-                  {{ T.edit }}
-                </button>
+                <div class="flex items-center justify-center gap-1.5">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-forena-700 hover:bg-slate-50"
+                    @click="openEditSite(r)"
+                  >
+                    <Pencil class="h-3 w-3" />
+                    {{ T.edit }}
+                  </button>
+                  <button
+                    v-if="r.active"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-50"
+                    @click="deactivateSite(r)"
+                  >
+                    <Ban class="h-3 w-3" />
+                    비활성화
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-white px-2 py-1 text-[11px] font-bold text-emerald-700 hover:bg-emerald-50"
+                    @click="activateSite(r)"
+                  >
+                    <Check class="h-3 w-3" />
+                    활성화
+                  </button>
+                </div>
               </td>
               <td class="px-2 py-3 text-center text-forena-400" aria-hidden="true">
                 <ChevronRight class="mx-auto h-4 w-4" />
