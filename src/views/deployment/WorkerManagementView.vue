@@ -14,6 +14,7 @@ import {
   ChevronRight,
   CircleCheck,
   Zap,
+  History,
 } from 'lucide-vue-next'
 import {
   employmentKindDisplay,
@@ -21,14 +22,25 @@ import {
   deriveAttendanceTag,
   attendanceTagBadgeClass,
 } from '@/utils/workerUi'
-import { syncWorkforce, syncAllSites, fetchWorkerList } from '@/api/worker.js'
+import { syncWorkforce, syncAllSites, fetchWorkerList, seedDemoAttendanceHistory, bulkOverrideAttendance } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const isDataLoading = ref(false)
 const isTriggerLoading = ref(false)
+const isSeedLoading = ref(false)
+const isBulkLoading = ref(false)
 const lastDataRefreshAt = ref(null)
+
+const BULK_STATUS_OPTIONS = [
+  { label: '미출근', value: 'PENDING' },
+  { label: '출근',   value: 'PRESENT' },
+  { label: '지각',   value: 'LATE' },
+  { label: '조퇴',   value: 'EARLY_LEAVE' },
+  { label: '퇴근',   value: 'LEAVE' },
+]
+const selectedBulkStatus = ref('PRESENT')
 
 /** 상단 헤더 (근무자 관리) */
 const WM = {
@@ -40,6 +52,10 @@ const WM = {
   dataLoadLoading: '불러오는 중...',
   triggerSync: '전체 동기화',
   triggerSyncLoading: '동기화 중...',
+  seedHistory: '이전 출결내역 불러오기',
+  seedHistoryLoading: '적용 중...',
+  bulkOverride: '일괄 적용',
+  bulkOverrideLoading: '적용 중...',
   lastRefreshLabel: '최종 갱신',
 }
 
@@ -101,13 +117,24 @@ function jobRankBadgeClass(rank) {
   return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
-/** 공종 구분: 현재 조회된 근무자의 공종명 기반 동적 옵션 */
+/** 공종 구분: 서버에서 받은 현장+날짜 기준 전체 공종 목록 */
 const tradeFilterOptions = computed(() => {
-  const trades = [
-    ...new Set(attendanceList.value.map((r) => r.affiliationSubLabel).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b, 'ko'))
+  const trades = availableTradesFromServer.value
   return [{ value: '', label: '전체 공종' }, ...trades.map((t) => ({ value: t, label: t }))]
 })
+
+/** KPI 서버 카운트 → 프론트 태그 매핑 */
+function kpiTagCounts(kpi) {
+  if (!kpi) return { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
+  return {
+    '출근 전': kpi.pending ?? 0,
+    출근: kpi.present ?? 0,
+    지각: kpi.late ?? 0,
+    조퇴: kpi.earlyLeave ?? 0,
+    퇴근: kpi.leave ?? 0,
+    결근: kpi.absent ?? 0,
+  }
+}
 
 /** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
 function localTodayISODate() {
@@ -143,8 +170,19 @@ const SYNC_SITE_CODE = computed(() => authStore.siteCode)
 const filters = ref({
   date: localTodayISODate(),
   selectedTrade: '',
-  searchName: '',
 })
+const searchNameInput = ref('')
+let searchNameDebounceTimer = null
+
+// 페이징
+const currentPage = ref(0)
+const totalPages = ref(0)
+const totalElements = ref(0)
+
+// 서버 KPI
+const globalKpiData = ref(null)   // 전체 근무자 (필터 무관)
+const listKpiData = ref(null)     // 공종+이름 필터 적용 후 전체
+const availableTradesFromServer = ref([])
 
 /** 필터용 인라인 달력 — 요일 헤더 */
 const filterCalWeekDays = ['일', '월', '화', '수', '목', '금', '토']
@@ -248,48 +286,34 @@ const filterDateDisplay = computed(() => {
   }).format(dt)
 })
 
-/** MANAGEMENT_003 — 서버 목록 (비어 있으면 빈 표) */
+/** MANAGEMENT_003 — 현재 페이지 근무자 (50개) */
 const attendanceList = ref([])
-
-const preKindAttendance = computed(() => {
-  let result = attendanceList.value
-  if (filters.value.searchName)
-    result = result.filter((a) => a.name.includes(filters.value.searchName))
-  const trade = filters.value.selectedTrade
-  if (trade) result = result.filter((a) => a.affiliationSubLabel === trade)
-  return result
-})
 
 const ATTENDANCE_STATE_LABELS = ['출근 전', '출근', '지각', '조퇴', '퇴근', '결근']
 const EMPLOYMENT_FILTER_LABELS = ['상용', '일용']
 
 const listStatusFilter = ref('')
-/** 근태 칩과 별개 — '' | '상용' | '일용' */
 const listEmploymentFilter = ref('')
 
-/** 소속·이름 검색만 반영 (목록 우측 고용·근태 칩 집계 기준 풀) */
-const listBaseForStats = computed(() => preKindAttendance.value)
+/** 상단 KPI 카드 — 전체 근무자 (서버 globalKpi, 필터 무관) */
+const kpAttendanceCounts = computed(() => kpiTagCounts(globalKpiData.value))
 
-/** 상단 KPI 5칸 — 조회일 전체 명단 (필터와 무관, 당일 총 작업자 근태 분포) */
-const kpAttendanceCounts = computed(() => {
-  const rows = attendanceList.value
-  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
-  for (const r of rows) {
-    const s = deriveAttendanceTag(r)
-    if (s in acc) acc[s]++
-  }
-  return acc
-})
+/** 목록 집계 근태 칩 — 공종+이름 필터 기준 전체 (서버 listKpi) */
+const attendanceStateCounts = computed(() => kpiTagCounts(listKpiData.value))
 
-/** 상용/일용 적용 후 (근태 칩 집계·필터는 이 결과 위에서 동작) */
+/** 금일 작업자 수 — 필터 적용 후 전체 인원 */
+const todayWorkerCount = computed(() => listKpiData.value?.total ?? 0)
+
+/** 상용/일용 표시 필터 (현재 페이지 기준) */
 const employmentFilteredRows = computed(() => {
-  let rows = listBaseForStats.value
+  let rows = attendanceList.value
   const emp = listEmploymentFilter.value
   if (emp === '상용') rows = rows.filter((r) => r.employmentClass === '상용')
   else if (emp === '일용') rows = rows.filter((r) => r.employmentClass === '일용')
   return rows
 })
 
+/** 테이블 표시 행 — 현재 페이지에서 고용·근태 클라이언트 필터 적용 */
 const filteredAttendance = computed(() => {
   let result = employmentFilteredRows.value
   if (listStatusFilter.value) {
@@ -298,27 +322,15 @@ const filteredAttendance = computed(() => {
   return result
 })
 
-const todayWorkerCount = computed(() => employmentFilteredRows.value.length)
-
+/** 고용 칩 카운트 — 현재 페이지 기준 */
 const employmentCounts = computed(() => {
-  const rows = listBaseForStats.value
-  let sang = 0
-  let il = 0
+  const rows = attendanceList.value
+  let sang = 0, il = 0
   for (const r of rows) {
     if (r.employmentClass === '일용') il++
     else sang++
   }
   return { 상용: sang, 일용: il }
-})
-
-const attendanceStateCounts = computed(() => {
-  const rows = employmentFilteredRows.value
-  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
-  for (const r of rows) {
-    const s = deriveAttendanceTag(r)
-    if (s in acc) acc[s]++
-  }
-  return acc
 })
 
 function toggleListStatusFilter(state) {
@@ -422,23 +434,68 @@ function mapWorkerResToAttendance(row) {
   }
 }
 
-/** MANAGEMENT_003 — 현재 조회일 기준 목록만 갱신 (근태는 이 날짜의 attendance_record 와 매칭) */
-async function refreshWorkerListFromApi() {
-  const listRes = await fetchWorkerList(SYNC_SITE_CODE.value, filters.value.date)
+/** MANAGEMENT_003 — 현재 필터+페이지 기준 목록 갱신 */
+async function refreshWorkerListFromApi(pageOverride) {
+  const pg = pageOverride !== undefined ? pageOverride : currentPage.value
+  const listRes = await fetchWorkerList(SYNC_SITE_CODE.value, filters.value.date, {
+    tradeName: filters.value.selectedTrade || undefined,
+    searchName: searchNameInput.value.trim() || undefined,
+    page: pg,
+    size: 20,
+  })
   const rows = listRes?.rows
   if (Array.isArray(rows)) {
     attendanceList.value = rows.map(mapWorkerResToAttendance)
   }
+  if (listRes) {
+    globalKpiData.value = listRes.globalKpi ?? null
+    listKpiData.value = listRes.listKpi ?? null
+    availableTradesFromServer.value = listRes.availableTrades ?? []
+    currentPage.value = listRes.page ?? 0
+    totalPages.value = listRes.totalPages ?? 0
+    totalElements.value = listRes.totalElements ?? 0
+  }
+}
+
+function goToPage(pg) {
+  if (pg < 0 || pg >= totalPages.value || pg === currentPage.value) return
+  refreshWorkerListFromApi(pg).catch((e) =>
+    console.warn('[WorkerManagement] 페이지 이동 실패', e),
+  )
 }
 
 watch(
   () => filters.value.date,
   () => {
-    refreshWorkerListFromApi().catch((e) =>
+    currentPage.value = 0
+    listStatusFilter.value = ''
+    listEmploymentFilter.value = ''
+    refreshWorkerListFromApi(0).catch((e) =>
       console.warn('[WorkerManagement] 조회일 변경 후 목록 갱신 실패', e),
     )
   },
 )
+
+watch(
+  () => filters.value.selectedTrade,
+  () => {
+    currentPage.value = 0
+    listStatusFilter.value = ''
+    refreshWorkerListFromApi(0).catch((e) =>
+      console.warn('[WorkerManagement] 공종 필터 변경 후 목록 갱신 실패', e),
+    )
+  },
+)
+
+watch(searchNameInput, () => {
+  clearTimeout(searchNameDebounceTimer)
+  searchNameDebounceTimer = setTimeout(() => {
+    currentPage.value = 0
+    refreshWorkerListFromApi(0).catch((e) =>
+      console.warn('[WorkerManagement] 이름 검색 후 목록 갱신 실패', e),
+    )
+  }, 300)
+})
 
 onMounted(() => {
   document.addEventListener('pointerdown', closeFilterCalendarIfOutside, true)
@@ -490,6 +547,41 @@ async function onDataLoad() {
     isDataLoading.value = false
   }
 }
+
+async function onSeedHistory() {
+  if (isSeedLoading.value) return
+  isSeedLoading.value = true
+  try {
+    const result = await seedDemoAttendanceHistory(SYNC_SITE_CODE.value)
+    await refreshWorkerListFromApi()
+    lastDataRefreshAt.value = new Date()
+    window.alert(
+      `이전 출결내역 적용 완료\n근무자 ${result.workers}명 · 출결 레코드 ${result.records}건 · 구역배치 이력 ${result.staffingLogs}건 · 사고 이력 ${result.accidents}건\n(근무자별 피로도 점수가 재산정됩니다.)`,
+    )
+  } catch (err) {
+    window.alert(err?.message || '이전 출결내역 불러오기에 실패했습니다.')
+  } finally {
+    isSeedLoading.value = false
+  }
+}
+
+async function onBulkOverride() {
+  if (isBulkLoading.value) return
+  const statusLabel = BULK_STATUS_OPTIONS.find((o) => o.value === selectedBulkStatus.value)?.label ?? selectedBulkStatus.value
+  const confirmMsg = `${filters.value.date} · ${SYNC_SITE_CODE.value} 현장의\n모든 근무자를 [${statusLabel}] 상태로 일괄 변경합니다.\n계속하시겠습니까?`
+  if (!window.confirm(confirmMsg)) return
+  isBulkLoading.value = true
+  try {
+    const result = await bulkOverrideAttendance(SYNC_SITE_CODE.value, filters.value.date, selectedBulkStatus.value)
+    await refreshWorkerListFromApi()
+    lastDataRefreshAt.value = new Date()
+    window.alert(`일괄 변경 완료: ${result.total}명 → [${statusLabel}]`)
+  } catch (err) {
+    window.alert(err?.message || '일괄 변경에 실패했습니다.')
+  } finally {
+    isBulkLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -503,6 +595,41 @@ async function onDataLoad() {
       </div>
       <div class="flex flex-col items-end gap-1">
         <div class="flex items-center gap-2">
+          <!-- 근태 일괄 변경 -->
+          <div class="flex items-center gap-1">
+            <select
+              v-model="selectedBulkStatus"
+              class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-forena-800 focus:outline-none focus:ring-2 focus:ring-flare-300"
+            >
+              <option v-for="opt in BULK_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              :disabled="isBulkLoading"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              @click="onBulkOverride"
+            >
+              <CircleCheck
+                class="h-3.5 w-3.5 shrink-0 text-slate-500"
+                :class="{ 'animate-spin': isBulkLoading }"
+              />
+              {{ isBulkLoading ? WM.bulkOverrideLoading : WM.bulkOverride }}
+            </button>
+          </div>
+          <button
+            type="button"
+            :disabled="isSeedLoading"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+            @click="onSeedHistory"
+          >
+            <History
+              class="h-3.5 w-3.5 shrink-0 text-emerald-600"
+              :class="{ 'animate-spin': isSeedLoading }"
+            />
+            {{ isSeedLoading ? WM.seedHistoryLoading : WM.seedHistory }}
+          </button>
           <button
             type="button"
             :disabled="isTriggerLoading"
@@ -742,7 +869,7 @@ async function onDataLoad() {
                 aria-hidden="true"
               />
               <input
-                v-model="filters.searchName"
+                v-model="searchNameInput"
                 type="text"
                 :placeholder="T.filterSearchPh"
                 class="w-full rounded-xl border border-forena-200 bg-white py-2.5 pr-4 pl-9 text-sm text-forena-900 outline-none transition placeholder:text-slate-400 focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
@@ -763,6 +890,9 @@ async function onDataLoad() {
                 {{ T.todayWorkerTotal }}
                 <strong class="font-bold text-forena-900">{{ todayWorkerCount }}</strong
                 >{{ T.countPeople }}
+              </span>
+              <span v-if="totalPages > 1" class="text-[11px] text-forena-400 tabular-nums">
+                ({{ currentPage + 1 }}&nbsp;/&nbsp;{{ totalPages }}&nbsp;페이지)
               </span>
             </div>
             <div
@@ -890,6 +1020,32 @@ async function onDataLoad() {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <!-- 페이지네이션 -->
+          <div
+            v-if="totalPages > 1"
+            class="flex items-center justify-center gap-3 border-t border-forena-100 px-4 py-3"
+          >
+            <button
+              type="button"
+              :disabled="currentPage === 0"
+              class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              @click="goToPage(currentPage - 1)"
+            >
+              <ChevronLeft class="h-4 w-4" />
+            </button>
+            <span class="text-xs font-semibold tabular-nums text-forena-700">
+              {{ currentPage + 1 }} / {{ totalPages }}
+              <span class="font-normal text-forena-400">({{ totalElements }}명)</span>
+            </span>
+            <button
+              type="button"
+              :disabled="currentPage >= totalPages - 1"
+              class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              @click="goToPage(currentPage + 1)"
+            >
+              <ChevronRight class="h-4 w-4" />
+            </button>
           </div>
         </div>
       </div>

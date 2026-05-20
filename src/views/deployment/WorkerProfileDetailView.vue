@@ -183,10 +183,8 @@ function mapAttendanceRow(a) {
 }
 
 function mapDeploymentRow(d) {
-  // confirmedAt(LocalDateTime)이 있으면 날짜+시간, 없으면 날짜만
-  const dateTime = d.confirmedAt != null
-    ? normalizeApiDateTime(d.confirmedAt)
-    : normalizeApiDate(d.assignedAt)
+  // 실제 근무일(assignedAt)을 날짜로 표시 — confirmedAt(createdAt)은 사용하지 않음
+  const dateTime = normalizeApiDate(d.assignedAt)
   const rawTrade = d.tradeName ?? d.assignedTrade
   const trade =
     rawTrade != null && String(rawTrade).trim() !== '' ? String(rawTrade).trim() : ''
