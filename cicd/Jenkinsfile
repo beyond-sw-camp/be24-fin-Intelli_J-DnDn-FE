@@ -1,5 +1,5 @@
 pipeline {
-  // 동시 트리거 시 이전 빌드 중단 후 최신만 완료(quietPeriod 로 짧은 연속 신호 완화)
+  // Abort previous frontend builds when concurrent triggers arrive.
   options {
     disableConcurrentBuilds(abortPrevious: true)
     quietPeriod(30)
@@ -62,7 +62,7 @@ spec:
           def isMain = (env.BRANCH_NAME == 'main') || (gitShort == 'main')
           env.TARGET_NAMESPACE = isMain ? 'default' : 'test'
           env.IMAGE_TAG = isMain ? "2.${env.BUILD_NUMBER}" : "test-2.${env.BUILD_NUMBER}"
-          // 프론트와 API가 같은 호스트 Ingress + nginx location /api/ 일 때 동일하게 유지
+          // API requests use the same host path and are routed by Ingress to the gateway.
           env.VITE_API_BASE_URL = '/api'
         }
       }
@@ -115,7 +115,7 @@ spec:
             ).trim()
             def activeVersion   = activeService.contains('blue') ? 'blue' : 'green'
             def inactiveVersion = activeVersion == 'blue' ? 'green' : 'blue'
-            echo "Active: ${activeVersion} → Deploying to: ${inactiveVersion}"
+            echo "Active: ${activeVersion} -> Deploying to: ${inactiveVersion}"
 
             sh "kubectl set image deployment/dndn-frontend-${inactiveVersion} frontend=${env.IMAGE_NAME}:${env.IMAGE_TAG} -n ${env.TARGET_NAMESPACE}"
             sh "kubectl scale deployment/dndn-frontend-${inactiveVersion} --replicas=2 -n ${env.TARGET_NAMESPACE}"

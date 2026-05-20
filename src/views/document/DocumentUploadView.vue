@@ -327,9 +327,8 @@ function mapReportToDoc(rp) {
 }
 
 /* ── API 호출 (마운트 시 + 수동 새로고침) ── */
-const API_BASE = window.location.hostname === 'localhost'
-    ? 'http://localhost:8080'
-    : 'https://www.dndn24.kro.kr/api'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const MSA_API_BASE = `${API_BASE}/msa`
 function authFetch(url, options = {}) {
   const token = localStorage.getItem('accessToken')
   const headers = new Headers(options.headers || {})
@@ -358,7 +357,7 @@ async function fetchDocuments() {
     // 시공계획서(TRADE_PLAN)만 전체 가져오기
     // (공정표 3종은 고정 영역에서 별도 조회하므로 여기선 제외)
     const res = await authFetch(
-      `${API_BASE}/document-management/${currentProjectId.value}/uploaded?${params.toString()}`
+      `${MSA_API_BASE}/document-management/${currentProjectId.value}/uploaded?${params.toString()}`
     )
     const json = await res.json()
     console.log('[DocumentUpload] page response', json)
