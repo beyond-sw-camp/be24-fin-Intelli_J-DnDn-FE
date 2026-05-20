@@ -90,7 +90,10 @@ export const gateClockOut = (body) => api.post(`${PATH}/attendance/gate-clock-ou
 
 /** MANAGEMENT_DEMO 출결 더미 이력 시딩 — 근무자별 피로도 다양화 (현장 단위) */
 export const seedDemoAttendanceHistory = (siteCode) =>
-  api.post(`${PATH}/attendance/seed-demo-history`, null, { params: { siteCode } })
+  api.post(`${PATH}/attendance/seed-demo-history`, null, {
+    params: { siteCode },
+    timeout: 60000,
+  })
 
 /**
  * MANAGEMENT_DEMO 현장+날짜 근태 일괄 변경
