@@ -91,3 +91,12 @@ export async function approveAccountRequest(idx, body = {}) {
 export async function rejectAccountRequest(idx, body) {
   return await api.put(`/admin/account-requests/${idx}/reject`, body ?? {})
 }
+
+/**
+ * 이메일 사용 가능 여부 확인 — true 면 사용 가능, false 면 중복.
+ * @param {string} email
+ * @returns {Promise<boolean>}
+ */
+export async function checkEmailAvailability(email) {
+  return await api.get(`${ADMIN_ACCOUNTS}/check-email`, { params: { email } })
+}

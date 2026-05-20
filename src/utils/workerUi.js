@@ -61,12 +61,8 @@ export function pickWorkerTradeSubLabel(w) {
 }
 
 export function displayWorkerTradeLine(p) {
-  const rawRank = String(p?.jobRank ?? '').trim()
-  const upper = rawRank.toUpperCase()
-  const isDirector = upper === 'SITE_DIRECTOR' || rawRank === '현장 총 책임자'
-  const isSupervisor = upper === 'FIELD_SUPERVISOR' || rawRank === '현장 관리자'
-  if (isDirector) return '총괄'
-  if (isSupervisor) return '관리'
+  const kind = String(p?.affiliationKind ?? '').toUpperCase()
+  if (kind === 'DIRECT') return '직영'
   const sub = pickWorkerTradeSubLabel(p)
   return sub || 'X'
 }

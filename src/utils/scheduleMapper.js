@@ -60,6 +60,15 @@ function isGenericMilestoneLabel(name) {
   return GENERIC_MILESTONE_LABELS.has(String(name).trim())
 }
 
+export function isMilestoneLikeTradeName(name) {
+  if (!name) return false
+  return isGenericMilestoneLabel(name)
+}
+
+export function isMilestoneScheduleRow(row) {
+  return !!row?.isMilestone || isMilestoneLikeTradeName(row?.tradeName)
+}
+
 /**
  * 단일 TradeProcessDto.Res 한 건을 task 로 변환.
  * isMilestone=true 인 행은 호출 측에서 걸러내므로 여기선 그대로 변환.
@@ -195,8 +204,8 @@ export function buildGanttData(buckets) {
   }
 
   // 일반 공정과 마일스톤 분리
-  const milestoneRows = unique.filter((r) => r.isMilestone)
-  const taskRows = unique.filter((r) => !r.isMilestone)
+  const milestoneRows = unique.filter(isMilestoneScheduleRow)
+  const taskRows = unique.filter((r) => !isMilestoneScheduleRow(r))
 
   const tasks = taskRows.map(mapRowToTask)
 

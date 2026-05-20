@@ -35,7 +35,18 @@ import EsgHeroSection from '@/components/esg/EsgHeroSection.vue'
 import EsgMissionSafetySection from '@/components/esg/EsgMissionSafetySection.vue'
 import EsgScoreBreakdownPanel from '@/components/esg/EsgScoreBreakdownPanel.vue'
 import EsgSiteRankingPanel from '@/components/esg/EsgSiteRankingPanel.vue'
-import { LEVEL_THRESHOLDS, resolveLevel } from '@/utils/esg/esgScoreCalculator.js'
+import {
+  ESG_SITE_FLOOR_POINT,
+  ESG_ZONE_FLOOR_POINT,
+  formatEsgFloorProgressScore,
+  getEsgFloorAbsoluteScore,
+  getEsgFloorProgressByPoint,
+  getNextEsgFloorPointByPoint,
+  normalizeCumulativeScore,
+  normalizeFloorLevel,
+  normalizeFloorProgressPoint,
+  resolveEsgFloor,
+} from '@/utils/esg/esgScoreCalculator.js'
 import {
   buildDashboardZones,
   buildEsgBreakdown,
@@ -175,7 +186,7 @@ const siteZones = computed(() => {
     return zones.map((zone) => zeroizeZoneScore(zone))
   }
 
-  return zones
+  return mergeRuntimeZonesWithSnapshot(zones, backendCurrentZoneSnapshots.value)
 })
 
 const selectedZone = computed(() => {
@@ -204,7 +215,7 @@ const currentSiteSummary = computed(() => {
   if (isFutureReportDate.value && snapshot) {
     return {
       score: snapshot.totalScore ?? 0,
-      level: snapshot.level ?? resolveLevel(snapshot.totalScore ?? 0),
+      level: snapshot.level ?? resolveEsgFloor(snapshot.totalScore ?? 0, ESG_SITE_FLOOR_POINT),
       carbon: snapshot.carbonKg ?? 0,
       powerSaving: snapshot.powerSavingKwh ?? 0,
       riskCount: snapshot.riskCount ?? 0,
@@ -213,9 +224,11 @@ const currentSiteSummary = computed(() => {
   }
 
   if (!zones.length) {
+    const cumulativeScore = normalizeCumulativeScore(snapshot?.totalScore ?? 0)
     return {
-      score: snapshot?.totalScore ?? 0,
-      level: snapshot?.level ?? resolveLevel(snapshot?.totalScore ?? 0),
+      score: cumulativeScore,
+      dailyScore: 0,
+      level: snapshot?.level ?? resolveEsgFloor(cumulativeScore, ESG_SITE_FLOOR_POINT),
       carbon: snapshot?.carbonKg ?? 0,
       powerSaving: snapshot?.powerSavingKwh ?? 0,
       riskCount: snapshot?.riskCount ?? 0,
@@ -223,16 +236,15 @@ const currentSiteSummary = computed(() => {
     }
   }
 
-  const workZones = zones.filter((zone) => zone.zoneType === 'work')
-  const supportZones = zones.filter((zone) => zone.zoneType !== 'work')
-  const scoreTargets = workZones.length ? workZones : supportZones
-  const avgScore = scoreTargets.length
-    ? Math.round((scoreTargets.reduce((sum, zone) => sum + zone.score, 0) / scoreTargets.length) * 10) / 10
+  const dailyAverageScore = zones.length
+    ? Math.round((zones.reduce((sum, zone) => sum + Number(zone.dailyScore ?? zone.metrics?.totalScore ?? 0), 0) / zones.length) * 10) / 10
     : 0
+  const cumulativeScore = normalizeCumulativeScore(snapshot?.totalScore ?? dailyAverageScore)
 
   return {
-    score: avgScore,
-    level: resolveLevel(avgScore),
+    score: cumulativeScore,
+    dailyScore: dailyAverageScore,
+    level: snapshot?.level ?? resolveEsgFloor(cumulativeScore, ESG_SITE_FLOOR_POINT),
     carbon: zones.reduce((sum, zone) => sum + Number(zone.carbon || 0), 0),
     powerSaving: zones.reduce((sum, zone) => sum + Number(zone.powerSaving || 0), 0),
     riskCount: calculateOperatingRiskCount(filteredEquipments.value, weatherRiskCount.value),
@@ -256,24 +268,17 @@ const currentSite = computed(() => {
   }
 })
 
-const activeScore = computed(() => isFutureReportDate.value ? currentSite.value.score : (selectedZone.value?.score ?? currentSite.value.score))
-const activeLevel = computed(() => {
-  if (activeScore.value <= 0) return 0
-  const index = LEVEL_THRESHOLDS.findLastIndex((score) => activeScore.value >= score)
-  return Math.max(1, Math.min(7, index + 1))
-})
-const levelProgress = computed(() => {
-  if (activeLevel.value <= 0) return 0
-  const current = LEVEL_THRESHOLDS[activeLevel.value - 1] ?? 0
-  const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
-  return Math.min(100, Math.max(0, Math.round(((activeScore.value - current) / Math.max(1, next - current)) * 100)))
-})
-const nextLevelPoint = computed(() => {
-  if (activeLevel.value <= 0) return Math.max(0, LEVEL_THRESHOLDS[1] - activeScore.value).toFixed(1)
-  const next = LEVEL_THRESHOLDS[activeLevel.value] ?? 100
-  return Math.max(0, next - activeScore.value).toFixed(1)
-})
-const buildingFloors = computed(() => Array.from({ length: 8 }, (_, index) => index + 1))
+const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
+const activeLevel = computed(() => normalizeFloorLevel(selectedZone.value?.level ?? currentSite.value.level ?? 0))
+const levelProgress = computed(() => getEsgFloorProgressByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT))
+const nextLevelPoint = computed(() => getNextEsgFloorPointByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT).toFixed(1))
+const activeFloorPoint = computed(() => normalizeFloorProgressPoint(activeScore.value, ESG_ZONE_FLOOR_POINT))
+const activeFloorScoreLabel = computed(() => formatEsgFloorProgressScore(activeLevel.value, activeScore.value, {
+  decimals: 1,
+  showMax: false,
+  floorPoint: ESG_ZONE_FLOOR_POINT,
+}))
+const buildingFloors = computed(() => Array.from({ length: Math.min(8, Math.max(1, activeLevel.value)) }, (_, index) => index + 1))
 
 const weatherImpact = computed(() => {
   const analysis = weatherAnalysis.value
@@ -305,21 +310,25 @@ const missions = computed(() => buildMissions(selectedZone.value, currentSite.va
 
 const siteRankingItems = computed(() => {
   const current = currentSite.value
-  const merged = sites.value.map((site) => {
-    if (String(site.id) !== String(current.id)) return site
-    return {
-      ...site,
-      ...current,
-    }
-  })
+  const merged = sites.value
+    .filter((site) => isRankingEligibleSite(site))
+    .map((site) => {
+      if (String(site.id) !== String(current.id)) return site
+      return {
+        ...site,
+        ...current,
+      }
+    })
 
-  if (!merged.find((site) => String(site.id) === String(current.id))) {
+  if (isRankingEligibleSite(current) && !merged.find((site) => String(site.id) === String(current.id))) {
     merged.push(current)
   }
 
   return merged.sort((a, b) => {
     if (a.snapshotSaved !== b.snapshotSaved) return a.snapshotSaved ? -1 : 1
-    return b.score - a.score
+    const levelGap = normalizeFloorLevel(b.level) - normalizeFloorLevel(a.level)
+    if (levelGap !== 0) return levelGap
+    return Number(b.score ?? 0) - Number(a.score ?? 0)
   })
 })
 const currentSiteRankIndex = computed(() => {
@@ -343,14 +352,38 @@ const rankingComparison = computed(() => {
     if (!nextRankingSite.value) return '현재 현장만 순위 산정 중입니다.'
     if (!nextRankingSite.value.snapshotSaved) return '현재 현장이 산정 완료 현장 중 1위입니다.'
 
-    const leadPoint = Math.max(0, currentSite.value.score - nextRankingSite.value.score).toFixed(1)
-    return `${nextRankingSite.value.name}보다 ${leadPoint}점 앞서고 있습니다.`
+    const leadPoint = buildFloorGapLabel(
+      getSiteAccumulatedScore(currentSite.value) - getSiteAccumulatedScore(nextRankingSite.value),
+    )
+    return `${nextRankingSite.value.name}보다 ${leadPoint} 앞서고 있습니다.`
   }
 
   const upperSite = upperRankingSite.value
-  const gapPoint = Math.max(0, (upperSite?.score ?? currentSite.value.score) - currentSite.value.score).toFixed(1)
-  return `${currentSiteRank.value - 1}위 ${upperSite?.name ?? '상위 현장'}까지 ${gapPoint}점 차이입니다.`
+  const gapPoint = buildFloorGapLabel(
+    getSiteAccumulatedScore(upperSite ?? currentSite.value) - getSiteAccumulatedScore(currentSite.value),
+  )
+  return `${currentSiteRank.value - 1}위 ${upperSite?.name ?? '상위 현장'}까지 ${gapPoint} 차이입니다.`
 })
+
+function isRankingEligibleSite(site) {
+  const endDate = String(site?.endDate ?? '').trim()
+  if (!endDate) return true
+  return endDate >= reportDate.value
+}
+
+function getSiteAccumulatedScore(site) {
+  return getEsgFloorAbsoluteScore(site?.level ?? 0, site?.score ?? 0, ESG_SITE_FLOOR_POINT)
+}
+
+function buildFloorGapLabel(scoreGap) {
+  const safeGap = Math.max(0, Math.round(Number(scoreGap || 0)))
+  const floorGap = Math.floor(safeGap / ESG_SITE_FLOOR_POINT)
+  const pointGap = safeGap % ESG_SITE_FLOOR_POINT
+
+  if (floorGap > 0 && pointGap > 0) return `${floorGap}층, ${pointGap}점`
+  if (floorGap > 0) return `${floorGap}층`
+  return `${pointGap}점`
+}
 
 const riskActions = computed(() => {
   const risks = [...equipmentRisks.value, ...planRisks.value].slice(0, 3)
@@ -378,7 +411,7 @@ const riskActions = computed(() => {
     {
       id: 'stable',
       title: '현재 기상 조건은 평시 운용 범위',
-      detail: '장비 대기시간과 세척수·전력 피크 관리 미션 중심으로 운영하면 됩니다.',
+      detail: '장비 대기시간과 세척수·게이트 분산 관리 미션 중심으로 운영하면 됩니다.',
       level: '양호',
     },
   ]
@@ -575,6 +608,16 @@ async function persistCurrentSnapshot() {
 }
 
 
+function resolveSummaryZoneStatus(score, risk) {
+  const safeScore = normalizePositiveNumber(score, 0)
+  const safeRisk = normalizePositiveNumber(risk, 0)
+
+  if (safeScore <= 0) return '대기'
+  if (safeRisk >= 7) return '위험'
+  if (safeRisk >= 4) return '관리'
+  return '우수'
+}
+
 function buildSnapshotZones(zoneSnapshots) {
   return normalizeArray(zoneSnapshots).map((snapshot, index) => {
     const score = normalizePositiveNumber(snapshot.totalScore, 0)
@@ -586,14 +629,14 @@ function buildSnapshotZones(zoneSnapshots) {
       name: firstText(snapshot.zoneName, `관리구역 ${index + 1}`),
       type: firstText(snapshot.zoneType, '저장된 ESG 작업구역'),
       score,
-      level: snapshot.level ?? resolveLevel(score),
+      level: snapshot.level ?? resolveEsgFloor(score, ESG_ZONE_FLOOR_POINT),
       rank: index + 1,
       carbon: normalizePositiveNumber(snapshot.carbonKg, 0),
       powerSaving: normalizePositiveNumber(snapshot.powerSavingKwh, 0),
       risk: normalizePositiveNumber(snapshot.riskCount, 0),
       missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
       lead: 0,
-      status: score > 0 ? '저장' : '0%',
+      status: resolveSummaryZoneStatus(score, normalizePositiveNumber(snapshot.riskCount, 0)),
       equipmentCount: normalizePositiveNumber(snapshot.equipmentCount, 0),
       highRiskEquipmentCount: normalizePositiveNumber(snapshot.highRiskEquipmentCount, 0),
       equipmentSummary: '',
@@ -602,6 +645,50 @@ function buildSnapshotZones(zoneSnapshots) {
       metrics,
     }
   })
+}
+
+function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
+  const snapshots = normalizeArray(zoneSnapshots)
+  const cumulativeByName = new Map(
+    snapshots.map((snapshot) => [String(snapshot.zoneName || '').trim(), snapshot]),
+  )
+
+  const runtimeZones = normalizeArray(zones).map((zone) => {
+    const zoneName = String(zone.name || '').trim()
+    const snapshot = cumulativeByName.get(zoneName)
+    const dailyScore = normalizePositiveNumber(zone.score ?? zone.metrics?.totalScore, 0)
+    const cumulativeScore = normalizeCumulativeScore(snapshot?.totalScore ?? dailyScore)
+
+    return {
+      ...zone,
+      dailyScore,
+      score: cumulativeScore,
+      level: snapshot?.level ?? resolveEsgFloor(cumulativeScore, ESG_ZONE_FLOOR_POINT),
+    }
+  })
+
+  const runtimeZoneNames = new Set(
+    runtimeZones.map((zone) => String(zone.name || '').trim()).filter(Boolean),
+  )
+  const snapshotOnlyZones = buildSnapshotZones(snapshots)
+    .filter((zone) => !runtimeZoneNames.has(String(zone.name || '').trim()))
+    .map((zone) => ({
+      ...zone,
+      dailyScore: normalizePositiveNumber(zone.metrics?.totalScore, 0),
+    }))
+
+  return rankVisibleZones([...runtimeZones, ...snapshotOnlyZones])
+}
+
+function rankVisibleZones(zones) {
+  const rankedZones = [...normalizeArray(zones)].sort((left, right) => {
+    return Number(right.score ?? 0) - Number(left.score ?? 0)
+  })
+
+  return rankedZones.map((zone, index) => ({
+    ...zone,
+    rank: index + 1,
+  }))
 }
 
 function buildSnapshotMetrics(snapshot) {
@@ -616,6 +703,11 @@ function buildSnapshotMetrics(snapshot) {
     washTargetCount: 0,
     workLocationCount: 0,
     gateCount: 0,
+    assignedGateEquipmentCount: 0,
+    maxGateEquipmentCount: 0,
+    gateConcentrationRate: 0,
+    gateCongestionRisk: 0,
+    idleReductionScore: environmentScore,
     dustWorkCount: 0,
     weatherRiskCount: normalizePositiveNumber(snapshot.riskCount, 0),
     missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
@@ -627,7 +719,7 @@ function buildSnapshotMetrics(snapshot) {
     estimatedCarbonKg: normalizePositiveNumber(snapshot.carbonKg, 0),
     carbonScore: environmentScore,
     estimatedWashWaterLiters: 0,
-    wastewaterRisk: 0,
+    washWaterDemandRisk: 0,
     waterScore: environmentScore,
     fineDustScore: environmentScore,
     powerPeakRisk: 0,
@@ -678,12 +770,13 @@ function zeroizeZoneScore(zone) {
   return {
     ...zone,
     score: 0,
+    dailyScore: 0,
     level: 0,
     carbon: 0,
     powerSaving: 0,
     risk: 0,
     missionRate: 0,
-    status: '0%',
+    status: '대기',
     metrics,
   }
 }
@@ -920,18 +1013,20 @@ watch(siteZones, (zones) => {
     <EsgHeroSection
       v-model:report-date="reportDate"
       :current-site="currentSite"
+      :selected-zone="selectedZone"
       :last-updated-at="lastUpdatedAt"
       :loading="loading"
       :air-quality="airQuality"
       :safety-days="safetyDays"
-      :zone-count="siteZones.length"
       @refresh="loadAll"
     />
 
-    <section class="grid items-stretch gap-4 xl:grid-cols-[380px_minmax(0,1fr)_380px]">
+    <section class="grid items-stretch gap-4 min-[1440px]:grid-cols-[340px_minmax(560px,1fr)_340px] min-[1720px]:grid-cols-[380px_minmax(0,1fr)_380px]">
       <EsgGrowthPanel
         :active-level="activeLevel"
         :active-score="activeScore"
+        :active-floor-point="activeFloorPoint"
+        :active-floor-score-label="activeFloorScoreLabel"
         :next-level-point="nextLevelPoint"
         :level-progress="levelProgress"
         :building-floors="buildingFloors"

@@ -62,7 +62,7 @@ function colorClass(color, type) {
 </script>
 
 <template>
-  <article class="flex h-full min-h-[720px] flex-col rounded-2xl border border-forena-100 bg-white p-6 shadow-card">
+  <article class="flex h-full min-h-[640px] flex-col rounded-2xl border border-forena-100 bg-white p-5 shadow-card min-[1440px]:h-[680px] min-[1440px]:min-h-0">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h2 class="text-2xl font-black text-forena-900">{{ selectedZone.name }} 점수 분해</h2>
@@ -87,12 +87,12 @@ function colorClass(color, type) {
       </div>
     </div>
 
-    <div class="mt-5 grid gap-3 lg:grid-cols-3">
+    <div class="mt-4 grid gap-3 lg:grid-cols-3">
       <button
         v-for="item in esgBreakdown"
         :key="item.key"
         type="button"
-        class="min-h-[150px] rounded-2xl border p-5 text-left transition"
+        class="min-h-[138px] rounded-2xl border p-4 text-left transition"
         :class="activeEsgKey === item.key ? `${colorClass(item.color, 'soft')} shadow-sm ring-2 ring-emerald-100` : `${colorClass(item.color, 'soft')} opacity-85 hover:opacity-100`"
         @click="activeEsgKey = item.key"
       >
@@ -105,22 +105,22 @@ function colorClass(color, type) {
             <p class="text-[10px] font-bold text-forena-500">/ 100점</p>
           </div>
         </div>
-        <p class="mt-4 text-base font-black text-forena-900">{{ item.key }} · {{ item.title }}</p>
+        <p class="mt-3 text-base font-black text-forena-900">{{ item.key }} · {{ item.title }}</p>
         <p class="mt-1 text-[11px] leading-5 text-forena-500">{{ item.subtitle }}</p>
-        <div class="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
+        <div class="mt-3 h-2 overflow-hidden rounded-full bg-white/80">
           <div class="h-full rounded-full" :class="colorClass(item.color, 'bar')" :style="{ width: `${item.score}%` }" />
         </div>
-        <p class="mt-3 text-[11px] font-bold text-forena-600">
-          구역 점수의 {{ item.weight }}% 가중 → <span :class="colorClass(item.color, 'text')">{{ item.weightedScore }}점 기여</span>
+        <p class="mt-2 text-[11px] font-bold text-forena-600">
+          {{ item.contributionLabel || `작업구역 점수 ${item.weight}% 반영` }} → <span :class="colorClass(item.color, 'text')">{{ item.weightedScore }}점 기여</span>
         </p>
       </button>
     </div>
 
-    <div class="mt-4 grid flex-1 auto-rows-fr gap-3 lg:grid-cols-2">
+    <div class="mt-3 grid gap-3 lg:grid-cols-2">
       <div
         v-for="card in zoneMetricCards"
         :key="card.id"
-        class="rounded-2xl border border-forena-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-card"
+        class="min-h-[150px] rounded-2xl border border-forena-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-card"
       >
         <div class="flex items-start justify-between gap-3">
           <div class="flex min-w-0 items-start gap-3">
@@ -133,8 +133,8 @@ function colorClass(color, type) {
             </div>
           </div>
         </div>
-        <p class="mt-4 text-3xl font-black tabular-nums" :class="card.valueClass">{{ card.value }}</p>
-        <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-forena-100">
+        <p class="mt-3.5 text-[30px] font-black tabular-nums" :class="card.valueClass">{{ card.value }}</p>
+        <div class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-forena-100">
           <div class="h-full rounded-full" :class="card.barClass" :style="{ width: `${card.displayScore}%` }" />
         </div>
       </div>

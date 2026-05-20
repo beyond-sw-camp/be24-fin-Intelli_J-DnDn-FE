@@ -16,10 +16,8 @@ import {
   MapPin,
   CheckCircle2,
   AlertTriangle,
-  Clock,
   ShieldCheck,
   UserCog,
-  Sparkles,
   DoorOpen,
   Search,
 } from 'lucide-vue-next'
@@ -30,6 +28,7 @@ import {
   updateWorkOrder,
   approveWorkOrder,
 } from '@/api/workOrder'
+import { isMilestoneScheduleRow } from '@/utils/scheduleMapper.js'
 import {
   DEFAULT_SAFETY_TEXT,
   DEFAULT_TRADE_OPTIONS,
@@ -124,6 +123,34 @@ const filterPartner = ref('')
 const filterStatus = ref('')
 const searchKeyword = ref('')
 
+const dateInputRef = ref(null)
+
+function openDatePicker() {
+  // 브라우저가 showPicker 기능을 지원하는 경우 달력 창을 강제로 엽니다.
+  if (dateInputRef.value && typeof dateInputRef.value.showPicker === 'function') {
+    dateInputRef.value.showPicker()
+  }
+}
+
+//새롭게 추가할 날짜 이동 로직
+function prevDay() {
+  const d = new Date(filterDate.value)
+  d.setDate(d.getDate() - 1)
+  filterDate.value = d.toISOString().split('T')[0]
+}
+
+function nextDay() {
+  const d = new Date(filterDate.value)
+  d.setDate(d.getDate() + 1)
+  filterDate.value = d.toISOString().split('T')[0]
+}
+
+function goToday() {
+  filterDate.value = todayStr()
+}
+
+const isToday = computed(() => filterDate.value === todayStr())
+
 watch(
   [currentRoleMode, assignedTrade],
   () => {
@@ -138,48 +165,33 @@ watch(
   { immediate: true },
 )
 
-const STATUS_LIST = [
-  '작성 전',
-  '초안 생성',
-  '임시 저장',
-  '승인 대기',
-  '검토 중',
-  '승인 완료',
-  '반려',
-  '작업 완료',
-]
+const STATUS_LIST = ['승인 대기', '승인 완료', '반려']
 const STATUS_META = {
-  '작성 전': { cls: 'bg-slate-100 text-slate-500 ring-slate-200', icon: Clock },
-  '초안 생성': { cls: 'bg-flare-50 text-flare-700 ring-flare-200', icon: Sparkles },
-  '임시 저장': { cls: 'bg-amber-50 text-amber-700 ring-amber-200', icon: Pencil },
   '승인 대기': { cls: 'bg-sky-50 text-sky-700 ring-sky-200', icon: Send },
-  '검토 중': { cls: 'bg-violet-50 text-violet-700 ring-violet-200', icon: Eye },
   '승인 완료': { cls: 'bg-emerald-50 text-emerald-700 ring-emerald-200', icon: CheckCircle2 },
   반려: { cls: 'bg-rose-50 text-rose-700 ring-rose-200', icon: AlertTriangle },
-  '작업 완료': { cls: 'bg-emerald-100 text-emerald-800 ring-emerald-300', icon: CheckCircle2 },
 }
 function statusMeta(s) {
-  return STATUS_META[s] || STATUS_META['작성 전']
+  return STATUS_META[s] || STATUS_META['승인 대기']
 }
 
 const canReviewViewing = computed(
   () =>
     currentRole.value === ROLES.MANAGER &&
     !!viewing.value &&
-    [STATUS_LIST[3], STATUS_LIST[4]].includes(viewing.value.status),
+    viewing.value.status === '승인 대기',
 )
 
 const workOrders = ref([])
 
 const availableTrades = computed(() => {
-  if (isTradeScope.value && assignedTrade.value) return [assignedTrade.value]
-
-  const merged = new Set(tradeOptions.value)
-  workOrders.value.forEach((o) => {
-    const tradeName = normalizeTradeName(o.process)
-    if (tradeName && tradeName !== '기타') merged.add(tradeName)
-  })
-  return sortTrades(Array.from(merged).filter(Boolean))
+  // 1. 공정 담당자: 본인에게 할당된 공종만 반환
+  if (currentRole.value === ROLES.WORKER) {
+    if (isTradeScope.value && assignedTrade.value) return [assignedTrade.value]
+    return myProcess.value ? [myProcess.value] : []
+  }
+  // 2. 현장 총 책임자: 마스터 공정표에 있는 모든 공종 반환
+  return sortTrades(tradeOptions.value)
 })
 
 const visibleTabs = computed(() => {
@@ -274,7 +286,7 @@ const availableTasks = ref([])
 function canEdit(order) {
   if (currentRole.value === ROLES.MANAGER) return false
   if (order.process !== myProcess.value) return false
-  if (['승인 완료', '작업 완료'].includes(order.status)) return false
+  if (order.status === '승인 완료') return false
   return true
 }
 
@@ -301,7 +313,7 @@ function blankOrder() {
     photos: [],
     author: currentRole.value === ROLES.WORKER ? `나(${myProcess.value} 담당)` : '관리자',
     createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    status: '작성 전',
+    status: '승인 대기',
     history: [],
   }
 }
@@ -472,10 +484,6 @@ function removeFile(idx) {
   editing.value.files.splice(idx, 1)
 }
 
-function saveDraft() {
-  persist('임시 저장', '임시 저장')
-}
-
 async function submitOrder() {
   const r = editing.value
   if (!r.partner.trim() || !r.location.trim() || !r.workTime.trim() || !r.workDetail.trim()) {
@@ -524,21 +532,6 @@ async function submitOrder() {
     console.error('API 에러:', error)
     alert('저장 실패: 서버 오류가 발생했습니다.')
   }
-}
-
-function persist(newStatus, historyLabel) {
-  const r = editing.value
-  delete r.equipmentInput
-  r.status = newStatus
-  r.history.push({
-    at: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    who: r.author,
-    what: historyLabel,
-  })
-  const idx = workOrders.value.findIndex((x) => x.id === r.id)
-  if (idx >= 0) workOrders.value.splice(idx, 1, { ...r })
-  else workOrders.value.push({ ...r })
-  closeEditor()
 }
 
 const viewing = ref(null)
@@ -624,42 +617,24 @@ function onKeydown(e) {
 }
 
 async function fetchTradeOptions() {
-  const collected = new Set()
-
-  async function collectFromWorkPlans(planType) {
-    const response = await api.get('/work-plan', {
-      params: { projectId: currentProjectId.value, planType },
-    })
-    unwrapApiData(response).forEach((plan) => {
-      const tradeName = getTradeNameFromPlan(plan)
-      if (tradeName && tradeName !== '기타') collected.add(tradeName)
-    })
-  }
-
   try {
-    await collectFromWorkPlans('주간')
-    if (!collected.size) await collectFromWorkPlans('WEEKLY')
+    const response = await api.get('/trade-process', {
+      params: { projectId: currentProjectId.value },
+    })
+    const data = unwrapApiData(response) || []
+    
+    // 마스터 공정표 데이터에서 실제 공종명만 추출한다. 마일스톤 행은 작업지시서 공종 탭에서 제외.
+    const trades = data
+      .filter((p) => !isMilestoneScheduleRow(p))
+      .map((p) => p.tradeName || p.name)
+      .filter(name => name && name !== '기타')
+    
+    // 중복 제거 후 저장
+    tradeOptions.value = Array.from(new Set(trades))
   } catch (e) {
-    console.warn('주간 공정계획 기준 공종 목록 조회 실패:', e)
+    console.warn('마스터 공정표 기준 공종 목록 조회 실패:', e)
+    tradeOptions.value = []
   }
-
-  if (!collected.size) {
-    try {
-      const response = await api.get('/trade-process', {
-        params: { projectId: currentProjectId.value },
-      })
-      unwrapApiData(response).forEach((process) => {
-        const tradeName = getTradeNameFromPlan(process)
-        if (tradeName && tradeName !== '기타') collected.add(tradeName)
-      })
-    } catch (e) {
-      console.warn('TradeProcess 기준 공종 목록 조회 실패:', e)
-    }
-  }
-
-  tradeOptions.value = sortTrades(
-    Array.from(new Set([...DEFAULT_TRADE_OPTIONS, ...Array.from(collected)])).filter(Boolean),
-  )
   ensureSelectedTrade()
 }
 
@@ -710,7 +685,7 @@ async function fetchWorkOrders() {
               ? '반려'
               : dto.statusCode === 'OPEN'
                 ? '승인 대기'
-                : '작성 전',
+                : '승인 대기',
         author: '작성자',
         createdAt: '-',
         files: [],
@@ -814,22 +789,56 @@ async function fetchWorkOrders() {
     <div
       class="flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-forena-100 bg-white px-4 py-3"
     >
-      <div class="flex items-center gap-1">
-        <CalendarDays class="h-4 w-4 text-flare-600" />
-        <input
-          type="date"
-          v-model="filterDate"
-          class="rounded-md border border-forena-200 bg-white px-2 py-1 text-xs font-semibold tabular-nums text-forena-800 outline-none focus:border-flare-400"
-        />
-      </div>
       <div class="flex items-center gap-1.5">
-        <span class="text-[11px] font-bold text-forena-400">협력사</span>
+  <CalendarDays class="h-4 w-4 text-flare-600" />
+  <span class="text-[11px] font-bold uppercase tracking-wide text-forena-500">조회 일자</span>
+</div>
+
+<div class="flex items-center gap-1">
+  <button
+    @click="prevDay"
+    class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 hover:bg-forena-50 transition"
+  >
+    <ChevronLeft class="h-3.5 w-3.5" />
+  </button>
+  
+  <div class="relative flex items-center">
+    <button
+      @click="openDatePicker"
+      class="rounded-md border border-forena-200 bg-white px-3 py-1.5 text-xs font-bold tabular-nums text-forena-800 hover:bg-forena-50 transition min-w-[140px]"
+    >
+      {{ filterDate.split('-')[0] }}. {{ fmtKor(filterDate) }}
+    </button>
+    
+    <input
+      type="date"
+      ref="dateInputRef"
+      v-model="filterDate"
+      class="absolute left-1/2 top-1/2 -z-10 h-0 w-0 opacity-0 cursor-pointer"
+    />
+  </div>
+  
+  <button
+    @click="nextDay"
+    class="flex h-7 w-7 items-center justify-center rounded-md border border-forena-200 bg-white text-forena-600 hover:bg-forena-50 transition"
+  >
+    <ChevronRight class="h-3.5 w-3.5" />
+  </button>
+  
+  </div>
+      <span class="ml-2 mr-2 text-xs font-semibold text-forena-400 tabular-nums">
+        오늘: {{ filterDate.split('-')[0] }}. {{ fmtKor(todayStr()) }}
+      </span>
+
+      <div class="flex items-center gap-1.5">
+        <span class="text-[11px] font-bold text-forena-400">공종</span>
         <select
-          v-model="filterPartner"
-          class="rounded-md border border-forena-200 bg-white px-2 py-1 text-xs text-forena-800 outline-none focus:border-flare-400"
+          v-model="filterProcess"
+          :disabled="currentRole === ROLES.WORKER"
+          class="rounded-md border border-forena-200 bg-white px-2 py-1 text-xs text-forena-800 outline-none focus:border-flare-400 disabled:bg-slate-50 disabled:text-slate-400"
         >
-          <option value="">전체</option>
-          <option v-for="p in partners" :key="p">{{ p }}</option>
+          <option v-if="currentRole === ROLES.MANAGER" value="all">전체</option>
+          <option v-for="p in availableTrades" :key="p" :value="p">{{ p }}</option>
         </select>
       </div>
       <div class="flex items-center gap-1.5">
@@ -1075,7 +1084,6 @@ async function fetchWorkOrders() {
       @remove-photo="removePhoto"
       @file-change="onFileChangeInput"
       @remove-file="removeFile"
-      @save-draft="saveDraft"
       @submit="submitOrder"
     />
 

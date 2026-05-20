@@ -9,19 +9,22 @@ const PATH = '/staffing'
  * @param {string} [rosterDate] yyyy-MM-dd
  * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
  */
-export async function postStaffingAutoRecommend(rosterDate) {
+export async function postStaffingAutoRecommend(rosterDate, siteCode) {
   const params = {}
   if (rosterDate) params.rosterDate = rosterDate
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
   return await api.post(`${PATH}/auto-recommend`, {}, { params })
 }
 
 /**
  * STAFFING_002 — 배치 초기화
  * @param {string} [rosterDate] yyyy-MM-dd
+ * @param {string} [siteCode]
  */
-export async function postStaffingReset(rosterDate) {
+export async function postStaffingReset(rosterDate, siteCode) {
   const params = {}
   if (rosterDate) params.rosterDate = rosterDate
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
   return await api.post(`${PATH}/reset`, {}, { params })
 }
 
@@ -45,11 +48,13 @@ export async function postStaffingDummySeedZones(opts = {}) {
 /**
  * 최종배치(확정): 현재 staffing_assignment → 해당 일 attendance_record zone_main/zone_sub 반영, confirmed=true
  * @param {string} [rosterDate] yyyy-MM-dd
+ * @param {string} [siteCode]
  * @returns {Promise<{ assignedCount: number, unassignedCount: number }>}
  */
-export async function postStaffingSave(rosterDate) {
+export async function postStaffingSave(rosterDate, siteCode) {
   const params = {}
   if (rosterDate) params.rosterDate = rosterDate
+  if (siteCode != null && String(siteCode).trim() !== '') params.siteCode = String(siteCode).trim()
   return await api.request({
     method: 'POST',
     url: `${PATH}/save`,
@@ -61,6 +66,7 @@ export async function postStaffingSave(rosterDate) {
 export async function getStaffingZones(opts = {}) {
   const params = {}
   if (opts.rosterDate) params.rosterDate = opts.rosterDate
+  if (opts.siteCode != null && String(opts.siteCode).trim() !== '') params.siteCode = String(opts.siteCode).trim()
   return await api.get(`${PATH}/zones`, { params })
 }
 
@@ -109,6 +115,20 @@ export async function postZoneSubAssign(zoneSubIdx, workerIds, rosterDate) {
 }
 
 /**
+ * staffing_log 기준 확정 배치 근무자 조회 (당일 + 현장 필터)
+ * @param {object} [opts]
+ * @param {string} [opts.siteCode]
+ * @param {string} [opts.rosterDate] yyyy-MM-dd
+ * @returns {Promise<Array<{workerIdx, name, affiliationKind, affiliationLine, zoneMainTitle, zoneSubTitle, placement, tradeName, confirmedAt}>>}
+ */
+export async function getStaffingConfirmedWorkers(opts = {}) {
+  const params = {}
+  if (opts.rosterDate) params.rosterDate = opts.rosterDate
+  if (opts.siteCode != null && String(opts.siteCode).trim() !== '') params.siteCode = String(opts.siteCode).trim()
+  return await api.get(`${PATH}/logs`, { params })
+}
+
+/**
  * STAFFING_008 — 작업자 현황
  * @param {object} [opts]
  * @param {StaffingAffiliationKindApi} [opts.affiliationKind]
@@ -118,6 +138,7 @@ export async function postZoneSubAssign(zoneSubIdx, workerIds, rosterDate) {
  */
 export async function getStaffingWorkerPool(opts = {}) {
   const params = {}
+  if (opts.siteCode != null && String(opts.siteCode).trim() !== '') params.siteCode = String(opts.siteCode).trim()
   if (opts.affiliationKind) params.affiliationKind = opts.affiliationKind
   if (opts.keyword != null && String(opts.keyword).trim() !== '') {
     params.keyword = String(opts.keyword).trim()

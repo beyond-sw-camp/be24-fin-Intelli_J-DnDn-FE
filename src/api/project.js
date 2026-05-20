@@ -29,6 +29,22 @@ export async function updateProject(projectId, body) {
 }
 
 /**
+ * 현장 운영 종료 (active = false)
+ * @param {number|string} projectId
+ */
+export async function deactivateProject(projectId) {
+  return await api.patch(`/project/${projectId}/deactivate`)
+}
+
+/**
+ * 현장 운영 재개 (active = true)
+ * @param {number|string} projectId
+ */
+export async function activateProject(projectId) {
+  return await api.patch(`/project/${projectId}/activate`)
+}
+
+/**
  * 현장별 공정(공종) 목록 — 공종 선택용
  * @param {number|string} projectId
  * @param {string} [tradeName]
