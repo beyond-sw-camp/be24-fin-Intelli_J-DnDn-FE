@@ -614,6 +614,39 @@ const staffingTableGrouped = computed(() => {
   return labels.map((label) => ({ label, rows: map.get(label) }))
 })
 
+/** 작업자 현황 테이블 페이징 — 50개씩 표시, boardKindBreakdown 등 집계는 전체 기준 유지 */
+const POOL_PAGE_SIZE = 20
+const poolCurrentPage = ref(0)
+
+const poolTotalPages = computed(() => {
+  const total = staffingTableGrouped.value.reduce((s, g) => s + g.rows.length, 0)
+  return total === 0 ? 0 : Math.ceil(total / POOL_PAGE_SIZE)
+})
+
+/** 현재 페이지에 표시할 행만 잘라낸 그룹 목록 */
+const poolPagedGroups = computed(() => {
+  const start = poolCurrentPage.value * POOL_PAGE_SIZE
+  const end = start + POOL_PAGE_SIZE
+  let idx = 0
+  const result = []
+  for (const group of staffingTableGrouped.value) {
+    const gStart = idx
+    const gEnd = idx + group.rows.length
+    idx = gEnd
+    if (gEnd <= start || gStart >= end) continue
+    const sliceFrom = Math.max(0, start - gStart)
+    const sliceTo = Math.min(group.rows.length, end - gStart)
+    result.push({ label: group.label, rows: group.rows.slice(sliceFrom, sliceTo) })
+  }
+  return result
+})
+
+function poolGoToPage(pg) {
+  const tp = poolTotalPages.value
+  if (tp === 0) return
+  poolCurrentPage.value = Math.max(0, Math.min(pg, tp - 1))
+}
+
 /** 그룹 접기 상태 — 키 없음 / true 는 펼침, false 만 접힘 */
 const poolGroupExpanded = ref(/** @type Record<string, boolean> */ ({}))
 
@@ -646,6 +679,7 @@ function togglePoolGroupSelectAll(groupRows) {
 }
 
 watch([poolAffiliationFilter, workerPoolSearch, showOnlyUnassignedInPool], () => {
+  poolCurrentPage.value = 0
   selectedWaitingIds.value = []
   clearTimeout(poolReloadTimer)
   poolReloadTimer = setTimeout(() => {
@@ -1273,6 +1307,9 @@ function tradeGroupCardBorderClass(tg) {
           <strong class="text-forena-800">{{ staffingTableRows.length }}</strong
           >{{ T.countUnit }}</span
         >
+        <span v-if="poolTotalPages > 1" class="text-forena-400">
+          ({{ poolCurrentPage + 1 }}&nbsp;/&nbsp;{{ poolTotalPages }}&nbsp;페이지)
+        </span>
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-forena-100">
@@ -1307,7 +1344,7 @@ function tradeGroupCardBorderClass(tg) {
             <tr v-if="staffingTableRows.length === 0">
               <td colspan="7" class="px-6 py-12 text-center text-slate-400">{{ T.poolEmpty }}</td>
             </tr>
-            <template v-for="grp in staffingTableGrouped" :key="grp.label">
+            <template v-for="grp in poolPagedGroups" :key="grp.label">
               <!-- 그룹 헤더 (본사 / 공종별) -->
               <tr class="border-b border-forena-100 bg-indigo-50/75">
                 <td class="w-11 min-w-[2.75rem] px-3 py-2 align-middle">
@@ -1403,6 +1440,32 @@ function tradeGroupCardBorderClass(tg) {
             </template>
           </tbody>
         </table>
+      </div>
+      <!-- 페이지네이션 -->
+      <div
+        v-if="poolTotalPages > 1"
+        class="mt-2 flex items-center justify-center gap-3"
+      >
+        <button
+          type="button"
+          :disabled="poolCurrentPage === 0"
+          class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          @click="poolGoToPage(poolCurrentPage - 1)"
+        >
+          <ChevronRight class="h-4 w-4 rotate-180" />
+        </button>
+        <span class="text-xs font-semibold tabular-nums text-forena-700">
+          {{ poolCurrentPage + 1 }} / {{ poolTotalPages }}
+          <span class="font-normal text-forena-400">({{ staffingTableRows.length }}명)</span>
+        </span>
+        <button
+          type="button"
+          :disabled="poolCurrentPage >= poolTotalPages - 1"
+          class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          @click="poolGoToPage(poolCurrentPage + 1)"
+        >
+          <ChevronRight class="h-4 w-4" />
+        </button>
       </div>
     </section>
 
