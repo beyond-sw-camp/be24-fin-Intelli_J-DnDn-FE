@@ -64,7 +64,7 @@ export function displayWorkerTradeLine(p) {
   const kind = String(p?.affiliationKind ?? '').toUpperCase()
   if (kind === 'DIRECT') return '직영'
   const sub = pickWorkerTradeSubLabel(p)
-  return sub || 'X'
+  return sub || '기타'
 }
 
 /** @param {AffiliationKind} kind */
