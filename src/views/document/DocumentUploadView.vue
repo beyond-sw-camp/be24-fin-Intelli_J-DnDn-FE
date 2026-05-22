@@ -52,7 +52,7 @@ const L = {
   statPartner: '협력사 문서',
   unit: '건',
 
-  searchPh: '문서코드, 파일명, 협력사명 검색',
+  searchPh: '문서코드, 공종, 내용 검색',
   excel: '종합 공사일보 PDF 다운로드',
   upload: '문서 업로드',
   filterLabel: '유형 필터',
