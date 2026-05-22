@@ -4,16 +4,6 @@ import api from './index.js'
 const PATH = '/management'
 
 /**
- * MANAGEMENT_001 인력 데이터 불러오기 (siteCode·date 필수)
- * GET /management/sync?siteCode=&date=
- */
-export const syncWorkforce = (siteCode, date) => {
-  const sc = siteCode != null ? String(siteCode).trim() : ''
-  const d = date != null ? String(date).trim() : ''
-  return api.get(`${PATH}/sync`, { params: { siteCode: sc, date: d } })
-}
-
-/**
  * MANAGEMENT_001 전체 현장 일괄 동기화 수동 트리거 (스케줄러와 동일 로직)
  * POST /management/sync/all?date=
  */
