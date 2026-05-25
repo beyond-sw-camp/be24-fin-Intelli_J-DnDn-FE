@@ -11,6 +11,10 @@ export const getWorkOrderList = async () => {
   return await api.get(BASE_URL)
 }
 
+export const getWorkOrderSlice = async (params = {}) => {
+  return await api.get(`${BASE_URL}/slice`, { params })
+}
+
 // 2. 작업 지시서 단일 조회
 export const getWorkOrder = async (workOrderId) => {
   return await api.get(`${BASE_URL}/${workOrderId}`)

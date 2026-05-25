@@ -24,7 +24,7 @@ import {
 
 import {
   createWorkOrder,
-  getWorkOrderList,
+  getWorkOrderSlice,
   updateWorkOrder,
   approveWorkOrder,
 } from '@/api/workOrder'
@@ -88,12 +88,12 @@ const GATE_CAPACITY = 6
 
 async function fetchGates() {
   try {
-    const response = await api.get('/gates/status', { params: { siteIdx: 1 } })
-    const data = response.data?.data || response.data || []
+    const response = await api.get('/gate')
+    const data = Array.isArray(response) ? response : response?.data || []
     GATES.value = data.map((g) => ({
-      gateIdx: g.gateIdx,
-      gateName: g.gateName,
-      currentCount: g.currentCount || 0,
+      gateIdx: g.gateIdx || g.idx,
+      gateName: g.gateName || g.name || `${g.idx || ''}번 게이트`,
+      currentCount: g.currentCount || g.vehicles || 0,
       status: (g.currentCount || 0) >= GATE_CAPACITY ? '혼잡' : '원활',
     }))
   } catch (error) {
@@ -108,6 +108,8 @@ function getGateLabel(g) {
   return `${g.gateName} (${g.status})`
 }
 
+let workOrderFetchTimer = null
+
 onMounted(() => {
   fetchGates()
   fetchTradeOptions()
@@ -115,7 +117,10 @@ onMounted(() => {
   document.addEventListener('keydown', onKeydown)
 })
 
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
+  if (workOrderFetchTimer) clearTimeout(workOrderFetchTimer)
+})
 
 const filterDate = ref(todayStr())
 const filterProcess = ref('all')
@@ -124,6 +129,13 @@ const filterStatus = ref('')
 const searchKeyword = ref('')
 
 const dateInputRef = ref(null)
+
+watch([filterDate, filterProcess, filterStatus, searchKeyword, currentRole, myProcess], () => {
+  if (workOrderFetchTimer) clearTimeout(workOrderFetchTimer)
+  workOrderFetchTimer = setTimeout(() => {
+    fetchWorkOrders()
+  }, 250)
+})
 
 function openDatePicker() {
   // 브라우저가 showPicker 기능을 지원하는 경우 달력 창을 강제로 엽니다.
@@ -182,7 +194,11 @@ const canReviewViewing = computed(
     viewing.value.status === '승인 대기',
 )
 
+const WORK_ORDER_SLICE_SIZE = 10
 const workOrders = ref([])
+const workOrderHasNext = ref(false)
+const workOrderNextCursor = ref(null)
+const isLoadingWorkOrders = ref(false)
 
 const availableTrades = computed(() => {
   // 1. 공정 담당자: 본인에게 할당된 공종만 반환
@@ -617,6 +633,15 @@ function onKeydown(e) {
 }
 
 async function fetchTradeOptions() {
+  if (!localStorage.getItem('accessToken')) {
+    ensureSelectedTrade()
+    return
+  }
+  if (!auth.projectId && !auth.isAdminRole) {
+    ensureSelectedTrade()
+    return
+  }
+
   try {
     const response = await api.get('/trade-process', {
       params: { projectId: currentProjectId.value },
@@ -638,13 +663,50 @@ async function fetchTradeOptions() {
   ensureSelectedTrade()
 }
 
-async function fetchWorkOrders() {
+function statusCodeFromLabel(status) {
+  if (!status) return null
+  if (status.includes('완료')) return 'APPROVED'
+  if (status.includes('반려')) return 'REJECTED'
+  return 'OPEN'
+}
+
+function workOrderSliceParams(append = false) {
+  const params = {
+    size: WORK_ORDER_SLICE_SIZE,
+    targetDate: filterDate.value || undefined,
+    statusCode: statusCodeFromLabel(filterStatus.value) || undefined,
+    keyword: searchKeyword.value.trim() || undefined,
+  }
+
+  if (currentRole.value === ROLES.WORKER && myProcess.value) {
+    params.tradeType = myProcess.value
+  } else if (filterProcess.value !== 'all') {
+    params.tradeType = filterProcess.value
+  }
+
+  if (append && workOrderNextCursor.value) {
+    params.cursorDueDate = workOrderNextCursor.value.dueDate
+    params.cursorId = workOrderNextCursor.value.id
+  }
+
+  return params
+}
+
+async function loadMoreWorkOrders() {
+  await fetchWorkOrders({ append: true })
+}
+
+async function fetchWorkOrders({ append = false } = {}) {
+  if (isLoadingWorkOrders.value) return
+  isLoadingWorkOrders.value = true
+
   try {
-    const response = await getWorkOrderList()
-    let serverData = unwrapApiData(response)
+    const response = await getWorkOrderSlice(workOrderSliceParams(append))
+    const payload = response?.data?.data ?? response?.data ?? response ?? {}
+    const serverData = Array.isArray(payload) ? payload : payload?.items || []
     if (!Array.isArray(serverData)) return
 
-    workOrders.value = serverData.map((dto) => {
+    const mappedOrders = serverData.map((dto) => {
       const processLabel = getTradeNameFromPlan(dto) || normalizeTradeName(dto.tradeType)
       let locationStr = dto.title
         ? dto.title
@@ -700,9 +762,17 @@ async function fetchWorkOrders() {
         })),
       }
     })
+    workOrders.value = append ? [...workOrders.value, ...mappedOrders] : mappedOrders
+    workOrderHasNext.value = !Array.isArray(payload) && !!payload?.hasNext
+    workOrderNextCursor.value =
+      !Array.isArray(payload) && payload?.nextCursorDueDate && payload?.nextCursorId
+        ? { dueDate: payload.nextCursorDueDate, id: payload.nextCursorId }
+        : null
     ensureSelectedTrade()
   } catch (e) {
     console.error('데이터 불러오기 실패:', e)
+  } finally {
+    isLoadingWorkOrders.value = false
   }
 }
 </script>
@@ -860,9 +930,10 @@ async function fetchWorkOrders() {
         />
       </div>
       <span class="ml-auto text-[11px] text-forena-500">
-        조회 결과
-        <span class="font-bold text-forena-800 tabular-nums">{{ filteredOrders.length }}</span
-        >건
+        현재 표시
+        <span class="font-bold text-forena-800 tabular-nums">{{ filteredOrders.length }}</span>
+        건
+        <span v-if="workOrderHasNext" class="ml-1 font-semibold text-flare-600">· 더 있음</span>
       </span>
     </div>
 
@@ -1050,6 +1121,19 @@ async function fetchWorkOrders() {
             </tr>
           </tbody>
         </table>
+        <div
+          v-if="workOrderHasNext || isLoadingWorkOrders"
+          class="flex items-center justify-center border-t border-forena-100 px-4 py-3"
+        >
+          <button
+            type="button"
+            :disabled="isLoadingWorkOrders"
+            @click="loadMoreWorkOrders"
+            class="rounded-md border border-forena-200 bg-white px-4 py-1.5 text-xs font-bold text-forena-700 hover:bg-forena-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ isLoadingWorkOrders ? '불러오는 중...' : '10개 더 보기' }}
+          </button>
+        </div>
       </div>
     </div>
 
