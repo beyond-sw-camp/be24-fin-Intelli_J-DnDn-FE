@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue'
 import { fetchTradeProcessList } from '@/api/tradeProcess.js'
-import { createWorkPlan } from '@/api/workplan.js'
+import { createWorkPlans } from '@/api/workplan.js'
 import { generateMockParseRows } from '@/utils/schedule/workPlan.js'
 
 const DEFAULT_TRADES = ['공통/가설', '토공사', '지정/기초', '골조공사', '건축마감', '기계/설비']
@@ -96,9 +96,8 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
     }
 
     try {
-      await Promise.all(
-        validRows.map((row) =>
-          createWorkPlan({
+      await createWorkPlans(
+        validRows.map((row) => ({
             name: row.name,
             trade: row.trade,
             location: row.location,
@@ -114,8 +113,7 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
             contact: '',
             weekStart: '',
             note: '',
-          }),
-        ),
+          })),
       )
 
       showVerifyModal.value = false
