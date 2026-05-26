@@ -59,14 +59,31 @@ export function useSiteRegister() {
     }, 3800)
   }
 
-  const groupedHub = computed(() => ({
-    system: accounts.value.filter((a) => classify(a) === 'system'),
-    hq: accounts.value.filter((a) => classify(a) === 'hq'),
-  }))
+  function normalizeAccountList(raw) {
+    if (Array.isArray(raw)) return raw.slice()
+    if (raw && typeof raw === 'object' && Array.isArray(raw.data)) return raw.data.slice()
+    return []
+  }
+
+  const groupedHub = computed(() => {
+    const list = Array.isArray(accounts.value) ? accounts.value : []
+    return {
+      system: list.filter((a) => classify(a) === 'system'),
+      hq: list.filter((a) => classify(a) === 'hq'),
+    }
+  })
 
   const hubSections = computed(() => [
-    { key: /** @type {'system'} */ ('system'), label: T.grpSystem, rows: groupedHub.value.system },
-    { key: /** @type {'hq'} */ ('hq'), label: T.grpHQ, rows: groupedHub.value.hq },
+    {
+      key: /** @type {'system'} */ ('system'),
+      label: T.grpSystem,
+      rows: groupedHub.value.system ?? [],
+    },
+    {
+      key: /** @type {'hq'} */ ('hq'),
+      label: T.grpHQ,
+      rows: groupedHub.value.hq ?? [],
+    },
   ])
 
   const accountStatusTheadClass = SITE_REGISTER_ACCOUNT_STATUS_THEAD_CLASS
@@ -109,10 +126,13 @@ export function useSiteRegister() {
     try {
       const [list, accs] = await Promise.all([
         getProjectList(),
-        getAdminAccounts().catch(() => []),
+        getAdminAccounts().catch((e) => {
+          pushToast(e?.message || '계정 목록을 불러오지 못했습니다.', 'danger')
+          return []
+        }),
       ])
       projects.value = Array.isArray(list) ? list.slice() : []
-      accounts.value = Array.isArray(accs) ? accs.slice() : []
+      accounts.value = normalizeAccountList(accs)
     } catch (e) {
       window.alert(e?.message || '목록을 불러오지 못했습니다.')
     } finally {

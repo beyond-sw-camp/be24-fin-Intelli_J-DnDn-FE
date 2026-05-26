@@ -21,18 +21,31 @@ api.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
+function isBaseResponse(body) {
+  return body && typeof body === 'object' && ('success' in body || 'isSuccess' in body)
+}
+
+function baseResponseSucceeded(body) {
+  return body.success === true || body.isSuccess === true
+}
+
+function baseResponseFailed(body) {
+  return body.success === false || body.isSuccess === false
+}
+
 api.interceptors.response.use(
   (response) => {
     const body = response.data
 
-    // 백엔드 BaseResponse 구조: { code, data, message, success }
-    if (body && typeof body === 'object' && 'success' in body) {
-      if (body.success === false) {
+    // 백엔드 BaseResponse: { code, data, message, success | isSuccess }
+    if (isBaseResponse(body)) {
+      if (baseResponseFailed(body)) {
         return Promise.reject(new Error(body.message || '요청이 실패했습니다.'))
       }
-      // data 필드 반환 (없으면 body 전체)
-      if (body.data !== undefined) return body.data
-      if (body.result !== undefined) return body.result
+      if (baseResponseSucceeded(body)) {
+        if (body.data !== undefined) return body.data
+        if (body.result !== undefined) return body.result
+      }
     }
 
     return body
