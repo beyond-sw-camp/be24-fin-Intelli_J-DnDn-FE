@@ -46,8 +46,9 @@ export function getFineDustValue(analysis, airQuality) {
   return analysis?.fineDustValue ?? airQuality?.value ?? null
 }
 
-export function getWindTone(analysis) {
+export function getWindTone(analysis, alertLabels = []) {
   const windSpeed = Number(analysis?.maxWindSpeed ?? 0)
+  const hasStrongWindWarning = hasWeatherAlert(alertLabels, ['강풍'])
 
   if (!analysis) {
     return {
@@ -57,10 +58,11 @@ export function getWindTone(analysis) {
       labelColor: 'text-slate-600',
       descriptionColor: 'text-slate-600',
       statusLabel: '정보 없음',
+      alertLabel: '',
     }
   }
 
-  if (windSpeed < 4) {
+  if (windSpeed < 4 && !hasStrongWindWarning) {
     return {
       color: 'border-violet-100 bg-gradient-to-br from-violet-50 via-white to-purple-50',
       iconColor: 'text-violet-400',
@@ -68,10 +70,11 @@ export function getWindTone(analysis) {
       labelColor: 'text-violet-500',
       descriptionColor: 'text-violet-600/80',
       statusLabel: '바람 약함',
+      alertLabel: '',
     }
   }
 
-  if (windSpeed < 8) {
+  if (windSpeed < 8 && !hasStrongWindWarning) {
     return {
       color: 'border-violet-200 bg-gradient-to-br from-violet-50 to-purple-100',
       iconColor: 'text-violet-500',
@@ -79,10 +82,11 @@ export function getWindTone(analysis) {
       labelColor: 'text-violet-600',
       descriptionColor: 'text-violet-700/80',
       statusLabel: '작업 가능 풍속',
+      alertLabel: '',
     }
   }
 
-  if (windSpeed < 12) {
+  if (windSpeed < 12 && !hasStrongWindWarning) {
     return {
       color: 'border-violet-300 bg-gradient-to-br from-violet-100 to-fuchsia-100',
       iconColor: 'text-violet-700',
@@ -90,16 +94,18 @@ export function getWindTone(analysis) {
       labelColor: 'text-violet-700',
       descriptionColor: 'text-violet-900/80',
       statusLabel: '양중 작업 주의',
+      alertLabel: '',
     }
   }
 
   return {
-    color: 'border-rose-200 bg-gradient-to-br from-rose-50 to-violet-100',
+    color: 'border-rose-200 bg-gradient-to-br from-rose-50 via-white to-violet-50',
     iconColor: 'text-rose-600',
     textColor: 'text-rose-800',
     labelColor: 'text-rose-700',
     descriptionColor: 'text-rose-800/85',
-    statusLabel: '강풍 통제 검토',
+    statusLabel: windSpeed >= 12 ? '강풍 통제 검토' : windSpeed >= 8 ? '양중 작업 주의' : '바람 약함',
+    alertLabel: hasStrongWindWarning ? '강풍주의보' : '',
   }
 }
 
@@ -183,6 +189,57 @@ export function includesAny(text, keywords) {
   return keywords.some((keyword) => normalized.includes(normalizeText(keyword)))
 }
 
+const LEVEL_ORDER = { 경고: 0, 위험: 0, 제한: 0, 주의: 1, 보통: 2, 양호: 3 }
+
+function sortByRiskLevel(items) {
+  return [...items].sort((a, b) => {
+    const aOrder = LEVEL_ORDER[a?.level] ?? 2
+    const bOrder = LEVEL_ORDER[b?.level] ?? 2
+    if (aOrder !== bOrder) return aOrder - bOrder
+    return String(a?.title || a?.label || '').localeCompare(String(b?.title || b?.label || ''), 'ko')
+  })
+}
+
+function cleanAlertLabel(value) {
+  const text = cleanAiText(value)
+    .replace(/발표/g, '')
+    .replace(/확인/g, '')
+    .replace(/특보 활성/g, '')
+    .replace(/[·,，]+$/g, '')
+    .trim()
+
+  if (text.includes('호우')) return '호우주의보'
+  if (text.includes('강풍')) return '강풍주의보'
+  if (text.includes('대설')) return '대설주의보'
+  if (text.includes('폭염')) return '폭염주의보'
+  if (text.includes('한파')) return '한파주의보'
+  return text
+}
+
+export function getWeatherAlertLabels(dashboard) {
+  const alerts = Array.isArray(dashboard?.alerts) ? dashboard.alerts : []
+  const labels = alerts
+    .map((alert) => cleanAlertLabel(`${alert?.title || ''} ${alert?.message || ''}`))
+    .filter(Boolean)
+
+  return [...new Set(labels)]
+}
+
+function hasWeatherAlert(alertLabels, keywords) {
+  return (alertLabels || []).some((label) => includesAny(label, keywords))
+}
+
+function getRiskItemKey(item) {
+  const text = normalizeText(`${item?.title || ''} ${item?.subtitle || ''} ${item?.reason || ''}`)
+
+  if (includesAny(text, ['dump_truck', 'dump truck', 'dump', '덤프', '트럭', '덤프트럭'])) return 'equipment:dump-truck'
+  if (includesAny(text, ['crane', '크레인', '타워크레인', '이동식크레인'])) return 'equipment:crane'
+  if (includesAny(text, ['lift', '리프트', '고소작업차', '붐리프트', '시저리프트'])) return 'equipment:lift'
+  if (includesAny(text, ['pump', '펌프카', '콘크리트펌프'])) return 'equipment:pump'
+
+  return `${normalizeText(item?.title || '')}-${normalizeText(item?.reason || '')}`
+}
+
 export function normalizeRiskLevel(level, priority = null) {
   if (level === 'DANGER' || level === '위험' || level === '긴급' || priority === '긴급') return '경고'
   if (level === 'WARNING' || level === '경고' || level === '높음' || priority === '높음') return '경고'
@@ -193,7 +250,7 @@ export function normalizeRiskLevel(level, priority = null) {
 
 export function isEquipmentRisk(risk) {
   const text = `${risk?.target || ''} ${risk?.reason || ''} ${risk?.recommendation || ''}`
-  return includesAny(text, ['장비', '크레인', '타워', '고소작업차', '리프트', '굴착기', '덤프트럭', '트럭', '펌프카', '펌프', '지게차', '양중'])
+  return includesAny(text, ['장비', 'crane', 'dump', 'truck', 'dump_truck', '크레인', '타워', '고소작업차', '리프트', '굴착기', '덤프트럭', '트럭', '펌프카', '펌프', '지게차', '자재 들어 올림', '양중'])
 }
 
 export function cleanAiText(text) {
@@ -201,6 +258,8 @@ export function cleanAiText(text) {
     .replaceAll('콘크리 트', '콘크리트')
     .replaceAll('작 업', '작업')
     .replaceAll('작업 반장', '작업반장')
+    .replaceAll('자재 들어 올림', '양중')
+    .replaceAll('자재 들어올림', '양중')
     .replaceAll('102 동', '102동')
     .replaceAll('103 동', '103동')
     .replaceAll('104 동', '104동')
@@ -246,13 +305,13 @@ export function mergeRiskItems(...groups) {
   const seen = new Set()
 
   groups.flat().filter(Boolean).forEach((item) => {
-    const key = `${item.title || ''}-${item.reason || ''}`
+    const key = getRiskItemKey(item)
     if (seen.has(key)) return
     seen.add(key)
     result.push(item)
   })
 
-  return result
+  return sortByRiskLevel(result)
 }
 
 export function mergeLiveRiskActions(...groups) {
@@ -260,13 +319,13 @@ export function mergeLiveRiskActions(...groups) {
   const seen = new Set()
 
   groups.flat().filter(Boolean).forEach((item) => {
-    const key = `${item.label || ''}-${item.detail || ''}`
+    const key = `${normalizeText(item.label || '')}-${normalizeText(item.detail || '')}`
     if (seen.has(key)) return
     seen.add(key)
     result.push(item)
   })
 
-  return result
+  return sortByRiskLevel(result)
 }
 
 export function buildEquipmentRiskReason(equipment, cause) {
@@ -287,36 +346,36 @@ export function buildEquipmentRisksFromWorkOrders(analysis, equipments) {
   equipments.forEach((equipment) => {
     const name = equipment.equipmentName || ''
 
-    if (wind >= 8 && includesAny(name, ['크레인', '양중', '리프트', '고소', '붐', '타워'])) {
+    if (wind >= 8 && includesAny(name, ['크레인', '자재 들어 올림', '자재 들어올림', '양중', '리프트', '고소', '붐', '타워'])) {
       result.push({
         badge: 'AI',
         title: `${name} 풍속 통제`,
-        subtitle: equipment.workLocation || '작업구역 미지정',
+        subtitle: cleanAiText(equipment.title) || equipment.workLocation || '작업구역 미지정',
         level: wind >= 10 ? '경고' : '주의',
-        reason: buildEquipmentRiskReason(equipment, `현재 최대 풍속 ${Number(wind).toFixed(1)}m/s 기준으로 양중·고소 장비 흔들림 위험이 있습니다.`),
-        action: '풍속 확인 후 투입, 신호수 추가 배치 또는 양중 순연을 검토해 주세요.',
+        reason: buildEquipmentRiskReason(equipment, `예보 풍속 ${Number(wind).toFixed(1)}m/s와 기상특보를 함께 보면 자재 흔들림, 장비 균형 저하, 신호 전달 혼선이 생길 수 있습니다.`),
+        action: '투입 직전 풍속을 재확인하고, 자재 결속·신호수 위치·작업 발판 상태를 먼저 점검한 뒤 기준을 넘으면 작업 대기 또는 순연으로 전환하는 것이 안전합니다.',
       })
     }
 
-    if ((analysis.hasRain || rain >= 60 || analysis.hasSnow) && includesAny(name, ['굴착', '덤프', '트럭', '펌프', '지게차', '카고', '로더'])) {
+    if ((analysis.hasRain || rain >= 60 || analysis.hasSnow) && includesAny(name, ['굴착', '덤프', '트럭', 'dump', 'truck', 'dump_truck', '펌프', '지게차', '카고', '로더'])) {
       result.push({
         badge: 'AI',
         title: `${name} 진입 동선 점검`,
-        subtitle: equipment.workLocation || '작업구역 미지정',
+        subtitle: cleanAiText(equipment.title) || equipment.workLocation || '작업구역 미지정',
         level: analysis.hasSnow || rain >= 70 ? '경고' : '주의',
-        reason: buildEquipmentRiskReason(equipment, '강수·젖은 노면 조건에서는 장비 제동거리와 진입 동선 위험이 커집니다.'),
-        action: '입차 전 노면·배수 확인, 경사 구간 통제 후 운행해 주세요.',
+        reason: buildEquipmentRiskReason(equipment, '우천 예보가 있어 진입로와 회차 구간이 미끄럽거나 진흙으로 변할 수 있고, 시야 저하로 장비 이동 중 접촉 위험이 커질 수 있습니다.'),
+        action: '장비 투입 전 진입로 배수와 회차 구간 노면을 먼저 확인하고, 유도원 위치와 보행자 분리선을 확정한 뒤 물고임이 있으면 순차 투입 또는 우회 동선을 적용하는 것이 좋습니다.',
       })
     }
 
-    if (fineDust >= 80 && includesAny(name, ['굴착', '절단', '연마', '덤프', '트럭', '천공'])) {
+    if (fineDust >= 80 && includesAny(name, ['굴착', '절단', '연마', '덤프', '트럭', 'dump', 'truck', 'dump_truck', '천공'])) {
       result.push({
         badge: 'AI',
         title: `${name} 분진 저감 운용`,
-        subtitle: equipment.workLocation || '작업구역 미지정',
+        subtitle: cleanAiText(equipment.title) || equipment.workLocation || '작업구역 미지정',
         level: fineDust >= 150 ? '경고' : '주의',
-        reason: buildEquipmentRiskReason(equipment, `PM10 ${fineDust}㎍/㎥ 조건에서 분진 발생 장비 운용 시 체감 농도가 높아질 수 있습니다.`),
-        action: '살수 빈도 강화, 방진마스크 지급, 작업 시간 분산을 진행해 주세요.',
+        reason: buildEquipmentRiskReason(equipment, `PM10 ${fineDust}㎍/㎥ 수준에서는 장비 운행과 굴착·절단 작업이 겹칠 때 작업자 체감 분진 농도가 높아질 수 있습니다.`),
+        action: '장비 운행 전 살수 구간을 먼저 지정하고, 작업자 방진마스크 착용을 확인한 뒤 분진 발생 작업은 시간대를 나누어 진행하는 것이 좋습니다.',
       })
     }
   })
@@ -329,11 +388,93 @@ export function buildEquipmentRisksFromWorkOrders(analysis, equipments) {
       subtitle: first.workLocation || '작업구역 미지정',
       level: '주의',
       reason: `금일 작업지시서에 ${equipments.length}건의 장비 투입이 있고, 기상 조건이 평시보다 불안정합니다.`,
-      action: '게이트 입차 전 작업구역 노면·풍속·시야 상태를 재확인해 주세요.',
+      action: '게이트 입차 전에 노면·풍속·시야 상태를 먼저 확인하고, 위험 구간이 보이면 투입 순서를 나누거나 작업 책임자 승인 후 진행하는 것이 좋습니다.',
     })
   }
 
   return result.slice(0, 5)
+}
+
+
+function uniqueNonBlank(values = []) {
+  return [...new Set(values.map((value) => cleanAiText(value).trim()).filter(Boolean))]
+}
+
+function summarizeEquipmentList(equipments = []) {
+  const counts = new Map()
+  equipments.forEach((equipment) => {
+    const name = cleanAiText(equipment?.equipmentName || '').trim()
+    if (!name) return
+    const count = Number(equipment?.equipmentCount ?? 1)
+    counts.set(name, (counts.get(name) || 0) + (Number.isFinite(count) && count > 0 ? count : 1))
+  })
+
+  return Array.from(counts.entries())
+    .map(([name, count]) => `${name} ${count}대`)
+    .join(', ')
+}
+
+function cleanWorkEvidenceText(value) {
+  return cleanAiText(value)
+    .replace(/단지\s*외부/g, '')
+    .replace(/현장\s*외부/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[·,，\s-]+|[·,，\s-]+$/g, '')
+    .trim()
+}
+
+function getRainSensitiveWorkLabel(targetText) {
+  if (includesAny(targetText, ['콘크리트', '타설', '골조', '철근', '벽체'])) return '콘크리트·골조 작업'
+  if (includesAny(targetText, ['도장', '방수', '마감'])) return '외부 도장·방수 작업'
+  if (includesAny(targetText, ['굴착', '토공', '부대토목', 'landscape', '조경'])) return '부대토목·굴착 작업'
+  if (includesAny(targetText, ['운반', '자재'])) return '외부 자재 운반 작업'
+  return '우천 민감 작업'
+}
+
+function buildRainPlanRiskDetail(order, targetText) {
+  const workLabel = getRainSensitiveWorkLabel(targetText)
+  const workSummary = cleanWorkEvidenceText(order?.workDetail || '')
+  const contextText = workSummary
+    ? ` 세부 작업 내용은 ${workSummary}입니다.`
+    : ''
+
+  if (workLabel.includes('콘크리트')) {
+    return {
+      title: '콘크리트·골조 작업 우천 위험 점검',
+      reason: `작업지시서에서 콘크리트·골조 작업이 확인됩니다.${contextText} 우천 시 타설면 고임수, 레이턴스, 철근 작업면 미끄럼으로 품질 저하와 작업자 이동 위험이 함께 커질 수 있습니다.`,
+      action: '타설 포함 여부를 먼저 확인하고, 타설이 있으면 보양 범위·배수 상태·작업 발판 미끄럼 요소를 점검한 뒤 우천 시간대와 겹치면 타설 시간 조정 또는 순연을 검토하는 것이 좋습니다.',
+    }
+  }
+
+  if (workLabel.includes('도장') || workLabel.includes('방수')) {
+    return {
+      title: '외부 도장·방수 작업 우천 위험 점검',
+      reason: `작업지시서에서 외부 도장·방수 작업이 확인됩니다.${contextText} 우천 시 작업면 수분, 건조 지연, 부착 불량으로 마감 품질과 재작업 위험이 커질 수 있습니다.`,
+      action: '작업면 건조 상태와 보양 범위를 먼저 확인하고, 우천 시작 전 중지 기준을 공유한 뒤 외부 마감은 실내 공정 전환 또는 작업 순연을 검토하는 것이 좋습니다.',
+    }
+  }
+
+  if (workLabel.includes('부대토목') || workLabel.includes('굴착')) {
+    return {
+      title: '부대토목·굴착 작업 우천 위험 점검',
+      reason: `작업지시서에서 부대토목·굴착 작업이 확인됩니다.${contextText} 우천 시 굴착면 배수 불량, 임시 통로 미끄럼, 되메움·정리 지연이 발생해 작업 품질과 이동 동선 안전에 지장이 생길 수 있습니다.`,
+      action: '굴착면 배수로와 임시 통로 노면을 먼저 확인하고, 장비 회차 구간·작업면 정리 구간·보행자 분리선을 점검한 뒤 물고임이 있으면 작업 순서를 조정하는 것이 좋습니다.',
+    }
+  }
+
+  if (workLabel.includes('운반')) {
+    return {
+      title: '외부 자재 운반 작업 우천 위험 점검',
+      reason: `작업지시서에서 외부 자재 운반 작업이 확인됩니다.${contextText} 우천 시 운반로 진흙, 시야 저하, 자재 보양 누락으로 운반 지연과 접촉 위험이 커질 수 있습니다.`,
+      action: '자재 보양 상태와 운반로 배수를 먼저 확인하고, 차량 진입 순서와 보행자 동선을 분리한 뒤 운반량이 많으면 시간대를 나누는 것이 좋습니다.',
+    }
+  }
+
+  return {
+    title: '우천 민감 작업 사전 점검',
+    reason: `작업지시서에서 우천 영향을 받을 수 있는 작업이 확인됩니다.${contextText} 작업면 미끄럼, 자재 보양, 운반로 상태, 품질 저하 위험을 함께 확인해야 합니다.`,
+    action: '배수 상태와 보양 계획을 먼저 확인하고, 작업면 정리 상태와 이동 동선을 점검한 뒤 위험 구간이 있으면 작업 시간 조정 또는 순연을 검토하는 것이 좋습니다.',
+  }
 }
 
 export function buildPlanRisksFromWorkOrders(analysis, equipments) {
@@ -345,116 +486,131 @@ export function buildPlanRisksFromWorkOrders(analysis, equipments) {
   const grouped = new Map()
 
   equipments.forEach((equipment) => {
-    const key = equipment.workOrderIdx ?? `${equipment.workLocation}-${equipment.workDetail}`
+    const key = equipment.workOrderIdx ?? `${equipment.workLocation}-${equipment.workDetail}-${equipment.title}`
     const previous = grouped.get(key) || {
       title: equipment.title || '작업 지시서',
-      workLocation: equipment.workLocation || '작업구역 미지정',
+      workLocation: equipment.workLocation || '',
       workDetail: equipment.workDetail || '',
       equipments: [],
     }
-    previous.equipments.push(equipment.equipmentName)
+    previous.equipments.push(equipment)
     grouped.set(key, previous)
   })
 
   const result = []
   grouped.forEach((order) => {
-    const targetText = `${order.title} ${order.workLocation} ${order.workDetail} ${order.equipments.join(' ')}`
-    const equipmentText = order.equipments.filter(Boolean).join(', ') || '장비 미지정'
+    const workText = `${order.title} ${order.workLocation} ${order.workDetail}`
+    const targetText = workText
 
-    if ((analysis.hasRain || rain >= 60) && includesAny(targetText, ['콘크리트', '타설', '도장', '방수', '외부', '굴착', '철근', '벽체'])) {
+    if ((analysis.hasRain || rain >= 60) && includesAny(workText, ['콘크리트', '타설', '도장', '방수', '외부', '굴착', '철근', '벽체', '부대토목', 'landscape', '조경', '운반', '자재'])) {
+      const detail = buildRainPlanRiskDetail(order, targetText)
       result.push({
         badge: 'AI',
-        title: `${order.workLocation} 우천 작업 재검토`,
-        subtitle: order.title,
+        title: detail.title,
+        subtitle: cleanAiText(order.title),
         level: rain >= 70 ? '경고' : '주의',
-        reason: `작업상세내역 기준 ${equipmentText} 투입 예정이며, 강수확률 ${rain}%로 품질 저하와 미끄럼 위험이 있습니다.`,
-        action: '실내 공정 전환, 타설·도장·방수 작업 시간 재조정을 검토해 주세요.',
+        reason: detail.reason,
+        action: detail.action,
       })
     }
 
-    if (wind >= 8 && includesAny(targetText, ['양중', '철골', '패널', '유리', '외부', '고소', '비계', '크레인'])) {
+    if (wind >= 8 && includesAny(targetText, ['자재 들어 올림', '자재 들어올림', '양중', '철골', '패널', '유리', '외부', '고소', '비계', '크레인'])) {
       result.push({
         badge: 'AI',
-        title: `${order.workLocation} 강풍 작업 통제`,
-        subtitle: order.title,
+        title: '양중·고소 작업 풍속 점검',
+        subtitle: cleanAiText(order.title),
         level: wind >= 10 ? '경고' : '주의',
-        reason: `작업상세내역과 장비 목록에 강풍 영향 가능 작업이 포함되어 있고 최대 풍속은 ${Number(wind).toFixed(1)}m/s입니다.`,
-        action: '양중·고소 작업 전 풍속 재측정, 신호수 추가 배치를 진행해 주세요.',
+        reason: '크레인·리프트 사용, 고소작업, 외부 양중 작업이 확인됩니다. 바람이 강해지면 자재 흔들림, 작업자 균형 저하, 낙하·충돌 위험이 커질 수 있습니다.',
+        action: '작업 전 풍속을 다시 확인하고, 자재 결속·신호수 배치·작업 발판 상태를 점검한 뒤 풍속이 기준을 넘으면 작업 대기 또는 순연으로 전환하는 것이 좋습니다.',
       })
     }
 
     if (fineDust >= 80 && includesAny(targetText, ['도장', '용접', '절단', '굴착', '외부', '연마'])) {
       result.push({
         badge: 'AI',
-        title: `${order.workLocation} 분진 노출 관리`,
-        subtitle: order.title,
+        title: '분진 노출 작업 보호구·살수 점검',
+        subtitle: cleanAiText(order.title),
         level: fineDust >= 150 ? '경고' : '주의',
-        reason: `PM10 ${fineDust}㎍/㎥ 조건에서 옥외·분진 발생 작업이 예정되어 있습니다.`,
-        action: '살수·차폐 강화, 보호구 지급, 작업 시간 분산을 진행해 주세요.',
+        reason: `옥외·분진 발생 작업이 확인됩니다. PM10 ${fineDust}㎍/㎥ 수준에서는 작업자 보호구 착용과 비산먼지 저감 조치를 함께 확인해야 합니다.`,
+        action: '살수·차폐 구간을 먼저 지정하고, 방진마스크 착용 확인 후 분진 발생 작업은 작업 시간을 분산하는 것이 좋습니다.',
       })
     }
   })
 
-  return result.slice(0, 5)
+  return sortByRiskLevel(result).slice(0, 5)
 }
 
-export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions, hasWorkOrders) {
-  if (!hasWorkOrders) return []
+export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions = [], hasWorkOrders = false) {
   if (!analysis) return mergeLiveRiskActions(aiLiveRiskActions).slice(0, 6)
 
   const actions = []
   const rain = analysis.precipitationProbability ?? 0
   const wind = analysis.maxWindSpeed ?? 0
   const fineDust = analysis.fineDustValue ?? 0
-  const alerts = dashboard?.alerts ?? []
+  const alertLabels = getWeatherAlertLabels(dashboard)
+  const hasHeavyRainWarning = hasWeatherAlert(alertLabels, ['호우'])
+  const hasStrongWindWarning = hasWeatherAlert(alertLabels, ['강풍'])
   const nowHour = new Date().getHours()
 
-  alerts.forEach((alert, index) => {
+  if (hasHeavyRainWarning || hasStrongWindWarning) {
+    const label = alertLabels.filter((alert) => includesAny(alert, ['호우', '강풍'])).join(' · ')
     actions.push({
-      id: `alert-${index}`,
+      id: 'weather-alert',
       icon: 'siren',
-      label: '특보 활성 — 작업 책임자 즉시 공유',
-      detail: alert.title || alert.message || '특보 내용 확인',
-      level: alert.level || '경고',
-      timing: '지금 즉시',
+      label: label || '기상특보 확인',
+      detail: hasHeavyRainWarning && hasStrongWindWarning
+        ? '외부 통로·차량 진입로·자재 보관 구간의 배수와 보양 상태를 확인하고, 고소·양중 작업은 작업책임자와 안전관리자 공유 후 진행해 주세요.'
+        : hasHeavyRainWarning
+          ? '외부 통로, 차량 진입로, 자재 보관 구간의 배수·보양·미끄럼 상태를 먼저 확인해 주세요.'
+          : '고소 작업과 외부 양중 작업은 풍속, 자재 결속, 신호수 배치 상태를 먼저 확인해 주세요.',
+      level: '경고',
+      timing: '작업 전',
     })
-  })
+  }
 
-  if (wind >= 10) {
+  if (hasStrongWindWarning || wind >= 10) {
     actions.push({
       id: 'wind-stop',
       icon: 'wind',
-      label: '양중·고소 작업 일시 중지 검토',
-      detail: `현재 풍속 ${Number(wind).toFixed(1)}m/s · 풍속계 1시간 단위 재측정`,
-      level: '경고',
-      timing: '지금 즉시',
+      label: '고소·양중 작업 풍속 확인',
+      detail: '고소 작업, 비계 주변 작업, 외부 양중 작업은 자재 결속, 신호수 배치, 작업 발판 상태를 먼저 확인해 주세요.',
+      level: hasStrongWindWarning || wind >= 12 ? '경고' : '주의',
+      timing: '작업 전',
     })
   } else if (wind >= 8) {
     actions.push({
       id: 'wind-watch',
       icon: 'wind',
-      label: '양중 신호수 추가 배치',
-      detail: `풍속 ${Number(wind).toFixed(1)}m/s · 자재 결속 상태 점검`,
+      label: '외부 고소 작업 풍속 재확인',
+      detail: '작업 전 풍속계 재측정, 자재 결속 상태, 신호수 배치를 확인해 주세요.',
       level: '주의',
       timing: '작업 시작 전',
     })
   }
 
-  if (rain >= 70 || analysis.hasRain) {
+  if (hasHeavyRainWarning || rain >= 60 || analysis.hasRain) {
     actions.push({
-      id: 'rain-indoor',
+      id: 'rain-drain-main',
       icon: 'umbrella',
-      label: '외부 공정 실내 작업 전환 검토',
-      detail: `강수확률 ${rain}% · 타설/도장/방수 순연 검토`,
-      level: '경고',
-      timing: '오전 회의 시',
+      label: '외부 작업 배수·보양 확인',
+      detail: '외부 통로, 작업면, 자재 보관 구간은 배수 상태와 보양 상태를 확인하고 미끄럼 위험이 있는 구간은 먼저 정리해 주세요.',
+      level: hasHeavyRainWarning || rain >= 70 ? '경고' : '주의',
+      timing: '작업 전',
+    })
+    actions.push({
+      id: 'rain-access-route',
+      icon: 'umbrella',
+      label: '차량 진입로·회차 구간 노면 확인',
+      detail: '차량 진입로와 회차 구간은 진흙, 물고임, 시야 저하가 생기기 쉬우므로 유도원 배치와 보행자 동선 분리 상태를 확인해 주세요.',
+      level: hasHeavyRainWarning || rain >= 70 ? '경고' : '주의',
+      timing: '작업 시작 전',
     })
   } else if (rain >= 40) {
     actions.push({
       id: 'rain-drain',
       icon: 'umbrella',
       label: '작업면 배수·미끄럼 점검',
-      detail: `강수확률 ${rain}% · 통로/슬래브/경사로 확인`,
+      detail: '통로, 슬래브, 경사로, 장비 승하차 지점의 물기와 진흙 상태를 확인해 주세요.',
       level: '주의',
       timing: '작업 시작 전',
     })
@@ -465,7 +621,7 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions, 
       id: 'snow-clear',
       icon: 'snow',
       label: '제설·제빙 후 출입 동선 확보',
-      detail: '경사 구간 장비 진입 통제, 안전화 미끄럼 방지 장구 지급',
+      detail: '경사 구간 장비 진입 통제, 안전화 미끄럼 방지 장구 지급을 확인해 주세요.',
       level: '경고',
       timing: '오전 출근 전',
     })
@@ -477,7 +633,7 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions, 
       id: 'heat',
       icon: 'sun',
       label: isAfternoon ? '폭염 시간대 옥외 작업 단축' : '12~14시 옥외 작업 휴식 편성',
-      detail: `최고 ${analysis.maxTemperature ?? '--'}°C · 그늘막/얼음물 비치 점검`,
+      detail: `최고 ${analysis.maxTemperature ?? '--'}°C · 그늘막과 음수대를 확인해 주세요.`,
       level: '주의',
       timing: '12:00 ~ 14:00',
     })
@@ -488,7 +644,7 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions, 
       id: 'cold',
       icon: 'thermometer',
       label: '저온 민감 공정 보양 점검',
-      detail: `최저 ${analysis.minTemperature ?? '--'}°C · 콘크리트 양생/배관 동결 보호`,
+      detail: `최저 ${analysis.minTemperature ?? '--'}°C · 콘크리트 양생과 배관 동결 보호 상태를 확인해 주세요.`,
       level: '주의',
       timing: '오전 작업 전',
     })
@@ -498,14 +654,14 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions, 
     actions.push({
       id: 'dust',
       icon: 'mask',
-      label: 'KF94 보호구 지급 + 살수 빈도 강화',
-      detail: `PM10 ${fineDust}㎍/㎥ · 옥외 도장/용접/절단 작업자 우선`,
+      label: '보호구 지급 및 비산먼지 관리',
+      detail: `PM10 ${fineDust}㎍/㎥ · 옥외 도장, 용접, 절단 작업자는 보호구와 살수 계획을 확인해 주세요.`,
       level: fineDust >= 150 ? '경고' : '주의',
       timing: '작업 시작 전',
     })
   }
 
-  return mergeLiveRiskActions(aiLiveRiskActions, actions).slice(0, 6)
+  return mergeLiveRiskActions(actions).slice(0, 6)
 }
 
 export function getThreeDayForecast(forecastDays, selectedDateText) {
@@ -651,13 +807,14 @@ export function getRainBarClass(rainPercent) {
   return 'bg-gradient-to-r from-cyan-200 to-sky-300'
 }
 
-export function getRainNoteDetailed(rainPercent) {
-  if (rainPercent >= 80) return '외부 공정 중단 및 배수 체계 가동'
-  if (rainPercent >= 70) return '외부 공정 순연 검토 필요 · 배수 사전 점검'
-  if (rainPercent >= 60) return '외부 작업 일정 재검토 · 용배수 준비'
-  if (rainPercent >= 40) return '외부 작업면 상태 사전 점검 권장'
-  if (rainPercent >= 20) return '기본 우천 대비 수준 유지'
-  return '맑은 날씨로 정상 운영'
+export function getRainNoteDetailed(rainPercent, alertLabels = []) {
+  if (hasWeatherAlert(alertLabels, ['호우'])) return '호우주의보'
+  if (rainPercent >= 80) return '외부 공정 중단 검토'
+  if (rainPercent >= 70) return '외부 공정 순연 검토'
+  if (rainPercent >= 60) return '우천 대비 필요'
+  if (rainPercent >= 40) return '작업면 상태 확인'
+  if (rainPercent >= 20) return '기본 우천 대비'
+  return '정상 운영'
 }
 
 export function weatherEmoji(label, rainPercent) {
