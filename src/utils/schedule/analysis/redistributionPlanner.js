@@ -208,6 +208,7 @@ export function buildRedistributionPlan(task, { hasTodayReportForSchedule = () =
   const now = new Date()
   const today = new Date(now)
   today.setHours(0, 0, 0, 0)
+  const analysisBaseDate = parseDate(task?.analysisDate || task?.latestReportDate) || today
 
   const start = parseDate(task?.plannedStart)
   const end = parseDate(task?.plannedEnd || task?.originalEnd)
@@ -217,12 +218,15 @@ export function buildRedistributionPlan(task, { hasTodayReportForSchedule = () =
     isActionableDetailSchedule,
   )
 
-  const hasTodayReport = hasTodayReportForMonthlyTask(detailSchedules, hasTodayReportForSchedule)
-  const beforeWorkEnd = now.getHours() < 17
+  const hasTodayReport =
+    hasTodayReportForMonthlyTask(detailSchedules, hasTodayReportForSchedule) ||
+    task?.hasReport === true ||
+    task?.actualSource === 'DAILY_REPORT'
+  const beforeWorkEnd = toDateKey(analysisBaseDate) === toDateKey(today) && now.getHours() < 17
 
-  // 금일 공사일보가 이미 있으면 오늘 실적은 반영된 것으로 보고, 만회 대상은 내일부터 시작한다.
-  // 공사일보가 아직 없고 작업 종료 전이면 오늘 일정도 아직 진행 중이므로 대상에 포함한다.
-  const redistributionBaseDate = hasTodayReport ? addDays(today, 1) : today
+  // 공사일보가 있으면 해당 분석 기준일의 실적은 반영된 것으로 보고, 만회 대상은 다음 날부터 시작한다.
+  // 공사일보가 없으면 분석 기준일 당일 일정도 아직 진행 대상으로 포함한다.
+  const redistributionBaseDate = hasTodayReport ? addDays(analysisBaseDate, 1) : analysisBaseDate
   const remainingSchedules = detailSchedules.filter((s) =>
     isSameOrAfter(s.startDate || s.date, redistributionBaseDate),
   )

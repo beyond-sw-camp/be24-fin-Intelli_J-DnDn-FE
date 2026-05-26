@@ -1,7 +1,6 @@
 import { computed, ref } from 'vue'
 import { fetchTradeProcessList } from '@/api/tradeProcess.js'
-import { createWorkPlans } from '@/api/workplan.js'
-import { generateMockParseRows } from '@/utils/schedule/workPlan.js'
+import { createWorkPlans, extractWorkPlanUpload } from '@/api/workplan.js'
 
 const DEFAULT_TRADES = ['공통/가설', '토공사', '지정/기초', '골조공사', '건축마감', '기계/설비']
 
@@ -10,6 +9,7 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
   const uploadCategory = ref('')
   const yearlyInputRef = ref(null)
   const monthlyInputRef = ref(null)
+  const isAnalyzingUpload = ref(false)
 
   const isUploadPopupOpen = ref(false)
   const uploadModalTrade = ref('')
@@ -51,9 +51,16 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
     }
   }
 
-  function onFileChange(e, category) {
+  async function onFileChange(e, category) {
     const file = e.target.files?.[0]
     if (!file) {
+      e.target.value = ''
+      return
+    }
+
+    const projectId = selectedProjectId.value
+    if (!projectId) {
+      alert('현장을 먼저 선택해주세요.')
       e.target.value = ''
       return
     }
@@ -62,9 +69,44 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
     uploadCategory.value = category
     verifyCategory.value = category
     verifyFileName.value = file.name
-    verifyRows.value = generateMockParseRows(category)
-    showVerifyModal.value = true
-    e.target.value = ''
+
+    try {
+      isAnalyzingUpload.value = true
+      const rows = await extractWorkPlanUpload({
+        projectId,
+        planType: category,
+        trade: uploadModalTrade.value,
+        file,
+      })
+
+      verifyRows.value = rows.map((row, index) => ({
+        id: row.id ?? `${Date.now()}-${index}`,
+        tradeProcessId: row.tradeProcessId ?? null,
+        tradeProcessName: row.tradeProcessName ?? '',
+        name: row.name ?? '',
+        trade: row.trade ?? uploadModalTrade.value ?? '',
+        location: row.location ?? '',
+        start: row.start ?? '',
+        end: row.end ?? '',
+        note: row.note ?? '',
+        issue: row.issue ?? null,
+      }))
+
+      if (!verifyRows.value.length) {
+        alert('계획서에서 반영할 작업을 찾지 못했습니다.')
+        uploadFileName.value = ''
+        return
+      }
+
+      showVerifyModal.value = true
+    } catch (err) {
+      console.error(`${category} 계획서 분석 실패:`, err)
+      uploadFileName.value = ''
+      alert(err.message || '계획서 분석에 실패했습니다.')
+    } finally {
+      isAnalyzingUpload.value = false
+      e.target.value = ''
+    }
   }
 
   const verifyStats = computed(() => {
@@ -98,6 +140,7 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
     try {
       await createWorkPlans(
         validRows.map((row) => ({
+            tradeProcessId: row.tradeProcessId || null,
             name: row.name,
             trade: row.trade,
             location: row.location,
@@ -112,7 +155,7 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
             manager: '',
             contact: '',
             weekStart: '',
-            note: '',
+            note: row.note || '',
           })),
       )
 
@@ -136,6 +179,7 @@ export function useWorkPlanUpload({ selectedProjectId, reloadPlans }) {
     uploadCategory,
     yearlyInputRef,
     monthlyInputRef,
+    isAnalyzingUpload,
     isUploadPopupOpen,
     uploadModalTrade,
     uploadModalType,

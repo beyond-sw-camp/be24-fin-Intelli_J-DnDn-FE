@@ -16,6 +16,7 @@ import {
   hasDailyReportProgress,
   progressSourceLabel,
 } from '@/utils/schedule/analysis/analysisMappers.js'
+import { tradeMatches } from '@/utils/authScope.js'
 import {
   cancelEditProposal,
   confirmEditProposal,
@@ -493,7 +494,9 @@ function createRequestFromAi() {
             <!-- 책임자: 변경 요청 등록 -->
             <div
               v-if="
-                !isSupervisor && currentTradeItem && selectedTask.process === currentTradeItem.name
+                !isSupervisor &&
+                currentTradeItem &&
+                tradeMatches(selectedTask.process, currentTradeItem.name)
               "
               class="rounded-lg border border-flare-100 bg-flare-50/40 p-3"
             >

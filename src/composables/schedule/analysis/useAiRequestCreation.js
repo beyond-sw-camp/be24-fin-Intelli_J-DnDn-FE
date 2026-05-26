@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { tradeMatches } from '@/utils/authScope.js'
 
 export function useAiRequestCreation({
   selectedTask,
@@ -171,7 +172,9 @@ export function useAiRequestCreation({
   // "재분배 요청 등록" 클릭 시 폼을 바로 열지 않고 빠른 확인 모달을 띄움
   function createRequestFromAi() {
     if (!selectedTask.value || !selectedRec.value) return
-    if (currentTradeItem.value && selectedTask.value.process !== currentTradeItem.value.name) return
+    if (currentTradeItem.value && !tradeMatches(selectedTask.value.process, currentTradeItem.value.name)) {
+      return
+    }
     aiQuickConfirm.value.show = true
   }
 

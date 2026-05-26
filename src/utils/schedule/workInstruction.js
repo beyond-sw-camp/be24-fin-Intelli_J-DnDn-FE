@@ -164,13 +164,7 @@ export function inferTradeNameFromTaskName(value) {
 
 export function getTradeNameFromPlan(plan) {
   const directTradeCandidates = [
-    plan?.tradeName,
-    plan?.trade,
-    plan?.tradeType,
-    plan?.tradeCode,
-    plan?.category,
-    plan?.majorTrade,
-    plan?.majorTradeName,
+    plan?.tradeProcessTradeName,
     plan?.tradeProcess?.tradeName,
     plan?.tradeProcess?.trade,
     plan?.tradeProcess?.tradeType,
@@ -179,6 +173,13 @@ export function getTradeNameFromPlan(plan) {
     plan?.tradeProcess?.majorTradeName,
     plan?.processTrade,
     plan?.processTradeName,
+    plan?.tradeName,
+    plan?.trade,
+    plan?.tradeType,
+    plan?.tradeCode,
+    plan?.category,
+    plan?.majorTrade,
+    plan?.majorTradeName,
   ]
 
   for (const candidate of directTradeCandidates) {
