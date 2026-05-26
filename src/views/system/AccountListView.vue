@@ -21,6 +21,7 @@ import {
   checkEmailAvailability,
 } from '@/api/auth.js'
 import { getProjectList, getMilestoneTradeNames } from '@/api/project.js'
+import { sanitizeAccountTradeOptions } from '@/utils/staffingAdapter'
 import { userRoleLabel, USER_ROLE } from '@/stores/authStore'
 import {
   formatEmailInput,
@@ -607,9 +608,7 @@ async function loadEditTradeOptions(projectId) {
   editTradeLoading.value = true
   try {
     const list = await getMilestoneTradeNames(projectId)
-    editTradeOptions.value = Array.isArray(list)
-      ? [...list].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko'))
-      : []
+    editTradeOptions.value = sanitizeAccountTradeOptions(list)
   } catch {
     editTradeOptions.value = []
   } finally {
@@ -649,9 +648,7 @@ watch(
     tradeLoading.value = true
     try {
       const list = await getMilestoneTradeNames(pid)
-      tradeOptions.value = Array.isArray(list)
-        ? [...list].filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko'))
-        : []
+      tradeOptions.value = sanitizeAccountTradeOptions(list)
     } catch {
       tradeOptions.value = []
     } finally {

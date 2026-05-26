@@ -12,7 +12,6 @@ import {
   ChevronRight,
   ChevronDown,
   Search,
-  RefreshCw,
 } from 'lucide-vue-next'
 import {
   getAffiliationKind,
@@ -22,11 +21,8 @@ import { useStaffingBoardSync } from '@/composables/useStaffingBoardSync'
 import {
   postStaffingAutoRecommend,
   postStaffingReset,
-  postStaffingDummySeedZones,
   postStaffingSave,
-  getStaffingZones,
-  getZoneSubDetail,
-  getZoneSubWorkers,
+  getStaffingBoard,
   patchZoneSub,
   deleteZoneSubWorker,
   postZoneSubAssign,
@@ -37,6 +33,7 @@ import {
   normalizeSaveSummaryRes,
   tradeNeedsFromZoneSubRes,
   buildZoneUpdateBody,
+  tradeMatchesStaffing,
 } from '@/utils/staffingAdapter'
 import {
   fatigueTotalFromWorker,
@@ -50,8 +47,14 @@ const T = {
   autoRec: '자동 추천 배치',
   confirm: '배치 확정 및 저장',
   zoneByZoneTitle: '구역별 인력 현황',
-  dummySeedZones: '데모 구역 새로고침',
   zoneReset: '초기화',
+  resetConfirmTitle: '인력 배치 초기화',
+  resetConfirmWarn: '모든 구역에 배치된 인력이 초기화됩니다.\n이대로 진행하시겠습니까?',
+  resetConfirmProceed: '초기화',
+  resetConfirmZoneCol: '구역',
+  resetConfirmCountCol: '배치 인원',
+  resetConfirmNoAssigned: '현재 배치된 인력이 없습니다.',
+  resetConfirmTotal: '총 초기화 인원',
   savePlacementConfirmTitle: '배치 확정 및 저장',
   savePlacementConfirmWarn:
     '배치 내용을 확인하여 근태 기록을 업데이트합니다.\n이대로 진행하시겠습니까?',
@@ -180,6 +183,18 @@ const router = useRouter()
 const authStore = useAuthStore()
 const staffingSiteCode = computed(() => authStore.siteCode)
 
+const isTradeScoped = computed(() => {
+  const r = authStore.userRole
+  return r === 'SECTION_LEADER' || r === 'SECTION_SUPERVISOR'
+})
+
+const userTrade = computed(() => String(authStore.trade || '').trim())
+
+function zoneAllowedForUserTrade(zoneTradeName) {
+  if (!isTradeScoped.value || !userTrade.value) return true
+  return tradeMatchesStaffing(zoneTradeName, userTrade.value)
+}
+
 /** @type {import('vue').Ref<Array<{ id: string, title: string, expanded: boolean, subZones: Array<{ id: string, title: string, expanded: boolean, required: number, tradeNeeds: { trade: string, need: number }[], workers: object[] }> }>>} */
 const zoneGroups = ref([])
 
@@ -227,6 +242,7 @@ const assignOptions = computed(() => {
   const opts = []
   for (const g of zoneGroups.value) {
     for (const sz of g.subZones) {
+      if (!zoneAllowedForUserTrade(sz.tradeName)) continue
       opts.push({
         value: sz.id,
         label: `${g.title} · ${sz.title}`,
@@ -234,6 +250,15 @@ const assignOptions = computed(() => {
     }
   }
   return opts
+})
+
+watch(assignOptions, (opts) => {
+  if (
+    assignTargetSubZoneId.value &&
+    !opts.some((o) => o.value === assignTargetSubZoneId.value)
+  ) {
+    assignTargetSubZoneId.value = ''
+  }
 })
 
 const boardKindBreakdown = computed(() => {
@@ -359,42 +384,37 @@ async function reloadWaitingPool() {
   waiting.value = rows.filter((r) => !r.assigned).map((r) => mapAssignedWorkerRes(r))
 }
 
+function mapBoardSubZone(sz) {
+  return {
+    id: String(sz.idx),
+    title: sz.title ?? '',
+    location: sz.location ?? '',
+    tradeName: sz.tradeName ?? '',
+    workTime: sz.workTime ?? '',
+    workDate: sz.workDate ?? rosterDate.value,
+    workPlanId: sz.workPlanId ?? null,
+    expanded: true,
+    required: sz.required ?? 0,
+    tradeNeeds: tradeNeedsFromZoneSubRes(sz.tradeNeeds),
+    workers: (sz.workers ?? []).map((row) => mapAssignedWorkerRes(row)),
+  }
+}
+
 async function reloadBoard() {
   try {
-    const mains = await getStaffingZones({ rosterDate: rosterDate.value, siteCode: staffingSiteCode.value || undefined })
-    const groups = []
-    for (const zm of mains || []) {
-      const subZones = []
-      for (const szSum of zm.subZones || []) {
-        const [detail, assignedList] = await Promise.all([
-          getZoneSubDetail(szSum.idx, rosterDate.value),
-          getZoneSubWorkers(szSum.idx, rosterDate.value),
-        ])
-        const tradeNeeds = tradeNeedsFromZoneSubRes(detail?.tradeNeeds)
-        const workers = (assignedList || []).map((row) => mapAssignedWorkerRes(row))
-        subZones.push({
-          id: String(szSum.idx),
-          title: detail?.title ?? szSum.title,
-          location: detail?.location ?? szSum.location ?? '',
-          tradeName: detail?.tradeName ?? szSum.tradeName ?? '',
-          workTime: detail?.workTime ?? szSum.workTime ?? '',
-          workDate: detail?.workDate ?? szSum.workDate ?? rosterDate.value,
-          workPlanId: detail?.workPlanId ?? szSum.workPlanId ?? null,
-          expanded: true,
-          required: detail?.required ?? szSum.required,
-          tradeNeeds,
-          workers,
-        })
-      }
-      groups.push({
-        id: String(zm.idx),
-        title: zm.title,
-        expanded: true,
-        subZones,
-      })
-    }
-    zoneGroups.value = groups
-    await reloadWaitingPool()
+    const [board] = await Promise.all([
+      getStaffingBoard({
+        rosterDate: rosterDate.value,
+        siteCode: staffingSiteCode.value || undefined,
+      }),
+      reloadWaitingPool(),
+    ])
+    zoneGroups.value = (board?.zoneMains ?? []).map((zm) => ({
+      id: String(zm.idx),
+      title: zm.title,
+      expanded: true,
+      subZones: (zm.subZones ?? []).map(mapBoardSubZone),
+    }))
     syncPublish()
   } catch (e) {
     pushToast(e?.message || '인력 배치 정보를 불러오지 못했습니다.', 'danger')
@@ -466,31 +486,44 @@ async function removeFromSubZone(subZoneId, workerId) {
   }
 }
 
-async function resetAllZones() {
+const resetConfirmOpen = ref(false)
+
+/** 초기화 확인 모달용 — 배치 인원이 1명 이상인 구역 목록 */
+const resetConfirmRows = computed(() => {
+  const rows = []
+  for (const g of zoneGroups.value) {
+    for (const sz of g.subZones) {
+      if (sz.workers.length > 0) {
+        rows.push({
+          label: `${g.title} · ${sz.title}`,
+          count: sz.workers.length,
+        })
+      }
+    }
+  }
+  return rows
+})
+
+const resetConfirmTotal = computed(() =>
+  resetConfirmRows.value.reduce((s, r) => s + r.count, 0),
+)
+
+function openResetConfirm() {
+  resetConfirmOpen.value = true
+}
+
+function closeResetConfirm() {
+  resetConfirmOpen.value = false
+}
+
+async function executeReset() {
+  closeResetConfirm()
   try {
     await postStaffingReset(rosterDate.value, staffingSiteCode.value || undefined)
     await reloadBoard()
+    pushToast('인력 배치가 초기화되었습니다.', 'info')
   } catch (e) {
     pushToast(e?.message || '초기화에 실패했습니다.', 'danger')
-  }
-}
-
-const dummySeedLoading = ref(false)
-
-async function seedDummyZones() {
-  if (dummySeedLoading.value) return
-  dummySeedLoading.value = true
-  try {
-    const res = await postStaffingDummySeedZones({ replaceExisting: true })
-    const zm = res?.zoneMainCount ?? '—'
-    const zs = res?.zoneSubCount ?? '—'
-    const tn = res?.tradeNeedCount ?? '—'
-    pushToast(`데모 구역을 불러왔습니다. (${zm}메인 · ${zs}상세 · 직종필요 ${tn})`, 'info')
-    await reloadBoard()
-  } catch (e) {
-    pushToast(e?.message || '데모 구역을 불러오지 못했습니다.', 'danger')
-  } finally {
-    dummySeedLoading.value = false
   }
 }
 
@@ -732,6 +765,10 @@ async function assignSelectedWorkers() {
   }
   const found = findSubZone(targetId)
   if (!found) return
+  if (!zoneAllowedForUserTrade(found.subZone.tradeName)) {
+    pushToast('본인 공종 구역에만 인력을 투입할 수 있습니다.', 'warning')
+    return
+  }
 
   const subZone = found.subZone
   const selectedAssignable = selectedWaitingIds.value.filter((wid) => {
@@ -913,6 +950,8 @@ const TRADE_CATEGORY_MAP = {
   '조적': '마감공사',
   '도장': '마감공사',
   '타일': '마감공사',
+  '건축마감': '마감공사',
+  '마감': '마감공사',
   '전기': '전기공사',
   '설비': '설비공사',
   '방수': '방수공사',
@@ -981,6 +1020,7 @@ function tradeGroupCardBorderClass(tg) {
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <button
+          v-if="!isTradeScoped"
           type="button"
           class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100"
           @click="autoRecommend"
@@ -1002,18 +1042,8 @@ function tradeGroupCardBorderClass(tg) {
         <div class="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            class="inline-flex size-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-800 disabled:pointer-events-none disabled:opacity-50"
-            :title="T.dummySeedZones"
-            :aria-label="T.dummySeedZones"
-            :disabled="dummySeedLoading"
-            @click="seedDummyZones"
-          >
-            <RefreshCw class="h-3.5 w-3.5" :class="{ 'animate-spin': dummySeedLoading }" />
-          </button>
-          <button
-            type="button"
             class="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-800"
-            @click="resetAllZones"
+            @click="openResetConfirm"
           >
             {{ T.zoneReset }}
           </button>
@@ -1661,6 +1691,101 @@ function tradeGroupCardBorderClass(tg) {
               @click="executeFinalizeSave"
             >
               {{ T.savePlacementConfirmProceed }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 초기화 확인 모달 -->
+    <Teleport to="body">
+      <div
+        v-if="resetConfirmOpen"
+        class="fixed inset-0 z-[95] flex items-center justify-center p-4"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="reset-confirm-title"
+        aria-describedby="reset-confirm-desc"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
+          :aria-label="T.cancel"
+          @click="closeResetConfirm"
+        />
+        <div
+          class="relative z-10 w-full max-w-md rounded-2xl border border-forena-100 bg-white p-6 shadow-xl ring-1 ring-black/5"
+          @click.stop
+        >
+          <div class="flex flex-col items-center text-center">
+            <div
+              class="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600 ring-1 ring-rose-200/80"
+              aria-hidden="true"
+            >
+              <AlertTriangle class="h-6 w-6 shrink-0" stroke-width="2" />
+            </div>
+            <h3 id="reset-confirm-title" class="text-base font-bold text-forena-900">
+              {{ T.resetConfirmTitle }}
+            </h3>
+            <p
+              id="reset-confirm-desc"
+              class="mt-2 whitespace-pre-line text-sm leading-relaxed text-forena-600"
+            >
+              {{ T.resetConfirmWarn }}
+            </p>
+          </div>
+
+          <div class="mt-5 rounded-xl border border-slate-200/80 bg-slate-50/60 overflow-hidden">
+            <div class="flex items-center justify-between border-b border-slate-200/70 px-4 py-2">
+              <span class="text-xs font-bold text-forena-700">{{ T.resetConfirmZoneCol }}</span>
+              <span class="text-xs font-bold text-forena-700">{{ T.resetConfirmCountCol }}</span>
+            </div>
+            <div
+              v-if="resetConfirmRows.length === 0"
+              class="px-4 py-4 text-center text-xs text-slate-400"
+            >
+              {{ T.resetConfirmNoAssigned }}
+            </div>
+            <div
+              v-else
+              class="max-h-52 overflow-y-auto divide-y divide-slate-200/50"
+            >
+              <div
+                v-for="row in resetConfirmRows"
+                :key="row.label"
+                class="flex items-center justify-between px-4 py-2"
+              >
+                <span class="truncate text-xs text-forena-800">{{ row.label }}</span>
+                <span class="ml-3 shrink-0 text-xs font-semibold tabular-nums text-rose-700">
+                  {{ row.count }}{{ T.countUnit }}
+                </span>
+              </div>
+            </div>
+            <div
+              v-if="resetConfirmRows.length > 0"
+              class="flex items-center justify-between border-t border-slate-200/70 bg-slate-100/60 px-4 py-2"
+            >
+              <span class="text-xs font-bold text-forena-800">{{ T.resetConfirmTotal }}</span>
+              <span class="text-xs font-bold tabular-nums text-rose-700">
+                {{ resetConfirmTotal }}{{ T.countUnit }}
+              </span>
+            </div>
+          </div>
+
+          <div class="mt-6 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              class="rounded-xl border border-forena-200 bg-white px-5 py-2 text-sm font-bold text-forena-700 hover:bg-forena-50"
+              @click="closeResetConfirm"
+            >
+              {{ T.cancel }}
+            </button>
+            <button
+              type="button"
+              class="rounded-xl bg-gradient-to-r from-rose-600 to-rose-800 px-5 py-2 text-sm font-bold text-white hover:from-rose-700 hover:to-rose-900"
+              @click="executeReset"
+            >
+              {{ T.resetConfirmProceed }}
             </button>
           </div>
         </div>
