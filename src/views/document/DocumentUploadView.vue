@@ -33,6 +33,7 @@ import {
 import jsPDF from 'jspdf'
 import html2canvas from 'html2canvas'
 import api from '@/api/index'
+import { getProject } from '@/api/project.js'
 import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import { useAuthStore } from '@/stores/authStore.js'
 
@@ -40,6 +41,20 @@ const router = useRouter()
 const authStore = useAuthStore()
 const { currentProjectId: routeProjectId } = useCurrentProject()
 const currentProjectId = computed(() => authStore.projectId ?? routeProjectId.value)
+const PLACEHOLDER_UPLOADER_NAMES = new Set(['site manager', '현장 관리자', '현장 담당자'])
+const DEFAULT_PROJECT_INFO = {
+  name: '',
+  startDate: null,
+  endDate: null,
+}
+
+function resolveUploaderName(...values) {
+  for (const value of values) {
+    const text = String(value ?? '').trim()
+    if (text && !PLACEHOLDER_UPLOADER_NAMES.has(text)) return text
+  }
+  return authStore.userName || authStore.loginId || ''
+}
 
 /* ───── 한국어 라벨 ───── */
 const L = {
@@ -52,7 +67,7 @@ const L = {
   statPartner: '협력사 문서',
   unit: '건',
 
-  searchPh: '문서코드, 파일명, 협력사명 검색',
+  searchPh: '문서코드, 공종, 내용 검색',
   excel: '종합 공사일보 PDF 다운로드',
   upload: '문서 업로드',
   filterLabel: '유형 필터',
@@ -188,7 +203,7 @@ function mapApiToFront(apiDoc) {
     origin:      origin,
     partnerName: partnerName,
     uploadDate:  uploadDate,
-    uploader:    apiDoc.name       ?? '',  // DTO 필드: name → 업로드자
+    uploader:    resolveUploaderName(apiDoc.uploader, apiDoc.name),  // DTO 필드: name → 업로드자
     version:     'v1.0',       // DTO에 없으므로 기본값
     fileSize:    '',           // DTO에 없으므로 비워둠
   }
@@ -227,7 +242,7 @@ function mapUploadedToFront(apiDoc) {
     partnerName: apiDoc.partnerName || null,
     uploadDate: apiDoc.uploadDate || '',
     docDate: apiDoc.docDate || apiDoc.uploadDate || '',
-    uploader: apiDoc.uploader || '',
+    uploader: resolveUploaderName(apiDoc.uploader),
     version: apiDoc.version || 'v1.0',
     fileSize: apiDoc.fileSize || '',
     status: apiDoc.statusCode || '',
@@ -279,7 +294,7 @@ function mapWorkOrderToDoc(wo) {
     partnerName: null,
     uploadDate:  uploadDate,
     docDate:     docDate,        // 날짜 필터용 (마감일 기준)
-    uploader:    '현장 관리자',
+    uploader:    resolveUploaderName(wo.uploader, wo.author, wo.writerName, wo.createdBy),
     version:     'v1.0',
     fileSize:    '',
     status:      statusMap[wo.statusCode] || '임시저장',
@@ -318,7 +333,7 @@ function mapReportToDoc(rp) {
     partnerName: null,
     uploadDate:  uploadDate,
     docDate:     reportDate,     // 날짜 필터용 (작업일 기준)
-    uploader:    rp.author || '현장 담당자',
+    uploader:    resolveUploaderName(rp.uploader, rp.author, rp.writerName, rp.createdBy),
     version:     'v1.0',
     fileSize:    '',
     status:      '승인',
@@ -327,9 +342,8 @@ function mapReportToDoc(rp) {
 }
 
 /* ── API 호출 (마운트 시 + 수동 새로고침) ── */
-const API_BASE = window.location.hostname === 'localhost'
-    ? 'http://localhost:8080'
-    : 'https://www.dndn24.kro.kr/api'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
+const MSA_API_BASE = `${API_BASE}/msa`
 function authFetch(url, options = {}) {
   const token = localStorage.getItem('accessToken')
   const headers = new Headers(options.headers || {})
@@ -358,7 +372,7 @@ async function fetchDocuments() {
     // 시공계획서(TRADE_PLAN)만 전체 가져오기
     // (공정표 3종은 고정 영역에서 별도 조회하므로 여기선 제외)
     const res = await authFetch(
-      `${API_BASE}/document-management/${currentProjectId.value}/uploaded?${params.toString()}`
+      `${MSA_API_BASE}/document-management/${currentProjectId.value}/uploaded?${params.toString()}`
     )
     const json = await res.json()
     console.log('[DocumentUpload] page response', json)
@@ -485,6 +499,7 @@ async function fetchReports() {
 }
 
 onMounted(() => {
+  loadProjectInfo()
   fetchDocuments()
   fetchPinnedSchedules()
 })
@@ -813,6 +828,7 @@ watch(
 watch(currentProjectId, () => {
   selectedRows.value.clear()
   currentPage.value = 1
+  loadProjectInfo()
   fetchDocuments()
   fetchPinnedSchedules()
 })
@@ -920,12 +936,44 @@ const pdfPreviewUrl = ref('')            // iframe에 띄울 Blob URL
 const pdfBlob = ref(null)                // 다운로드 시 사용할 Blob 객체
 const pdfFileName = ref('')              // 저장할 파일명
 
-// 공사 정보 (실제 환경에선 API/스토어에서 받아오기)
+// 공사 정보
 const projectInfo = ref({
-  name: '체육공원 진입도로(대3-42호) 개설공사',
-  startDate: '2026-02-28',
-  endDate: '2027-02-27',
+  ...DEFAULT_PROJECT_INFO,
 })
+
+function unwrapProjectPayload(response) {
+  return response?.data?.data ?? response?.data ?? response ?? {}
+}
+
+function parseProjectPeriod(period) {
+  if (!period || typeof period !== 'string') return {}
+  const dates = period.match(/\d{4}-\d{2}-\d{2}/g) || period.match(/\d{4}\.\d{2}\.\d{2}/g) || []
+  return {
+    startDate: dates[0]?.replaceAll('.', '-') ?? null,
+    endDate: dates[1]?.replaceAll('.', '-') ?? null,
+  }
+}
+
+async function loadProjectInfo() {
+  const projectId = currentProjectId.value
+  if (!projectId) {
+    projectInfo.value = { ...DEFAULT_PROJECT_INFO }
+    return
+  }
+
+  try {
+    const project = unwrapProjectPayload(await getProject(projectId))
+    const period = parseProjectPeriod(project.period)
+    projectInfo.value = {
+      name: project.name || project.projectName || project.siteName || '',
+      startDate: project.startDate ?? period.startDate ?? null,
+      endDate: project.endDate ?? period.endDate ?? null,
+    }
+  } catch (error) {
+    console.warn('[DocumentUpload] project info fetch failed:', error)
+    projectInfo.value = { ...DEFAULT_PROJECT_INFO }
+  }
+}
 
 // 진척률 평균/합계 계산
 const pdfStats = computed(() => {
@@ -971,6 +1019,10 @@ const generatePdf = async () => {
   isGeneratingPdf.value = true
 
   try {
+    if (!projectInfo.value.name) {
+      await loadProjectInfo()
+    }
+
     // 1. 해당 날짜의 공사일보 조회
     const res = await api.get('/report/', { params: { date: pdfTargetDate.value } })
     const dbReports = Array.isArray(res) ? res : (res.data?.data || res.data || [])
@@ -1206,6 +1258,10 @@ async function previewWorkOrder(doc) {
 
   isGeneratingSinglePdf.value = true
 
+  if (!projectInfo.value.name) {
+    await loadProjectInfo()
+  }
+
   // 작업지시서 페이지에서의 파싱 로직 재현
   let locationStr = raw.title
     ? raw.title
@@ -1264,6 +1320,10 @@ async function previewReport(doc) {
   if (!raw) return
 
   isGeneratingSinglePdf.value = true
+
+  if (!projectInfo.value.name) {
+    await loadProjectInfo()
+  }
 
   const toDateStr = (v) => {
     if (!v) return ''
