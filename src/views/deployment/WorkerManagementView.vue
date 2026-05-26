@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -361,8 +361,69 @@ watch(searchNameInput, () => {
   }, 300)
 })
 
+// ─────────────────────────────────────────────────
+// SSE: 출퇴근 실시간 반영
+// ─────────────────────────────────────────────────
+
+/** @type {EventSource|null} */
+let sseSource = null
+
+function startSseSubscription() {
+  if (typeof EventSource === 'undefined') return
+
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  const siteCode = authStore.siteCode || ''
+  const url = `${baseUrl}/management/sse/attendance-stream?siteCode=${encodeURIComponent(siteCode)}`
+
+  sseSource = new EventSource(url, { withCredentials: true })
+
+  sseSource.addEventListener('attendance', (e) => {
+    try {
+      const payload = JSON.parse(e.data)
+      applySseAttendanceEvent(payload)
+    } catch (err) {
+      console.warn('[SSE] parse error', err)
+    }
+  })
+
+  sseSource.onerror = () => {
+    // 연결 오류 시 자동 재연결은 브라우저가 처리
+    console.warn('[SSE] connection error — browser will retry')
+  }
+}
+
+/**
+ * SSE 이벤트로 받은 출퇴근 정보를 현재 페이지 목록에 반영한다.
+ * workerIdx 가 일치하는 행만 갱신; 목록에 없으면 무시.
+ */
+function applySseAttendanceEvent(payload) {
+  const { workerIdx, action, time, attendanceStatus } = payload
+  if (!workerIdx) return
+
+  const idx = Number(workerIdx)
+  const row = attendanceList.value.find((r) => r.id === idx)
+  if (!row) return
+
+  if (action === 'CHECK_IN') {
+    row.clockIn = time || '-'
+    row.attendanceStatus = String(attendanceStatus ?? 'PRESENT').toUpperCase()
+  } else if (action === 'CHECK_OUT') {
+    row.clockOut = time || '-'
+    row.attendanceStatus = String(attendanceStatus ?? 'LEAVE').toUpperCase()
+  }
+  row.status = deriveStatusLabel(row.attendanceStatus, row.clockIn, row.clockOut)
+}
+
 onMounted(() => {
   refreshWorkerListFromApi().catch((e) => console.warn('[WorkerManagement] 초기 목록 로드 실패', e))
+  startSseSubscription()
+})
+
+onBeforeUnmount(() => {
+  if (sseSource) {
+    sseSource.close()
+    sseSource = null
+  }
 })
 
 async function onTriggerSync() {
