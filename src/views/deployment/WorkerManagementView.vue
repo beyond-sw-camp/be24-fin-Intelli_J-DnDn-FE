@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -8,12 +8,12 @@ import {
   LogOut,
   UserX,
   Eye,
-  RefreshCw,
   Timer,
   ChevronLeft,
   ChevronRight,
   CircleCheck,
   Zap,
+  History,
 } from 'lucide-vue-next'
 import {
   employmentKindDisplay,
@@ -21,14 +21,23 @@ import {
   deriveAttendanceTag,
   attendanceTagBadgeClass,
 } from '@/utils/workerUi'
-import { syncWorkforce, syncAllSites, fetchWorkerList } from '@/api/worker.js'
+import { syncAllSites, fetchWorkerList, seedDemoAttendanceHistory, bulkOverrideAttendance } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
 
 const router = useRouter()
 const authStore = useAuthStore()
-const isDataLoading = ref(false)
 const isTriggerLoading = ref(false)
-const lastDataRefreshAt = ref(null)
+const isSeedLoading = ref(false)
+const isBulkLoading = ref(false)
+
+const BULK_STATUS_OPTIONS = [
+  { label: '미출근', value: 'PENDING' },
+  { label: '출근',   value: 'PRESENT' },
+  { label: '지각',   value: 'LATE' },
+  { label: '조퇴',   value: 'EARLY_LEAVE' },
+  { label: '퇴근',   value: 'LEAVE' },
+]
+const selectedBulkStatus = ref('PRESENT')
 
 /** 상단 헤더 (근무자 관리) */
 const WM = {
@@ -36,26 +45,13 @@ const WM = {
   heroDesc:
     '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
   sectionAttendance: '작업자 근태 현황',
-  dataLoad: '데이터 불러오기',
-  dataLoadLoading: '불러오는 중...',
   triggerSync: '전체 동기화',
   triggerSyncLoading: '동기화 중...',
-  lastRefreshLabel: '최종 갱신',
+  seedHistory: '이전 출결내역 불러오기',
+  seedHistoryLoading: '적용 중...',
+  bulkOverride: '일괄 적용',
+  bulkOverrideLoading: '적용 중...',
 }
-
-const lastRefreshDisplay = computed(() => {
-  const d = lastDataRefreshAt.value
-  if (!d) return `${WM.lastRefreshLabel}: —`
-  return `${WM.lastRefreshLabel}: ${new Intl.DateTimeFormat('ko-KR', {
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  }).format(d)}`
-})
 
 /** 출입·근태 테이블 구역 */
 const T = {
@@ -63,9 +59,6 @@ const T = {
   title: '출입 / 근태 관리',
   desc: '작업자 출퇴근과 공수 산정 현황을 일일별로 조회하고 보정할 수 있습니다.',
   breadcrumb: '현장 관리 / 출입·근태',
-  filterDate: '조회 날짜',
-  datePrevAria: '어제 명단 보기',
-  dateNextAria: '내일 명단 보기',
   filterAffil: '공종 구분',
   filterSearch: '작업자 이름',
   filterSearchPh: '이름을 입력하세요',
@@ -84,9 +77,6 @@ const T = {
   attendanceFilterHint: '근태',
   todayWorkerTotal: '금일 작업자',
   countPeople: '명',
-  calDialogLabel: '조회 날짜 선택',
-  calPrevMonth: '이전 달',
-  calNextMonth: '다음 달',
 }
 
 const JOB_RANK_SITE_DIRECTOR = '현장 총 책임자'
@@ -101,13 +91,24 @@ function jobRankBadgeClass(rank) {
   return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
 }
 
-/** 공종 구분: 현재 조회된 근무자의 공종명 기반 동적 옵션 */
+/** 공종 구분: 서버에서 받은 현장+날짜 기준 전체 공종 목록 */
 const tradeFilterOptions = computed(() => {
-  const trades = [
-    ...new Set(attendanceList.value.map((r) => r.affiliationSubLabel).filter(Boolean)),
-  ].sort((a, b) => a.localeCompare(b, 'ko'))
+  const trades = availableTradesFromServer.value
   return [{ value: '', label: '전체 공종' }, ...trades.map((t) => ({ value: t, label: t }))]
 })
+
+/** KPI 서버 카운트 → 프론트 태그 매핑 */
+function kpiTagCounts(kpi) {
+  if (!kpi) return { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
+  return {
+    '출근 전': kpi.pending ?? 0,
+    출근: kpi.present ?? 0,
+    지각: kpi.late ?? 0,
+    조퇴: kpi.earlyLeave ?? 0,
+    퇴근: kpi.leave ?? 0,
+    결근: kpi.absent ?? 0,
+  }
+}
 
 /** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
 function localTodayISODate() {
@@ -130,166 +131,65 @@ function parseISODateLocal(ymd) {
   return dt
 }
 
-function formatISODateLocal(d) {
-  const y = d.getFullYear()
-  const mo = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${mo}-${day}`
-}
-
 /** MANAGEMENT_001 동기화 시 서버에 넘기는 현장 코드 — 로그인한 계정의 siteCode 사용 */
 const SYNC_SITE_CODE = computed(() => authStore.siteCode)
 
 const filters = ref({
-  date: localTodayISODate(),
   selectedTrade: '',
-  searchName: '',
+})
+const searchNameInput = ref('')
+let searchNameDebounceTimer = null
+
+// 페이징
+const currentPage = ref(0)
+const totalPages = ref(0)
+const totalElements = ref(0)
+
+// 서버 KPI
+const globalKpiData = ref(null)   // 전체 근무자 (필터 무관)
+const listKpiData = ref(null)     // 공종+이름 필터 적용 후 전체
+const availableTradesFromServer = ref([])
+
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+
+const todayDateDisplay = computed(() => {
+  const dt = parseISODateLocal(localTodayISODate())
+  if (!dt) return '—'
+  const y = dt.getFullYear()
+  const m = dt.getMonth() + 1
+  const d = dt.getDate()
+  const w = WEEKDAY_KO[dt.getDay()]
+  return `${y}년 ${m}월 ${d}일 (${w})`
 })
 
-/** 필터용 인라인 달력 — 요일 헤더 */
-const filterCalWeekDays = ['일', '월', '화', '수', '목', '금', '토']
-
-const filterCalendarOpen = ref(false)
-const datePickerRootRef = ref(null)
-const calYear = ref(new Date().getFullYear())
-const calMonth = ref(new Date().getMonth() + 1)
-
-function toggleFilterCalendar() {
-  if (!filterCalendarOpen.value) {
-    const dt = parseISODateLocal(filters.value.date)
-    if (dt) {
-      calYear.value = dt.getFullYear()
-      calMonth.value = dt.getMonth() + 1
-    } else {
-      const now = new Date()
-      calYear.value = now.getFullYear()
-      calMonth.value = now.getMonth() + 1
-    }
-  }
-  filterCalendarOpen.value = !filterCalendarOpen.value
-}
-
-function shiftCalendarMonth(delta) {
-  let y = calYear.value
-  let m = calMonth.value + delta
-  while (m > 12) {
-    m -= 12
-    y += 1
-  }
-  while (m < 1) {
-    m += 12
-    y -= 1
-  }
-  calYear.value = y
-  calMonth.value = m
-}
-
-function pad2(n) {
-  return String(n).padStart(2, '0')
-}
-
-function pickFilterCalendarDay(day) {
-  if (day == null) return
-  filters.value.date = `${calYear.value}-${pad2(calMonth.value)}-${pad2(day)}`
-  filterCalendarOpen.value = false
-}
-
-const filterCalendarWeeks = computed(() => {
-  const y = calYear.value
-  const m = calMonth.value
-  const mi = m - 1
-  const first = new Date(y, mi, 1)
-  const lastDay = new Date(y, mi + 1, 0).getDate()
-  const pad = first.getDay()
-  const weeks = []
-  let week = []
-  for (let i = 0; i < pad; i++) week.push(null)
-  for (let d = 1; d <= lastDay; d++) {
-    week.push(d)
-    if (week.length === 7) {
-      weeks.push(week)
-      week = []
-    }
-  }
-  while (week.length > 0 && week.length < 7) week.push(null)
-  if (week.length) weeks.push(week)
-  return weeks
-})
-
-function filterCalendarDayKey(day) {
-  if (day == null) return ''
-  return `${calYear.value}-${pad2(calMonth.value)}-${pad2(day)}`
-}
-
-function closeFilterCalendarIfOutside(e) {
-  if (!filterCalendarOpen.value) return
-  const root = datePickerRootRef.value
-  if (root && e.target instanceof Node && !root.contains(e.target)) {
-    filterCalendarOpen.value = false
-  }
-}
-
-function shiftFilterDate(deltaDays) {
-  filterCalendarOpen.value = false
-  const cur = parseISODateLocal(filters.value.date)
-  const base = cur ? new Date(cur) : new Date()
-  base.setDate(base.getDate() + deltaDays)
-  filters.value.date = formatISODateLocal(base)
-}
-
-const filterDateDisplay = computed(() => {
-  const dt = parseISODateLocal(filters.value.date)
-  if (!dt) return filters.value.date || '—'
-  return new Intl.DateTimeFormat('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-  }).format(dt)
-})
-
-/** MANAGEMENT_003 — 서버 목록 (비어 있으면 빈 표) */
+/** MANAGEMENT_003 — 현재 페이지 근무자 (50개) */
 const attendanceList = ref([])
-
-const preKindAttendance = computed(() => {
-  let result = attendanceList.value
-  if (filters.value.searchName)
-    result = result.filter((a) => a.name.includes(filters.value.searchName))
-  const trade = filters.value.selectedTrade
-  if (trade) result = result.filter((a) => a.affiliationSubLabel === trade)
-  return result
-})
 
 const ATTENDANCE_STATE_LABELS = ['출근 전', '출근', '지각', '조퇴', '퇴근', '결근']
 const EMPLOYMENT_FILTER_LABELS = ['상용', '일용']
 
 const listStatusFilter = ref('')
-/** 근태 칩과 별개 — '' | '상용' | '일용' */
 const listEmploymentFilter = ref('')
 
-/** 소속·이름 검색만 반영 (목록 우측 고용·근태 칩 집계 기준 풀) */
-const listBaseForStats = computed(() => preKindAttendance.value)
+/** 상단 KPI 카드 — 전체 근무자 (서버 globalKpi, 필터 무관) */
+const kpAttendanceCounts = computed(() => kpiTagCounts(globalKpiData.value))
 
-/** 상단 KPI 5칸 — 조회일 전체 명단 (필터와 무관, 당일 총 작업자 근태 분포) */
-const kpAttendanceCounts = computed(() => {
-  const rows = attendanceList.value
-  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
-  for (const r of rows) {
-    const s = deriveAttendanceTag(r)
-    if (s in acc) acc[s]++
-  }
-  return acc
-})
+/** 목록 집계 근태 칩 — 공종+이름 필터 기준 전체 (서버 listKpi) */
+const attendanceStateCounts = computed(() => kpiTagCounts(listKpiData.value))
 
-/** 상용/일용 적용 후 (근태 칩 집계·필터는 이 결과 위에서 동작) */
+/** 금일 작업자 수 — 필터 적용 후 전체 인원 */
+const todayWorkerCount = computed(() => listKpiData.value?.total ?? 0)
+
+/** 상용/일용 표시 필터 (현재 페이지 기준) */
 const employmentFilteredRows = computed(() => {
-  let rows = listBaseForStats.value
+  let rows = attendanceList.value
   const emp = listEmploymentFilter.value
   if (emp === '상용') rows = rows.filter((r) => r.employmentClass === '상용')
   else if (emp === '일용') rows = rows.filter((r) => r.employmentClass === '일용')
   return rows
 })
 
+/** 테이블 표시 행 — 현재 페이지에서 고용·근태 클라이언트 필터 적용 */
 const filteredAttendance = computed(() => {
   let result = employmentFilteredRows.value
   if (listStatusFilter.value) {
@@ -298,27 +198,15 @@ const filteredAttendance = computed(() => {
   return result
 })
 
-const todayWorkerCount = computed(() => employmentFilteredRows.value.length)
-
+/** 고용 칩 카운트 — 현재 페이지 기준 */
 const employmentCounts = computed(() => {
-  const rows = listBaseForStats.value
-  let sang = 0
-  let il = 0
+  const rows = attendanceList.value
+  let sang = 0, il = 0
   for (const r of rows) {
     if (r.employmentClass === '일용') il++
     else sang++
   }
   return { 상용: sang, 일용: il }
-})
-
-const attendanceStateCounts = computed(() => {
-  const rows = employmentFilteredRows.value
-  const acc = { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
-  for (const r of rows) {
-    const s = deriveAttendanceTag(r)
-    if (s in acc) acc[s]++
-  }
-  return acc
 })
 
 function toggleListStatusFilter(state) {
@@ -422,40 +310,67 @@ function mapWorkerResToAttendance(row) {
   }
 }
 
-/** MANAGEMENT_003 — 현재 조회일 기준 목록만 갱신 (근태는 이 날짜의 attendance_record 와 매칭) */
-async function refreshWorkerListFromApi() {
-  const listRes = await fetchWorkerList(SYNC_SITE_CODE.value, filters.value.date)
+/** MANAGEMENT_003 — 현재 필터+페이지 기준 목록 갱신 */
+async function refreshWorkerListFromApi(pageOverride) {
+  const pg = pageOverride !== undefined ? pageOverride : currentPage.value
+  const listRes = await fetchWorkerList(SYNC_SITE_CODE.value, localTodayISODate(), {
+    tradeName: filters.value.selectedTrade || undefined,
+    searchName: searchNameInput.value.trim() || undefined,
+    page: pg,
+    size: 20,
+  })
   const rows = listRes?.rows
   if (Array.isArray(rows)) {
     attendanceList.value = rows.map(mapWorkerResToAttendance)
   }
+  if (listRes) {
+    globalKpiData.value = listRes.globalKpi ?? null
+    listKpiData.value = listRes.listKpi ?? null
+    availableTradesFromServer.value = listRes.availableTrades ?? []
+    currentPage.value = listRes.page ?? 0
+    totalPages.value = listRes.totalPages ?? 0
+    totalElements.value = listRes.totalElements ?? 0
+  }
+}
+
+function goToPage(pg) {
+  if (pg < 0 || pg >= totalPages.value || pg === currentPage.value) return
+  refreshWorkerListFromApi(pg).catch((e) =>
+    console.warn('[WorkerManagement] 페이지 이동 실패', e),
+  )
 }
 
 watch(
-  () => filters.value.date,
+  () => filters.value.selectedTrade,
   () => {
-    refreshWorkerListFromApi().catch((e) =>
-      console.warn('[WorkerManagement] 조회일 변경 후 목록 갱신 실패', e),
+    currentPage.value = 0
+    listStatusFilter.value = ''
+    refreshWorkerListFromApi(0).catch((e) =>
+      console.warn('[WorkerManagement] 공종 필터 변경 후 목록 갱신 실패', e),
     )
   },
 )
 
-onMounted(() => {
-  document.addEventListener('pointerdown', closeFilterCalendarIfOutside, true)
-  refreshWorkerListFromApi().catch((e) => console.warn('[WorkerManagement] 초기 목록 로드 실패', e))
+watch(searchNameInput, () => {
+  clearTimeout(searchNameDebounceTimer)
+  searchNameDebounceTimer = setTimeout(() => {
+    currentPage.value = 0
+    refreshWorkerListFromApi(0).catch((e) =>
+      console.warn('[WorkerManagement] 이름 검색 후 목록 갱신 실패', e),
+    )
+  }, 300)
 })
 
-onUnmounted(() => {
-  document.removeEventListener('pointerdown', closeFilterCalendarIfOutside, true)
+onMounted(() => {
+  refreshWorkerListFromApi().catch((e) => console.warn('[WorkerManagement] 초기 목록 로드 실패', e))
 })
 
 async function onTriggerSync() {
   if (isTriggerLoading.value) return
   isTriggerLoading.value = true
   try {
-    const bulkResult = await syncAllSites(filters.value.date)
+    const bulkResult = await syncAllSites(localTodayISODate())
     await refreshWorkerListFromApi()
-    lastDataRefreshAt.value = new Date()
     const lines = (bulkResult.results ?? []).map((r) =>
       r.success
         ? `✓ ${r.siteCode}: 신규 ${r.detail?.created ?? 0}명 · 갱신 ${r.detail?.updated ?? 0}명`
@@ -471,23 +386,36 @@ async function onTriggerSync() {
   }
 }
 
-async function onDataLoad() {
-  if (isDataLoading.value) return
-  isDataLoading.value = true
+async function onSeedHistory() {
+  if (isSeedLoading.value) return
+  isSeedLoading.value = true
   try {
-    const syncResult = await syncWorkforce(SYNC_SITE_CODE.value, filters.value.date)
+    const result = await seedDemoAttendanceHistory(SYNC_SITE_CODE.value)
     await refreshWorkerListFromApi()
-    lastDataRefreshAt.value = new Date()
     window.alert(
-      `인력 데이터를 불러왔습니다.\n신규 ${syncResult.created}명 · 갱신 ${syncResult.updated}명 · 처리 ${syncResult.total}건` +
-        (syncResult.documentsSynced != null
-          ? `\n서류 ${syncResult.documentsSynced} · 제재 ${syncResult.sanctionsSynced ?? 0} · 사고 ${syncResult.accidentsSynced ?? 0} · 근태 ${syncResult.attendanceRecordsSynced ?? 0}`
-          : ''),
+      `이전 출결내역 적용 완료\n근무자 ${result.workers}명 · 출결 로그 ${result.logs ?? result.records ?? 0}건 · 구역배치 이력 ${result.staffingLogs}건 · 사고 이력 ${result.accidents}건\n(근무자별 피로도 점수가 재산정됩니다.)`,
     )
   } catch (err) {
-    window.alert(err?.message || '데이터 불러오기에 실패했습니다.')
+    window.alert(err?.message || '이전 출결내역 불러오기에 실패했습니다.')
   } finally {
-    isDataLoading.value = false
+    isSeedLoading.value = false
+  }
+}
+
+async function onBulkOverride() {
+  if (isBulkLoading.value) return
+  const statusLabel = BULK_STATUS_OPTIONS.find((o) => o.value === selectedBulkStatus.value)?.label ?? selectedBulkStatus.value
+  const confirmMsg = `${localTodayISODate()} · ${SYNC_SITE_CODE.value} 현장의\n모든 근무자를 [${statusLabel}] 상태로 일괄 변경합니다.\n계속하시겠습니까?`
+  if (!window.confirm(confirmMsg)) return
+  isBulkLoading.value = true
+  try {
+    const result = await bulkOverrideAttendance(SYNC_SITE_CODE.value, localTodayISODate(), selectedBulkStatus.value)
+    await refreshWorkerListFromApi()
+    window.alert(`일괄 변경 완료: ${result.total}명 → [${statusLabel}]`)
+  } catch (err) {
+    window.alert(err?.message || '일괄 변경에 실패했습니다.')
+  } finally {
+    isBulkLoading.value = false
   }
 }
 </script>
@@ -501,8 +429,42 @@ async function onDataLoad() {
           <h1 class="text-xl font-bold text-forena-900">{{ WM.pageTitle }}</h1>
         </div>
       </div>
-      <div class="flex flex-col items-end gap-1">
-        <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2">
+          <!-- 근태 일괄 변경 -->
+          <div class="flex items-center gap-1">
+            <select
+              v-model="selectedBulkStatus"
+              class="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-forena-800 focus:outline-none focus:ring-2 focus:ring-flare-300"
+            >
+              <option v-for="opt in BULK_STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <button
+              type="button"
+              :disabled="isBulkLoading"
+              class="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
+              @click="onBulkOverride"
+            >
+              <CircleCheck
+                class="h-3.5 w-3.5 shrink-0 text-slate-500"
+                :class="{ 'animate-spin': isBulkLoading }"
+              />
+              {{ isBulkLoading ? WM.bulkOverrideLoading : WM.bulkOverride }}
+            </button>
+          </div>
+          <button
+            type="button"
+            :disabled="isSeedLoading"
+            class="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+            @click="onSeedHistory"
+          >
+            <History
+              class="h-3.5 w-3.5 shrink-0 text-emerald-600"
+              :class="{ 'animate-spin': isSeedLoading }"
+            />
+            {{ isSeedLoading ? WM.seedHistoryLoading : WM.seedHistory }}
+          </button>
           <button
             type="button"
             :disabled="isTriggerLoading"
@@ -515,24 +477,6 @@ async function onDataLoad() {
             />
             {{ isTriggerLoading ? WM.triggerSyncLoading : WM.triggerSync }}
           </button>
-          <button
-            type="button"
-            :disabled="isDataLoading"
-            class="inline-flex items-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-60"
-            @click="onDataLoad"
-          >
-            <RefreshCw
-              class="h-3.5 w-3.5 shrink-0 text-flare-600"
-              :class="{ 'animate-spin': isDataLoading }"
-            />
-            {{ isDataLoading ? WM.dataLoadLoading : WM.dataLoad }}
-          </button>
-        </div>
-        <p
-          class="text-right text-[10px] leading-tight font-medium whitespace-nowrap tabular-nums text-forena-500"
-        >
-          {{ lastRefreshDisplay }}
-        </p>
       </div>
     </div>
 
@@ -621,99 +565,10 @@ async function onDataLoad() {
         <div
           class="rounded-2xl border border-forena-100/90 bg-white/90 p-5 shadow-card backdrop-blur-sm"
         >
-          <div ref="datePickerRootRef" class="relative border-b border-forena-100 pb-5">
-            <p class="mb-2 text-[11px] font-bold text-forena-500">{{ T.filterDate }}</p>
-            <div class="flex w-full items-center gap-1 sm:gap-2">
-              <button
-                type="button"
-                class="inline-flex shrink-0 items-center justify-center rounded-lg p-2 text-forena-600 transition-colors hover:bg-slate-200/70 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
-                :aria-label="T.datePrevAria"
-                @click="shiftFilterDate(-1)"
-              >
-                <ChevronLeft class="h-5 w-5" aria-hidden="true" />
-              </button>
-              <button
-                id="wm-attendance-date-trigger"
-                type="button"
-                class="min-w-0 flex-1 rounded-lg px-3 py-2 text-center text-sm font-bold tabular-nums text-forena-900 transition-colors hover:bg-slate-200/70 sm:px-4 sm:text-base"
-                :aria-expanded="filterCalendarOpen"
-                :aria-label="T.filterDate"
-                @click.stop="toggleFilterCalendar"
-              >
-                {{ filterDateDisplay }}
-              </button>
-              <button
-                type="button"
-                class="inline-flex shrink-0 items-center justify-center rounded-lg p-2 text-forena-600 transition-colors hover:bg-slate-200/70 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
-                :aria-label="T.dateNextAria"
-                @click="shiftFilterDate(1)"
-              >
-                <ChevronRight class="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-            <div
-              v-show="filterCalendarOpen"
-              class="absolute left-1/2 top-full z-40 mt-2 w-[272px] max-w-[calc(100%-0.5rem)] -translate-x-1/2 rounded-xl border border-forena-200 bg-white p-2.5 shadow-xl shadow-forena-900/10 ring-1 ring-black/5"
-              role="dialog"
-              :aria-label="T.calDialogLabel"
-              @click.stop
-            >
-              <div
-                class="mb-3 flex items-center justify-between gap-2 border-b border-forena-100 pb-2"
-              >
-                <button
-                  type="button"
-                  class="inline-flex rounded-lg p-1.5 text-forena-600 transition-colors hover:bg-slate-100 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
-                  :aria-label="T.calPrevMonth"
-                  @click.stop="shiftCalendarMonth(-1)"
-                >
-                  <ChevronLeft class="h-4 w-4" aria-hidden="true" />
-                </button>
-                <span class="text-sm font-bold tabular-nums text-forena-900"
-                  >{{ calYear }}년 {{ calMonth }}월</span
-                >
-                <button
-                  type="button"
-                  class="inline-flex rounded-lg p-1.5 text-forena-600 transition-colors hover:bg-slate-100 hover:text-forena-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/45"
-                  :aria-label="T.calNextMonth"
-                  @click.stop="shiftCalendarMonth(1)"
-                >
-                  <ChevronRight class="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
-              <div class="grid grid-cols-7 gap-0.5 text-center">
-                <span
-                  v-for="(wd, wi) in filterCalWeekDays"
-                  :key="wi"
-                  class="py-1 text-[10px] font-bold text-forena-400"
-                  >{{ wd }}</span
-                >
-              </div>
-              <div
-                v-for="(week, wwi) in filterCalendarWeeks"
-                :key="wwi"
-                class="mt-0.5 grid grid-cols-7 gap-0.5"
-              >
-                <template v-for="(day, ddi) in week" :key="ddi">
-                  <button
-                    v-if="day !== null"
-                    type="button"
-                    class="min-h-9 rounded-lg text-xs font-semibold tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-flare-400/50"
-                    :class="
-                      filterCalendarDayKey(day) === filters.date
-                        ? 'bg-flare-600 text-white hover:bg-flare-700'
-                        : filterCalendarDayKey(day) === localTodayISODate()
-                          ? 'text-forena-900 ring-1 ring-flare-400/55 hover:bg-slate-100'
-                          : 'text-forena-800 hover:bg-slate-100'
-                    "
-                    @click.stop="pickFilterCalendarDay(day)"
-                  >
-                    {{ day }}
-                  </button>
-                  <div v-else class="min-h-9" aria-hidden="true" />
-                </template>
-              </div>
-            </div>
+          <div class="border-b border-forena-100 pb-5 text-center">
+            <p class="text-lg font-bold tabular-nums text-forena-900 sm:text-xl">
+              {{ todayDateDisplay }}
+            </p>
           </div>
           <div class="mt-5 flex flex-wrap items-end gap-4">
             <div>
@@ -742,7 +597,7 @@ async function onDataLoad() {
                 aria-hidden="true"
               />
               <input
-                v-model="filters.searchName"
+                v-model="searchNameInput"
                 type="text"
                 :placeholder="T.filterSearchPh"
                 class="w-full rounded-xl border border-forena-200 bg-white py-2.5 pr-4 pl-9 text-sm text-forena-900 outline-none transition placeholder:text-slate-400 focus:border-flare-400 focus:ring-2 focus:ring-flare-400/20"
@@ -763,6 +618,9 @@ async function onDataLoad() {
                 {{ T.todayWorkerTotal }}
                 <strong class="font-bold text-forena-900">{{ todayWorkerCount }}</strong
                 >{{ T.countPeople }}
+              </span>
+              <span v-if="totalPages > 1" class="text-[11px] text-forena-400 tabular-nums">
+                ({{ currentPage + 1 }}&nbsp;/&nbsp;{{ totalPages }}&nbsp;페이지)
               </span>
             </div>
             <div
@@ -890,6 +748,32 @@ async function onDataLoad() {
                 </tr>
               </tbody>
             </table>
+          </div>
+          <!-- 페이지네이션 -->
+          <div
+            v-if="totalPages > 1"
+            class="flex items-center justify-center gap-3 border-t border-forena-100 px-4 py-3"
+          >
+            <button
+              type="button"
+              :disabled="currentPage === 0"
+              class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              @click="goToPage(currentPage - 1)"
+            >
+              <ChevronLeft class="h-4 w-4" />
+            </button>
+            <span class="text-xs font-semibold tabular-nums text-forena-700">
+              {{ currentPage + 1 }} / {{ totalPages }}
+              <span class="font-normal text-forena-400">({{ totalElements }}명)</span>
+            </span>
+            <button
+              type="button"
+              :disabled="currentPage >= totalPages - 1"
+              class="inline-flex items-center justify-center rounded-lg p-1.5 text-forena-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+              @click="goToPage(currentPage + 1)"
+            >
+              <ChevronRight class="h-4 w-4" />
+            </button>
           </div>
         </div>
       </div>

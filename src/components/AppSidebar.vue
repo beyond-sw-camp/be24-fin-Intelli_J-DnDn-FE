@@ -121,10 +121,38 @@ async function loadProjectList() {
   try {
     const list = await getProjectList()
     projectList.value = Array.isArray(list) ? list.map(mapProjectRow).filter(Boolean) : []
+    autoSyncSiteCode()
   } catch {
     projectList.value = []
   } finally {
     projectListLoading.value = false
+  }
+}
+
+/**
+ * admin·HQ 계정은 로그인 응답에 siteCode가 없어서 URL 직접 접근 시
+ * projectId는 복원되지만 siteCode가 빈 문자열인 상태가 됩니다.
+ * 프로젝트 목록을 받아온 뒤 자동으로 siteCode를 채워 API 호출이 정상 동작하게 합니다.
+ * - projectId 없음 → 첫 번째 현장 자동 선택
+ * - projectId 있지만 siteCode 없음 → 프로젝트명에서 [코드] 추출 후 적용
+ */
+function autoSyncSiteCode() {
+  if (!canSwitchSites.value || projectList.value.length === 0) return
+  const currentPid = Number(auth.projectId)
+  const hasValidProject = Number.isFinite(currentPid) && currentPid > 0
+
+  if (!hasValidProject) {
+    onSelectProject(projectList.value[0])
+    return
+  }
+
+  if (!auth.siteCode) {
+    const found = projectList.value.find((p) => p.id === currentPid)
+    if (found) {
+      const m = /^\[([^\]]+)\]/.exec(String(found.name || '').trim())
+      const derivedSiteCode = m ? m[1].trim() : ''
+      auth.setProjectIdAndSiteCode(found.id, derivedSiteCode)
+    }
   }
 }
 
@@ -199,7 +227,7 @@ const L = {
   brandTitle: 'DnDn',
   brandSub: '현장 일정관리 시스템',
   productNameFull: 'DnDn 현장 일정관리 시스템',
-  brandPlaceholder: '현장 미지정',
+  brandPlaceholder: '현장을 선택해주세요',
   brandSwitch: '현장 전환',
   brandLoading: '현장 정보를 불러오는 중…',
   scheduleGroup: '일정 관리',
