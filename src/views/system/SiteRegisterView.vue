@@ -3,7 +3,6 @@ import { computed, reactive, ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Plus,
-  RefreshCw,
   X,
   ChevronDown,
   ChevronRight,
@@ -548,15 +547,6 @@ watch([modalOpen, siteModalOpen, siteEditOpen], ([mo, smo, seo]) => {
         <h1 class="text-xl font-bold text-forena-900">{{ T.title }}</h1>
       </div>
       <div class="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
-        <button
-          type="button"
-          class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-semibold text-forena-800 shadow-sm hover:bg-forena-50 disabled:opacity-50"
-          :disabled="loading"
-          @click="refreshList"
-        >
-          <RefreshCw class="h-3.5 w-3.5 shrink-0 text-flare-600" :class="{ 'animate-spin': loading }" />
-          {{ loading ? T.reloadBusy : T.reload }}
-        </button>
         <button
           type="button"
           class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-forena-700 to-forena-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:from-forena-800 hover:to-black"

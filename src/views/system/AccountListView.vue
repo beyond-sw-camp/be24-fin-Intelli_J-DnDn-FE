@@ -9,7 +9,6 @@ import {
   Ban,
   Check,
   X,
-  RefreshCw,
   ArrowLeft,
 } from 'lucide-vue-next'
 import {
@@ -193,7 +192,6 @@ const projectIdxParam = computed(() => {
 
 const projectsReady = ref(false)
 
-const mainTab = ref(/** @type {'status' | 'requests'} */ ('status'))
 
 const loading = ref(false)
 const loadingRequests = ref(false)
@@ -388,8 +386,7 @@ const accountStatusTheadClass =
   'border-b border-violet-200/70 bg-violet-100/45 text-xs font-bold text-violet-950'
 
 async function refreshCurrentTab() {
-  if (mainTab.value === 'status') await refreshList()
-  else await refreshRequests()
+  await refreshList()
 }
 
 function statusLabel(raw) {
@@ -749,7 +746,6 @@ onMounted(async () => {
   await loadProjects()
   if (!ensureValidProjectRoute()) return
   await refreshList()
-  await refreshRequests()
 })
 
 watch(
@@ -759,13 +755,9 @@ watch(
     if (!projectsReady.value) return
     if (!ensureValidProjectRoute()) return
     await refreshList()
-    await refreshRequests()
   },
 )
 
-watch(mainTab, (t) => {
-  if (t === 'requests') refreshRequests()
-})
 
 /** 'idle' | 'checking' | 'available' | 'taken' */
 const emailCheckState = ref('idle')
@@ -1192,7 +1184,7 @@ const bulkRejectEligible = computed(() =>
   ),
 )
 
-watch([() => projectIdxParam.value, () => mainTab.value], () => {
+watch(() => projectIdxParam.value, () => {
   selectedReqKeys.value = new Set()
 })
 
@@ -1368,19 +1360,6 @@ watch(
         <div class="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           <button
             type="button"
-            class="inline-flex items-center justify-center gap-1.5 rounded-lg border border-flare-200 bg-flare-50 px-3 py-1.5 text-xs font-semibold text-forena-800 shadow-sm hover:bg-flare-100 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="mainTab === 'status' ? loading : loadingRequests"
-            @click="refreshCurrentTab"
-          >
-            <RefreshCw
-              class="h-3.5 w-3.5 shrink-0 text-flare-600"
-              :class="{ 'animate-spin': mainTab === 'status' ? loading : loadingRequests }"
-            />
-            {{ (mainTab === 'status' ? loading : loadingRequests) ? T.reloadBusy : T.reload }}
-          </button>
-
-          <button
-            type="button"
             class="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-forena-700 to-forena-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:from-forena-800 hover:to-black"
             @click="openCreateModal"
           >
@@ -1399,39 +1378,10 @@ watch(
       </div>
     </div>
 
-    <!-- 공사 일보 스타일 세부 탭 -->
-    <div class="-mb-px flex flex-wrap gap-1 border-b border-forena-200/80">
-      <button
-        type="button"
-        class="border-b-2 px-4 py-2.5 text-xs font-bold transition"
-        :class="
-          mainTab === 'status'
-            ? 'border-flare-500 text-flare-700'
-            : 'border-transparent text-forena-500 hover:text-forena-700'
-        "
-        @click="mainTab = 'status'"
-      >
-        {{ T.tabStatus }}
-      </button>
-      <button
-        type="button"
-        class="border-b-2 px-4 py-2.5 text-xs font-bold transition"
-        :class="
-          mainTab === 'requests'
-            ? 'border-flare-500 text-flare-700'
-            : 'border-transparent text-forena-500 hover:text-forena-700'
-        "
-        @click="mainTab = 'requests'"
-      >
-        {{ T.tabRequests }}
-      </button>
-    </div>
-
     <!-- 현황 탭 · 근무자/파트너 목록형 플랫 보드 -->
-    <template v-if="mainTab === 'status'">
-      <section
-        class="mt-6 overflow-hidden rounded-2xl border border-forena-100/90 bg-white shadow-card"
-      >
+    <section
+      class="overflow-hidden rounded-2xl border border-forena-100/90 bg-white shadow-card"
+    >
         <div class="px-4 pt-4 pb-3 sm:px-5">
           <h2 class="text-base font-bold text-forena-900">{{ T.sectionAccountStatus }}</h2>
         </div>
@@ -1792,164 +1742,6 @@ watch(
           </div>
         </div>
       </section>
-    </template>
-
-    <!-- 요청 탭 -->
-    <template v-else>
-      <section
-        class="mt-6 overflow-hidden rounded-2xl border border-forena-100/90 bg-white shadow-card"
-      >
-        <div class="flex flex-wrap items-start justify-between gap-3 px-4 pt-4 pb-2 sm:px-5">
-          <h2 class="text-base font-bold text-forena-900">{{ T.sectionRequests }}</h2>
-          <div
-            v-if="accountRequestsFiltered.length"
-            class="flex flex-wrap items-center justify-end gap-2"
-          >
-            <button
-              type="button"
-              class="rounded-lg bg-forena-800 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-forena-900 disabled:cursor-not-allowed disabled:opacity-40"
-              :disabled="!bulkApproveEligible.length || bulkApproveBusy"
-              @click="runBulkApproveFromToolbar"
-            >
-              {{ bulkApproveBusy ? '처리 중…' : T.bulkComplete }}
-            </button>
-            <button
-              type="button"
-              class="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
-              :disabled="!bulkRejectEligible.length"
-              @click="openBulkRejectRequests"
-            >
-              {{ T.bulkDismiss }}
-            </button>
-          </div>
-        </div>
-
-        <div
-          v-if="!accountRequestsFiltered.length"
-          class="mx-4 mb-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/40 px-4 py-14 text-center text-sm text-slate-500"
-        >
-          {{ T.noRequests }}
-        </div>
-
-        <div v-else class="border-t border-forena-100/70 bg-white pt-3 pb-px sm:pt-3">
-          <div class="overflow-x-auto px-4 pb-px sm:px-5">
-            <table class="w-full min-w-[980px] border-collapse text-left text-sm">
-              <thead>
-                <tr :class="requestsTableTheadClass">
-                  <th class="w-9 shrink-0 py-2.5 pl-1.5 pr-2 text-left align-middle">
-                    <span class="sr-only">{{ T.srSelectColumn }}</span>
-                    <input
-                      type="checkbox"
-                      class="h-3.5 w-3.5 cursor-pointer rounded border-forena-300 text-flare-600 accent-forena-800"
-                      title="전체 선택"
-                      :checked="allReqRowsSelected && selectableReqKeysAll.length > 0"
-                      @click.stop
-                      @change="toggleSelectAllRequests"
-                    />
-                  </th>
-                  <th class="w-[14%] py-2.5 pr-3 pl-2 text-left text-xs font-bold sm:pl-3">
-                    {{ T.colReqAt }}
-                  </th>
-                  <th class="w-[21%] px-3 py-2.5 text-left text-xs font-bold">
-                    {{ T.colReqTitle }}
-                  </th>
-                  <th class="w-[11%] px-3 py-2.5 text-left text-xs font-bold">{{ T.colName }}</th>
-                  <th class="w-[16%] px-3 py-2.5 text-left text-xs font-bold">
-                    {{ T.colReqRequesterRole }}
-                  </th>
-                  <th class="min-w-[10.5rem] w-[18%] px-3 py-2.5 text-left text-xs font-bold">
-                    {{ T.colReqStatus }}
-                  </th>
-                  <th
-                    class="w-[6.75rem] shrink-0 px-2 py-2.5 pr-4 text-center text-xs font-bold sm:pr-5"
-                  >
-                    {{ T.colReqDetail }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="rq in accountRequestsFiltered"
-                  :key="rq.idx ?? rq.id"
-                  class="border-b border-violet-100/40 bg-white transition hover:bg-slate-50/50"
-                >
-                  <td class="w-9 shrink-0 py-2.5 pl-1.5 pr-2 align-middle">
-                    <input
-                      v-if="reqRowKey(rq)"
-                      type="checkbox"
-                      class="h-3.5 w-3.5 cursor-pointer rounded border-forena-300 text-flare-600 accent-forena-800"
-                      :checked="isReqSelected(rq)"
-                      @click.stop
-                      @change="toggleReqCheckbox(rq, $event)"
-                    />
-                  </td>
-                  <td
-                    class="whitespace-nowrap py-2.5 pr-3 pl-2 text-left text-xs text-forena-600 sm:pl-3"
-                  >
-                    {{ formatReqDate(rq) }}
-                  </td>
-                  <td class="truncate px-3 py-2.5 text-left text-xs font-medium text-forena-900">
-                    {{ requestRowTitle(rq) }}
-                  </td>
-                  <td class="truncate px-3 py-2.5 text-left text-xs">{{ rq.name ?? '—' }}</td>
-                  <td class="truncate px-3 py-2.5 text-left text-xs">
-                    {{ userRoleLabel(requestRowRoleStr(rq)) }}
-                  </td>
-                  <td class="px-3 py-2.5 text-left align-middle">
-                    <div class="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center">
-                      <span
-                        class="inline-flex w-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1"
-                        :class="
-                          isPendingRequest(rq)
-                            ? 'bg-amber-50 text-amber-900 ring-amber-200/80'
-                            : String(rq.status).toUpperCase() === 'APPROVED'
-                              ? 'bg-emerald-50 text-emerald-800 ring-emerald-200/80'
-                              : 'bg-slate-100 text-slate-600 ring-slate-200/80'
-                        "
-                      >
-                        {{ statusLabel(rq.status) }}
-                      </span>
-                      <template v-if="isPendingRequest(rq)">
-                        <template v-if="rq.demo">
-                          <span class="text-[10px] font-medium text-slate-400">{{
-                            T.demoRequestHint
-                          }}</span>
-                        </template>
-                        <div v-else class="flex flex-wrap gap-1">
-                          <button
-                            type="button"
-                            class="rounded-lg bg-forena-800 px-2 py-1 text-[10px] font-bold text-white hover:bg-forena-900"
-                            @click="openApprove(rq)"
-                          >
-                            {{ T.reqApprove }}
-                          </button>
-                          <button
-                            type="button"
-                            class="rounded-lg border border-rose-200 bg-white px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50"
-                            @click="openReject(rq)"
-                          >
-                            {{ T.reqReject }}
-                          </button>
-                        </div>
-                      </template>
-                    </div>
-                  </td>
-                  <td class="px-2 py-2.5 pr-4 text-center align-middle sm:pr-5">
-                    <button
-                      type="button"
-                      class="inline-flex rounded-lg border border-forena-200/90 bg-white px-2.5 py-1 text-[11px] font-bold text-forena-800 shadow-sm transition hover:border-flare-300 hover:bg-flare-50/40"
-                      @click="openRequestDetail(rq)"
-                    >
-                      {{ T.reqDetailBtn }}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-    </template>
 
     <!-- 요청 상세 모달 -->
     <Teleport to="body">
