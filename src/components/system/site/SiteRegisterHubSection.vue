@@ -36,7 +36,7 @@ const emit = defineEmits(['toggle-accordion', 'edit', 'activate', 'deactivate'])
             <ChevronRight v-else class="h-3.5 w-3.5 shrink-0 text-forena-600" />
             <span>{{ sec.label }}</span>
             <span class="text-[11px] font-semibold tabular-nums text-forena-600">
-              ({{ sec.rows.length }})
+              ({{ (sec.rows ?? []).length }})
             </span>
           </div>
         </button>
@@ -60,7 +60,7 @@ const emit = defineEmits(['toggle-accordion', 'edit', 'activate', 'deactivate'])
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-if="!sec.rows.length">
+                  <tr v-if="!(sec.rows ?? []).length">
                     <td
                       colspan="8"
                       class="border-b border-slate-100/80 py-8 pl-5 pr-3 text-center text-xs text-slate-400 sm:pl-6 sm:pr-5"
@@ -69,7 +69,7 @@ const emit = defineEmits(['toggle-accordion', 'edit', 'activate', 'deactivate'])
                     </td>
                   </tr>
                   <tr
-                    v-for="(row, ri) in sec.rows"
+                    v-for="(row, ri) in sec.rows ?? []"
                     :key="row.idx"
                     class="border-b border-violet-100/40 transition hover:bg-violet-50/40"
                     :class="ri % 2 === 0 ? 'bg-white' : 'bg-violet-50/20'"
