@@ -587,7 +587,7 @@ function scopeReportsByZone(reports, zoneName = '') {
   }
 
   if (cleanZone === '민원 구역') {
-    return reportList.filter((report) => reportMatchesAny(report, ['민원', '주민', '비산', '분진']))
+    return reportList.filter((report) => reportMatchesAny(report, ['민원', '주민', '비산', '분진', '소음']))
   }
 
   return reportList.filter((report) => {
@@ -614,6 +614,7 @@ export function hasEsgOperationData(metrics, context = {}) {
     || normalizeList(context.workers).length > 0
     || normalizeList(context.staffingWorkers).length > 0
     || normalizeList(context.staffingZones).length > 0
+    || (Number(metrics.complaintCount || 0) > 0 || Number(metrics.complaintResolvedCount || 0) > 0)
 }
 
 function buildDefaultDataLinkRate(context, equipmentCount) {

@@ -43,32 +43,36 @@ const emit = defineEmits({
       v-if="selectedGate"
       class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50"
     >
-      <div class="flex shrink-0 items-center justify-between border-b border-forena-100 bg-forena-50/50 px-6 py-4">
-        <div class="flex items-center gap-3">
-          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm">
+      <div class="flex shrink-0 items-center justify-between gap-4 border-b border-forena-100 bg-forena-50/50 px-6 py-4">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
             <span class="text-sm font-black text-forena-900">{{ selectedGate.businessKey }}</span>
           </div>
-          <div>
-            <h3 class="text-lg font-bold text-forena-900">{{ selectedGate.name }}</h3>
-            <p class="text-xs font-semibold text-slate-500">
-              작업지시 배정 {{ selectedGate.plannedEquipmentCount }}대 · 현재 진입 {{ selectedGate.vehicles ?? 0 }}대
-            </p>
+          <div class="min-w-0">
+            <h3 class="truncate text-lg font-bold text-forena-900">{{ selectedGate.name }}</h3>
+            <div class="mt-1 space-y-0.5 text-xs font-semibold leading-tight text-slate-500">
+              <p class="whitespace-nowrap">작업지시 배정 {{ selectedGate.plannedEquipmentCount }}대</p>
+              <p class="whitespace-nowrap">현재 진입 {{ selectedGate.vehicles ?? 0 }}대</p>
+            </div>
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1">
+        <div class="flex shrink-0 items-center gap-2.5">
+          <div class="flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1">
             <button
               type="button"
-              class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
+              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sm font-black text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
               @click="emit('update-vehicles', -1)"
             >
               -
             </button>
-            <span class="px-1 text-sm font-bold text-amber-800">현재 {{ selectedGate.vehicles }}대</span>
+            <span class="flex h-11 min-w-12 shrink-0 flex-col items-center justify-center rounded-full bg-amber-50 px-2 text-center leading-none text-amber-900 shadow-inner">
+              <span class="whitespace-nowrap text-[10px] font-bold">현재</span>
+              <span class="mt-0.5 whitespace-nowrap text-sm font-black">{{ selectedGate.vehicles }}대</span>
+            </span>
             <button
               type="button"
-              class="flex h-6 w-6 items-center justify-center rounded-full bg-white text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
+              class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white text-sm font-black text-amber-800 shadow-sm transition hover:scale-105 hover:bg-amber-50"
               @click="emit('update-vehicles', 1)"
             >
               +
@@ -76,7 +80,7 @@ const emit = defineEmits({
           </div>
 
           <span
-            class="rounded-full border px-3 py-1 text-xs font-bold"
+            class="inline-flex h-10 min-w-[52px] shrink-0 items-center justify-center whitespace-nowrap break-keep rounded-full border px-3 text-xs font-black leading-none"
             :class="selectedGate.statusColor"
           >
             {{ selectedGate.displayCongestionLabel }}
@@ -230,7 +234,7 @@ const emit = defineEmits({
           <p class="mt-2 text-sm font-bold text-blue-900">
             가장 가까운 우회 경로: {{ recommendedGate.name }}
             <span class="font-medium">
-              (작업지시 배정 {{ recommendedGate.plannedEquipmentCount }}대 · 현재 {{ recommendedGate.vehicles }}대)
+              (작업지시 배정 {{ recommendedGate.plannedEquipmentCount }}대 · 현재 진입 {{ recommendedGate.vehicles }}대)
             </span>
           </p>
         </div>

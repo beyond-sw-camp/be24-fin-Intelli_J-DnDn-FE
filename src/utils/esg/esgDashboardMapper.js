@@ -9,7 +9,6 @@ import {
   clampScore,
   createEmptyMetrics,
   firstNonBlank,
-  hasEsgOperationData,
   isHighRiskEquipment,
   normalizeCount,
   resolveLevel,
@@ -31,19 +30,126 @@ function resolveContextSiteId(context = {}) {
   return siteId !== null && siteId !== undefined && siteId !== '' ? String(siteId) : 'current-site'
 }
 
+function positiveMetricInputValue(input, key) {
+  const value = Number(input?.[key])
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
+function hasPositiveMetricInputField(input, keys) {
+  return keys.some((key) => positiveMetricInputValue(input, key) > 0)
+}
+
 function hasMetricInputForZone(metricInputs, zoneName) {
   const inputs = Array.isArray(metricInputs) ? metricInputs : []
-  return inputs.some((input) => firstNonBlank(input?.zoneName) === zoneName)
+  const matchedInputs = inputs.filter((input) => firstNonBlank(input?.zoneName) === zoneName)
+
+  if (zoneName === '민원 구역') {
+    return matchedInputs.some((input) => hasPositiveMetricInputField(input, [
+      'complaintCount',
+      'complaintResolvedCount',
+    ]))
+  }
+
+  if (zoneName === '세척장') {
+    return matchedInputs.some((input) => hasPositiveMetricInputField(input, [
+      'carbonKg',
+      'washWaterLiters',
+      'wastewaterLiters',
+      'wastewaterRecoveryRate',
+      'powerUsageKwh',
+      'powerSavingKwh',
+      'safetyEducationRate',
+      'staffingRate',
+      'reportRate',
+      'actionTrackingRate',
+      'dataLinkRate',
+    ]))
+  }
+
+  return matchedInputs.some((input) => hasPositiveMetricInputField(input, [
+    'carbonKg',
+    'powerUsageKwh',
+    'powerSavingKwh',
+    'washWaterLiters',
+    'wastewaterLiters',
+    'wastewaterRecoveryRate',
+    'fineDustValue',
+    'complaintCount',
+    'complaintResolvedCount',
+    'safetyEducationRate',
+    'staffingRate',
+    'reportRate',
+    'actionTrackingRate',
+    'dataLinkRate',
+  ]))
+}
+
+function hasSupportZoneReport(reports, zoneName) {
+  const reportList = Array.isArray(reports) ? reports : []
+  if (zoneName === '세척장') {
+    return reportList.some((report) => reportMatchesAny(report, ['세척장', '세륜', '세척']))
+  }
+
+  if (zoneName === '민원 구역') {
+    return reportList.some((report) => reportMatchesAny(report, ['민원', '주민', '비산', '분진', '소음']))
+  }
+
+  return false
+}
+
+function hasWashOperationSource(metrics, context = {}) {
+  return Number(metrics?.totalEquipmentCount || 0) > 0
+    || hasMetricInputForZone(context.metricInputs, '세척장')
+    || hasSupportZoneReport(context.reports, '세척장')
+}
+
+function hasComplaintOperationSource(metrics, context = {}) {
+  return Number(metrics?.complaintCount || 0) > 0
+    || Number(metrics?.complaintResolvedCount || 0) > 0
+    || hasMetricInputForZone(context.metricInputs, '민원 구역')
+    || hasSupportZoneReport(context.reports, '민원 구역')
+}
+
+function resetMetricScoreFields(metrics = {}) {
+  return {
+    ...metrics,
+    supportOperationActive: false,
+    environmentScore: 0,
+    socialScore: 0,
+    governanceScore: 0,
+    totalScore: 0,
+    carbonScore: 0,
+    waterScore: 0,
+    fineDustScore: 0,
+    powerScore: 0,
+    idleReductionScore: 0,
+    weatherProtectionScore: 0,
+    routeSafetyScore: 0,
+    reportRate: 0,
+    actionTrackingRate: 0,
+    dataLinkRate: 0,
+    missingCheckCount: 0,
+    checkScore: 0,
+    complaintCount: 0,
+    complaintResolvedCount: 0,
+    unresolvedComplaintCount: 0,
+    complaintResolutionRate: 0,
+    complaintRisk: 0,
+    workerCount: 0,
+    assignedWorkerCount: 0,
+    requiredWorkerCount: 0,
+    trainedWorkerCount: 0,
+    staffingRate: 0,
+    safetyEducationRate: 0,
+  }
 }
 
 export function buildSupportZones(equipments, context = {}) {
   const equipmentList = Array.isArray(equipments) ? equipments : []
   const washBaseMetrics = buildEsgMetrics(equipmentList, { ...context, zoneName: '세척장' })
   const complaintBaseMetrics = buildEsgMetrics(equipmentList, { ...context, zoneName: '민원 구역' })
-  const hasWashLinkedOperationData = hasEsgOperationData(washBaseMetrics, context)
-    || hasMetricInputForZone(context.metricInputs, '세척장')
-  const hasComplaintLinkedOperationData = hasEsgOperationData(complaintBaseMetrics, context)
-    || hasMetricInputForZone(context.metricInputs, '민원 구역')
+  const hasWashLinkedOperationData = hasWashOperationSource(washBaseMetrics, context)
+  const hasComplaintLinkedOperationData = hasComplaintOperationSource(complaintBaseMetrics, context)
   const totalEquipmentCount = washBaseMetrics.totalEquipmentCount
   const highRiskEquipmentCount = washBaseMetrics.highRiskEquipmentCount
   const workLocationCount = washBaseMetrics.workLocationCount
@@ -73,44 +179,47 @@ export function buildSupportZones(equipments, context = {}) {
     10,
   )
 
-  const washMetrics = {
-    ...washBaseMetrics,
-    environmentScore: clampScore(washBaseMetrics.environmentScore - washRisk * 0.7 + washBaseMetrics.waterScore * 0.12),
-    socialScore: clampScore(washBaseMetrics.socialScore - washRisk * 0.35),
-    governanceScore: clampScore(washBaseMetrics.governanceScore - Math.max(0, washRisk - 4) * 0.9),
-    operatingRisk: washRisk,
-  }
+  const washMetrics = hasWashLinkedOperationData
+    ? {
+        ...washBaseMetrics,
+        environmentScore: clampScore(washBaseMetrics.environmentScore - washRisk * 0.7 + washBaseMetrics.waterScore * 0.12),
+        socialScore: clampScore(washBaseMetrics.socialScore - washRisk * 0.35),
+        governanceScore: clampScore(washBaseMetrics.governanceScore - Math.max(0, washRisk - 4) * 0.9),
+        operatingRisk: washRisk,
+      }
+    : resetMetricScoreFields({
+        ...washBaseMetrics,
+        operatingRisk: 0,
+      })
+  washMetrics.supportOperationActive = hasWashLinkedOperationData
+  washMetrics.supportZoneKind = 'wash'
   washMetrics.totalScore = hasWashLinkedOperationData ? buildTotalScore(washMetrics) : 0
-  if (!hasWashLinkedOperationData) {
-    washMetrics.environmentScore = 0
-    washMetrics.socialScore = 0
-    washMetrics.governanceScore = 0
-  }
 
-  const complaintMetrics = {
-    ...complaintBaseMetrics,
-    environmentScore: clampScore(
-      complaintBaseMetrics.environmentScore
-        - complaintBaseMetrics.fineDustRiskLevel * 1.8
-,
-    ),
-    socialScore: clampScore(
-      complaintBaseMetrics.socialScore
-        - complaintRisk * 0.75,
-    ),
-    governanceScore: clampScore(
-      complaintBaseMetrics.governanceScore
-        - Math.max(0, complaintRisk - 3) * 0.8
-        - Math.max(0, 100 - complaintBaseMetrics.complaintResolutionRate) * 0.08,
-    ),
-    operatingRisk: complaintRisk,
-  }
+  const complaintMetrics = hasComplaintLinkedOperationData
+    ? {
+        ...complaintBaseMetrics,
+        environmentScore: clampScore(
+          complaintBaseMetrics.environmentScore
+            - complaintBaseMetrics.fineDustRiskLevel * 1.8,
+        ),
+        socialScore: clampScore(
+          complaintBaseMetrics.socialScore
+            - complaintRisk * 0.75,
+        ),
+        governanceScore: clampScore(
+          complaintBaseMetrics.governanceScore
+            - Math.max(0, complaintRisk - 3) * 0.8
+            - Math.max(0, 100 - complaintBaseMetrics.complaintResolutionRate) * 0.08,
+        ),
+        operatingRisk: complaintRisk,
+      }
+    : resetMetricScoreFields({
+        ...complaintBaseMetrics,
+        operatingRisk: 0,
+      })
+  complaintMetrics.supportOperationActive = hasComplaintLinkedOperationData
+  complaintMetrics.supportZoneKind = 'complaint'
   complaintMetrics.totalScore = hasComplaintLinkedOperationData ? buildTotalScore(complaintMetrics) : 0
-  if (!hasComplaintLinkedOperationData) {
-    complaintMetrics.environmentScore = 0
-    complaintMetrics.socialScore = 0
-    complaintMetrics.governanceScore = 0
-  }
 
   return [
     {
@@ -123,10 +232,10 @@ export function buildSupportZones(equipments, context = {}) {
       rank: 0,
       carbon: washMetrics.estimatedCarbonKg,
       powerSaving: washMetrics.powerSavingKwh,
-      risk: washRisk,
-      missionRate,
+      risk: hasWashLinkedOperationData ? washRisk : 0,
+      missionRate: hasWashLinkedOperationData ? missionRate : 0,
       lead: 0,
-      status: resolveStatus(washRisk),
+      status: hasWashLinkedOperationData ? resolveStatus(washRisk) : '대기',
       equipmentCount: totalEquipmentCount,
       highRiskEquipmentCount,
       equipmentSummary: totalEquipmentCount
@@ -146,18 +255,20 @@ export function buildSupportZones(equipments, context = {}) {
       rank: 0,
       carbon: complaintMetrics.estimatedCarbonKg,
       powerSaving: complaintMetrics.powerSavingKwh,
-      risk: complaintRisk,
-      missionRate,
+      risk: hasComplaintLinkedOperationData ? complaintRisk : 0,
+      missionRate: hasComplaintLinkedOperationData ? missionRate : 0,
       lead: 0,
-      status: resolveStatus(complaintRisk),
+      status: hasComplaintLinkedOperationData ? resolveStatus(complaintRisk) : '대기',
       equipmentCount: totalEquipmentCount,
       highRiskEquipmentCount,
       equipmentSummary: totalEquipmentCount
         ? `작업구역 ${workLocationCount || 1}곳 · 장비 ${totalEquipmentCount}대 영향권`
         : '금일 작업지시 장비 0대',
-      gateSummary: complaintMetrics.fineDustValue
-        ? `PM10 ${complaintMetrics.fineDustValue}㎍/㎥ 기준`
-        : '미세먼지 API 연동 기준',
+      gateSummary: hasComplaintLinkedOperationData
+        ? (complaintMetrics.fineDustValue
+          ? `PM10 ${complaintMetrics.fineDustValue}㎍/㎥ 기준`
+          : '미세먼지 API 연동 기준')
+        : '민원 접수·처리 데이터 대기',
       zoneType: 'support',
       metrics: complaintMetrics,
     },
@@ -292,7 +403,6 @@ function resolveStatus(risk) {
 // esgMissionMapper
 export function buildZoneMissions(zone, currentSite = {}) {
   const siteName = currentSite.shortName || currentSite.name || '현장'
-  const metrics = zone?.metrics ?? createEmptyMetrics()
 
   if (!zone) {
     return [
@@ -329,6 +439,9 @@ export function buildZoneMissions(zone, currentSite = {}) {
     ]
   }
 
+  const zoneKind = resolveZoneMetricKind(zone)
+  const metrics = normalizeSupportMetricsForDisplay(zone.metrics ?? createEmptyMetrics(), zoneKind)
+
   if (zone.name === '세척장') {
     return buildWashZoneWeeklyMissions(metrics)
   }
@@ -341,15 +454,50 @@ export function buildZoneMissions(zone, currentSite = {}) {
 }
 
 function buildWashZoneWeeklyMissions(metrics) {
+  if (!isSupportMetricsActive(metrics, 'wash')) {
+    return [
+      buildMissionItem({
+        id: 'wash-weekly-e',
+        title: '세척장 주간 운영 관리',
+        description: '작업지시 장비나 세척장 운영 기록이 들어오면 세척장 환경 미션을 계산합니다.',
+        tag: 'E',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '세척장 운영 데이터 대기',
+        color: 'emerald',
+      }),
+      buildMissionItem({
+        id: 'wash-weekly-s',
+        title: '세척장 주간 작업자·동선 안전',
+        description: '세척장 운영 데이터가 들어오면 교육, 배치, 동선 안전 미션을 계산합니다.',
+        tag: 'S',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '세척장 안전 데이터 대기',
+        color: 'sky',
+      }),
+      buildMissionItem({
+        id: 'wash-weekly-g',
+        title: '세척장 주간 점검·조치 기록',
+        description: '세척장 관련 공사일보나 조치 기록이 들어오면 기록 미션을 계산합니다.',
+        tag: 'G',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '세척장 기록 데이터 대기',
+        color: 'violet',
+      }),
+    ]
+  }
+
   return [
     buildMissionItem({
       id: 'wash-weekly-e',
-      title: '세척장 주간 세척수 관리',
-      description: '입차 중장비 대수와 세척수 소요를 함께 보며 세척장 운영 상태를 주간 기준으로 점검합니다.',
+      title: '세척장 주간 운영 관리',
+      description: '입차 중장비 대수와 세척 필요 장비를 함께 보며 세척장 운영 상태를 주간 기준으로 점검합니다.',
       tag: 'E',
       progress: metrics.environmentScore,
       progressLabel: `${clampPercent(metrics.environmentScore)}점`,
-      progressCaption: `세척수 ${metrics.estimatedWashWaterLiters || 0}L · 장비 ${metrics.washTargetCount || 0}대`,
+      progressCaption: `세척 필요 장비 ${metrics.washTargetCount || 0}대 · 장비 ${metrics.totalEquipmentCount || 0}대`,
       color: 'emerald',
     }),
     buildMissionItem({
@@ -376,15 +524,50 @@ function buildWashZoneWeeklyMissions(metrics) {
 }
 
 function buildComplaintZoneWeeklyMissions(metrics) {
+  if (!isSupportMetricsActive(metrics, 'complaint')) {
+    return [
+      buildMissionItem({
+        id: 'complaint-weekly-e',
+        title: '민원구역 주간 분진 영향 관리',
+        description: '본사 민원관리 데이터나 민원 관련 기록이 들어오면 주변 영향 미션을 계산합니다.',
+        tag: 'E',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '민원 접수·처리 데이터 대기',
+        color: 'emerald',
+      }),
+      buildMissionItem({
+        id: 'complaint-weekly-s',
+        title: '민원구역 주간 주변 영향 완화',
+        description: '민원 접수/처리 현황이 들어오면 주민 영향 대응 미션을 계산합니다.',
+        tag: 'S',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '민원 대응 데이터 대기',
+        color: 'sky',
+      }),
+      buildMissionItem({
+        id: 'complaint-weekly-g',
+        title: '민원구역 주간 대응 이력 관리',
+        description: '민원 조치 이력이나 관련 기록이 들어오면 대응 이력 미션을 계산합니다.',
+        tag: 'G',
+        progress: 0,
+        progressLabel: '0점',
+        progressCaption: '민원 기록 데이터 대기',
+        color: 'violet',
+      }),
+    ]
+  }
+
   return [
     buildMissionItem({
       id: 'complaint-weekly-e',
       title: '민원구역 주간 분진 영향 관리',
-      description: 'PM10과 분진성 작업을 함께 보며 주변 환경 영향을 주간 기준으로 점검합니다.',
+      description: '소음·분진 민원 접수와 처리 현황을 함께 보며 주변 영향 대응 상태를 주간 기준으로 점검합니다.',
       tag: 'E',
       progress: metrics.environmentScore,
       progressLabel: `${clampPercent(metrics.environmentScore)}점`,
-      progressCaption: `PM10 ${metrics.fineDustValue || 0}㎍/㎥ · 분진작업 ${metrics.dustWorkCount || 0}건`,
+      progressCaption: `접수 ${metrics.complaintCount || 0}건 · 미처리 ${metrics.unresolvedComplaintCount || 0}건`,
       color: 'emerald',
     }),
     buildMissionItem({
@@ -415,7 +598,7 @@ function buildWorkZoneWeeklyMissions(zone, metrics, siteName) {
     buildMissionItem({
       id: `work-weekly-e-${zone.id}`,
       title: `${zone.name} 주간 환경부하 관리`,
-      description: `${siteName} 작업구역의 장비 탄소부하, 세척수 관리, 분진성 작업을 묶어 주간 환경 상태를 점검합니다.`,
+      description: `${siteName} 작업구역의 장비 부하, 작업 전후 정돈, 분진성 작업을 묶어 주간 환경 상태를 점검합니다.`,
       tag: 'E',
       progress: metrics.environmentScore,
       progressLabel: `${clampPercent(metrics.environmentScore)}점`,
@@ -541,7 +724,7 @@ export function getZoneStage(zone) {
     return {
       title,
       label: title,
-      description: '장비 세척 흐름, 세척수 관리, 게이트 분산을 중점 관리합니다.',
+      description: '장비 세척 흐름, 세척 필요 장비, 게이트 분산을 중점 관리합니다.',
       guide: '세척장 대기 동선을 분리하고 점검일보를 꾸준히 남기면 다음 레벨에 가까워집니다.',
       progress: Math.min(100, zone.level * 14),
     }
@@ -611,11 +794,11 @@ export function getZoneFocusMetric(zone, context = {}) {
 
   if (zone.name === '세척장') {
     return {
-      title: '세척수 관리',
+      title: '세척 운영 관리',
       value: metrics.estimatedWashWaterLiters ? `${metrics.estimatedWashWaterLiters}` : '0',
       unit: 'L',
       caption: rain >= 60
-        ? '우천일에는 세척수 관리와 장비 출입 동선을 우선 점검합니다.'
+        ? '우천일에는 세척 필요 장비와 출입 동선을 우선 점검합니다.'
         : '세척 대상 장비와 게이트 분산 상태를 함께 관리합니다.',
     }
   }
@@ -650,8 +833,130 @@ export function getPriorityFocus(zone, context = {}) {
     description: metric.caption,
   }
 }
+function zeroEnvironmentMetricFields(metrics = {}) {
+  return {
+    ...metrics,
+    environmentScore: 0,
+    carbonScore: 0,
+    waterScore: 0,
+    fineDustScore: 0,
+    powerScore: 0,
+    idleReductionScore: 0,
+    carbonLoadIndex: 0,
+    estimatedCarbonKg: 0,
+    estimatedWashWaterLiters: 0,
+    washWaterDemandRisk: 0,
+    gateCongestionRisk: 0,
+    gateConcentrationRate: 0,
+  }
+}
+
+function zeroSocialMetricFields(metrics = {}) {
+  return {
+    ...metrics,
+    socialScore: 0,
+    staffingRate: 0,
+    safetyEducationRate: 0,
+    weatherProtectionScore: 0,
+    routeSafetyScore: 0,
+    workerCount: 0,
+    assignedWorkerCount: 0,
+    requiredWorkerCount: 0,
+    trainedWorkerCount: 0,
+  }
+}
+
+function zeroGovernanceMetricFields(metrics = {}) {
+  return {
+    ...metrics,
+    governanceScore: 0,
+    reportRate: 0,
+    actionTrackingRate: 0,
+    dataLinkRate: 0,
+    missingCheckCount: 0,
+    checkScore: 0,
+  }
+}
+
+function isSupportMetricsActive(metrics = {}, zoneKind = 'work') {
+  if (zoneKind === 'wash') {
+    return metrics.supportOperationActive === true
+      || Number(metrics.totalEquipmentCount || 0) > 0
+      || Number(metrics.washTargetCount || 0) > 0
+      || Number(metrics.carbonLoadIndex || 0) > 0
+      || Number(metrics.reportRate || 0) > 0
+      || Number(metrics.actionTrackingRate || 0) > 0
+      || Number(metrics.dataLinkRate || 0) > 0
+  }
+
+  if (zoneKind === 'complaint') {
+    return metrics.supportOperationActive === true
+      || Number(metrics.complaintCount || 0) > 0
+      || Number(metrics.complaintResolvedCount || 0) > 0
+      || Number(metrics.reportRate || 0) > 0
+      || Number(metrics.actionTrackingRate || 0) > 0
+      || Number(metrics.dataLinkRate || 0) > 0
+  }
+
+  return true
+}
+
+function zeroSupportDisplayMetricFields(metrics = {}, zoneKind = 'work') {
+  const zeroedBase = {
+    ...metrics,
+    supportOperationActive: false,
+    totalScore: 0,
+    operatingRisk: 0,
+    missionRate: 0,
+  }
+
+  let zeroed = zeroGovernanceMetricFields(zeroSocialMetricFields(zeroEnvironmentMetricFields(zeroedBase)))
+
+  if (zoneKind === 'wash') {
+    zeroed = {
+      ...zeroed,
+      totalEquipmentCount: 0,
+      highRiskEquipmentCount: 0,
+      washTargetCount: 0,
+      gateCount: 0,
+      assignedGateEquipmentCount: 0,
+      maxGateEquipmentCount: 0,
+      gateCongestionRisk: 0,
+      gateConcentrationRate: 0,
+    }
+  }
+
+  if (zoneKind === 'complaint') {
+    zeroed = {
+      ...zeroed,
+      complaintCount: 0,
+      complaintResolvedCount: 0,
+      unresolvedComplaintCount: 0,
+      complaintResolutionRate: 0,
+      complaintRisk: 0,
+    }
+  }
+
+  return zeroed
+}
+
+function normalizeSupportMetricsForDisplay(metrics = {}, zoneKind = 'work') {
+  if (zoneKind !== 'wash' && zoneKind !== 'complaint') {
+    return metrics
+  }
+
+  if (!isSupportMetricsActive(metrics, zoneKind)) {
+    return zeroSupportDisplayMetricFields(metrics, zoneKind)
+  }
+
+  const normalized = { ...metrics, supportOperationActive: true }
+  normalized.totalScore = buildTotalScore(normalized)
+  return normalized
+}
+
 export function buildEsgBreakdown(zone, context = {}) {
-  const metrics = zone?.metrics ?? createEmptyMetrics()
+  const zoneKind = resolveZoneMetricKind(zone)
+  const metrics = normalizeSupportMetricsForDisplay(zone?.metrics ?? createEmptyMetrics(), zoneKind)
   const fineDustValue = metrics.fineDustValue || context.airQuality?.value || 0
   const safetyDays = Math.max(1, Number(context.safetyDays || metrics.safetyDays || 1))
 
@@ -664,19 +969,19 @@ export function buildEsgBreakdown(zone, context = {}) {
     {
       key: 'E',
       title: 'Environment',
-      subtitle: '탄소 · 세척수/오염수 · PM10 · 게이트 분산',
+      subtitle: '탄소 · 세척 운영 · PM10 · 게이트 분산',
       score: metrics.environmentScore,
       weight: ESG_CATEGORY_WEIGHTS.E,
       weightedScore: Math.round(eScoreRounded * ESG_CATEGORY_WEIGHTS.E) / 100,
       color: 'emerald',
-      description: '장비 탄소부하, 세척수·오염수, PM10, 게이트 분산·공회전 저감 운영을 합산한 환경 점수입니다.',
+      description: '장비 부하, 세척장 운영 관리, PM10, 게이트 분산·공회전 저감 운영을 합산한 환경 점수입니다.',
       details: [
         { label: '탄소 부하지수', value: `${metrics.carbonLoadIndex}pt`, caption: '장비 종류와 대수 기반 운영 추정' },
-        { label: '세척수 추정', value: `${metrics.estimatedWashWaterLiters}L`, caption: '세척 대상 장비와 우천/미세먼지 조건 반영' },
+        { label: '세척 필요 장비', value: `${metrics.washTargetCount}대`, caption: '작업지시 장비와 우천/미세먼지 조건 반영' },
         { label: 'PM10', value: `${fineDustValue}㎍/㎥`, caption: '분진·살수 관리 기준' },
         { label: '게이트 분산', value: `${Math.round(metrics.idleReductionScore || 0)}점`, caption: `최대 게이트 집중 ${metrics.gateConcentrationRate || 0}%` },
       ],
-      guide: '실제 연료량 계측값이 있으면 우선 사용하고, 없으면 작업지시 장비·세척 대상·PM10·게이트 분산 상태로 환경 운영 점수를 추정합니다.',
+      guide: '작업지시 장비·세척 필요 장비·PM10·게이트 분산 상태로 환경 운영 점수를 산정합니다.',
     },
     {
       key: 'S',
@@ -714,154 +1019,412 @@ export function buildEsgBreakdown(zone, context = {}) {
 }
 
 export function buildZoneMetricCards(zone, activeKey, icons = {}, context = {}) {
-  const metrics = zone?.metrics ?? createEmptyMetrics()
+  const zoneKind = resolveZoneMetricKind(zone)
+  const metrics = normalizeSupportMetricsForDisplay(zone?.metrics ?? createEmptyMetrics(), zoneKind)
   const safetyDays = Math.max(1, Number(context.safetyDays || metrics.safetyDays || 1))
   const fineDustLabel = metrics.fineDustValue > 0 ? `${metrics.fineDustValue}㎍/㎥` : '0㎍/㎥'
+  const zoneName = zone?.name || '작업구역'
+  const weights = ESG_METRIC_CARD_WEIGHTS
 
   if (activeKey === 'S') {
-    return [
-      buildScoreCard({
-        id: 'education',
-        title: '안전교육 이수율',
-        subtitle: `40% · ${metrics.workerCount ? `이수 ${metrics.trainedWorkerCount}/${metrics.workerCount}명` : `무사고 ${safetyDays}일 참고`}`,
-        rawScore: metrics.safetyEducationRate || 0,
-        weight: 40,
-        source: '인력 관리 · 안전교육 이수 필드',
-        badge: metrics.safetyEducationRate >= 80 ? '우수' : metrics.workerCount ? '관리' : '대기',
-        icon: icons.Medal,
-        color: 'violet',
-      }),
-      buildScoreCard({
-        id: 'staffing-rate',
-        title: '구역별 인력 배치율',
-        subtitle: `30% · 배치 ${metrics.assignedWorkerCount}/${metrics.workerCount || 0}명`,
-        rawScore: metrics.staffingRate || 0,
-        weight: 30,
-        source: '인력 투입 관리 · 구역 배치 현황',
-        badge: metrics.workerCount ? '연동' : '대기',
-        icon: icons.Users,
-        color: 'emerald',
-      }),
-      buildScoreCard({
-        id: 'weather-protection',
-        title: '기상 위험 작업자 보호',
-        subtitle: `20% · 기상 위험 ${metrics.weatherRiskCount}건`,
-        rawScore: metrics.weatherProtectionScore,
-        weight: 20,
-        source: '기상관제 · 기상 AI 위험 분석',
-        badge: metrics.weatherProtectionScore < 70 ? '주의' : '관리',
-        icon: icons.AlertTriangle,
-        color: metrics.weatherProtectionScore < 70 ? 'rose' : 'amber',
-      }),
-      buildScoreCard({
-        id: 'route-safety',
-        title: '민원·동선 안전',
-        subtitle: `10% · 고위험 장비 ${metrics.highRiskEquipmentCount}대`,
-        rawScore: metrics.routeSafetyScore,
-        weight: 10,
-        source: '중장비 입출차 · 게이트 동선',
-        badge: metrics.routeSafetyScore < 70 ? '주의' : '관리',
-        icon: icons.ShieldCheck,
-        color: metrics.routeSafetyScore < 70 ? 'rose' : 'sky',
-      }),
-    ]
+    return buildSocialMetricCards({ metrics, safetyDays, icons, zoneKind, zoneName, weights })
   }
 
   if (activeKey === 'G') {
-    return [
-      buildScoreCard({
-        id: 'daily-log',
-        title: '작업일보 기록률',
-        subtitle: `${ESG_METRIC_CARD_WEIGHTS[0]}% · 선택일 공사일보 저장 기준`,
+    return buildGovernanceMetricCards({ metrics, icons, zoneKind, zoneName, weights })
+  }
+
+  return buildEnvironmentMetricCards({ metrics, fineDustLabel, icons, zoneKind, zoneName, weights })
+}
+
+function resolveZoneMetricKind(zone) {
+  if (zone?.name === '세척장') return 'wash'
+  if (zone?.name === '민원 구역') return 'complaint'
+  return 'work'
+}
+
+function buildEnvironmentMetricCards({ metrics, fineDustLabel, icons, zoneKind, zoneName, weights }) {
+  const supportActive = isSupportMetricsActive(metrics, zoneKind)
+  const complaintImpactScore = zoneKind === 'complaint' && !supportActive
+    ? 0
+    : clampScore(
+      (metrics.fineDustScore || 0) * 0.45
+        + (100 - (metrics.complaintRisk || 0) * 10) * 0.35
+        + (100 - Math.min(45, (metrics.dustWorkCount || 0) * 6 + (metrics.highRiskEquipmentCount || 0) * 3)) * 0.2,
+    )
+  const complaintMitigationScore = zoneKind === 'complaint' && !supportActive
+    ? 0
+    : clampScore(
+      (metrics.complaintResolutionRate || 0) * 0.55
+        + (metrics.waterScore || 0) * 0.25
+        + (metrics.idleReductionScore || 0) * 0.2,
+    )
+
+  const cardsByZone = {
+    wash: [
+      {
+        id: 'wash-equipment-load',
+        title: '세척 필요 장비 부하',
+        subtitle: `${weights[0]}% · 관리 대상 ${metrics.washTargetCount || 0}대 · 장비부하지수 ${metrics.carbonLoadIndex}pt`,
+        rawScore: metrics.carbonScore,
+        weight: weights[0],
+        badge: metrics.carbonScore >= 80 ? '우수' : '관리',
+        icon: icons.HardHat,
+        color: 'emerald',
+      },
+      {
+        id: 'wash-operation-management',
+        title: '세척장 운영 관리',
+        subtitle: `${weights[1]}% · 운영 부담지수 ${metrics.washWaterDemandRisk}/10 · 장비 ${metrics.totalEquipmentCount || 0}대`,
+        rawScore: metrics.waterScore,
+        weight: weights[1],
+        badge: metrics.washWaterDemandRisk >= 6 ? '주의' : '관리',
+        icon: icons.Droplets,
+        color: metrics.washWaterDemandRisk >= 6 ? 'amber' : 'emerald',
+      },
+      {
+        id: 'wash-dust-impact',
+        title: '비산먼지·세척 영향 관리',
+        subtitle: `${weights[2]}% · PM10 ${fineDustLabel} · 분진성 작업 ${metrics.dustWorkCount || 0}건`,
+        rawScore: metrics.fineDustScore,
+        weight: weights[2],
+        badge: metrics.fineDustRiskLevel >= 3 ? '주의' : '관리',
+        icon: icons.Factory,
+        color: metrics.fineDustRiskLevel >= 3 ? 'amber' : 'emerald',
+      },
+      {
+        id: 'wash-flow-management',
+        title: '세척장 대기 동선 관리',
+        subtitle: `${weights[3]}% · 최대 게이트 집중 ${metrics.gateConcentrationRate || 0}% · 혼잡 ${metrics.gateCongestionRisk}/10`,
+        rawScore: metrics.idleReductionScore || 0,
+        weight: weights[3],
+        badge: metrics.gateCongestionRisk >= 5 ? '주의' : '관리',
+        icon: icons.Zap,
+        color: metrics.gateCongestionRisk >= 5 ? 'rose' : 'amber',
+      },
+    ],
+    complaint: [
+      {
+        id: 'complaint-noise-dust-impact',
+        title: '소음·분진 민원 영향',
+        subtitle: `접수 ${metrics.complaintCount || 0}건 · 미처리 ${metrics.unresolvedComplaintCount || 0}건 · PM10 ${fineDustLabel}`,
+        rawScore: complaintImpactScore,
+        weight: 60,
+        badge: metrics.complaintRisk >= 5 || metrics.unresolvedComplaintCount > 0 ? '주의' : '관리',
+        icon: icons.AlertTriangle,
+        color: metrics.complaintRisk >= 5 || metrics.unresolvedComplaintCount > 0 ? 'rose' : 'amber',
+      },
+      {
+        id: 'complaint-mitigation-operation',
+        title: '민원 저감 조치 운영',
+        subtitle: `처리율 ${Math.round(metrics.complaintResolutionRate || 0)}% · 동선분산 ${Math.round(metrics.idleReductionScore || 0)}점`,
+        rawScore: complaintMitigationScore,
+        weight: 40,
+        badge: (metrics.complaintResolutionRate || 0) >= 80 ? '우수' : '관리',
+        icon: icons.ShieldCheck,
+        color: (metrics.complaintResolutionRate || 0) >= 80 ? 'emerald' : 'amber',
+      },
+    ],
+    work: [
+      {
+        id: 'work-equipment-load',
+        title: `${zoneName} 작업 장비 부하`,
+        subtitle: `${weights[0]}% · 장비 ${metrics.totalEquipmentCount || 0}대 · 장비부하지수 ${metrics.carbonLoadIndex}pt`,
+        rawScore: metrics.carbonScore,
+        weight: weights[0],
+        badge: metrics.carbonScore >= 80 ? '우수' : '관리',
+        icon: icons.Leaf,
+        color: 'emerald',
+      },
+      {
+        id: 'work-dust-pm10',
+        title: `${zoneName} PM10·분진 관리`,
+        subtitle: `${weights[1]}% · ${fineDustLabel} · 분진성 작업 ${metrics.dustWorkCount || 0}건`,
+        rawScore: metrics.fineDustScore,
+        weight: weights[1],
+        badge: metrics.fineDustRiskLevel >= 3 ? '주의' : '관리',
+        icon: icons.Factory,
+        color: metrics.fineDustRiskLevel >= 3 ? 'amber' : 'emerald',
+      },
+      {
+        id: 'work-weather-operation',
+        title: `${zoneName} 기상 리스크 작업 조정`,
+        subtitle: `${weights[2]}% · 기상 위험 ${metrics.weatherRiskCount}건 · 풍속 ${metrics.windSpeed || 0}m/s`,
+        rawScore: metrics.weatherProtectionScore,
+        weight: weights[2],
+        badge: metrics.weatherProtectionScore < 70 ? '주의' : '관리',
+        icon: icons.AlertTriangle,
+        color: metrics.weatherProtectionScore < 70 ? 'rose' : 'amber',
+      },
+      {
+        id: 'work-gate-distribution',
+        title: `${zoneName} 게이트 분산·공회전 저감`,
+        subtitle: `${weights[3]}% · 게이트 ${metrics.gateCount || 0}곳 · 최대 집중 ${metrics.gateConcentrationRate || 0}%`,
+        rawScore: metrics.idleReductionScore || 0,
+        weight: weights[3],
+        badge: metrics.gateCongestionRisk >= 5 ? '주의' : '관리',
+        icon: icons.Zap,
+        color: metrics.gateCongestionRisk >= 5 ? 'rose' : 'amber',
+      },
+    ],
+  }
+
+  return cardsByZone[zoneKind].map(buildScoreCard)
+}
+
+function buildSocialMetricCards({ metrics, safetyDays, icons, zoneKind, zoneName, weights }) {
+  const supportActive = isSupportMetricsActive(metrics, zoneKind)
+  const residentResponseScore = zoneKind === 'complaint' && !supportActive
+    ? 0
+    : clampScore(
+      (metrics.complaintResolutionRate || 0) * 0.65
+        + (100 - Math.min(60, (metrics.unresolvedComplaintCount || 0) * 15)) * 0.35,
+    )
+  const complaintRouteSafetyScore = zoneKind === 'complaint' && !supportActive
+    ? 0
+    : clampScore(
+      (metrics.routeSafetyScore || 0) * 0.45
+        + (metrics.weatherProtectionScore || 0) * 0.35
+        + (metrics.staffingRate || 0) * 0.2,
+    )
+
+  const cardsByZone = {
+    wash: [
+      {
+        id: 'wash-worker-education',
+        title: '세척장 작업자 교육',
+        subtitle: `${weights[0]}% · 이수 ${metrics.trainedWorkerCount || 0}/${metrics.workerCount || 0}명 · 무사고 ${safetyDays}일`,
+        rawScore: metrics.safetyEducationRate || 0,
+        weight: weights[0],
+        badge: metrics.safetyEducationRate >= 80 ? '우수' : metrics.workerCount ? '관리' : '대기',
+        icon: icons.Medal,
+        color: 'violet',
+      },
+      {
+        id: 'wash-staffing',
+        title: '세척장 투입 인력 배치',
+        subtitle: `${weights[1]}% · 배치 ${metrics.assignedWorkerCount || 0}/${metrics.requiredWorkerCount || metrics.workerCount || 0}명`,
+        rawScore: metrics.staffingRate || 0,
+        weight: weights[1],
+        badge: metrics.staffingRate >= 80 ? '우수' : '관리',
+        icon: icons.Users,
+        color: 'emerald',
+      },
+      {
+        id: 'wash-route-separation',
+        title: '세척 차량·보행 동선 분리',
+        subtitle: `${weights[2]}% · 고위험 장비 ${metrics.highRiskEquipmentCount || 0}대 · 게이트 ${metrics.gateCount || 0}곳`,
+        rawScore: metrics.routeSafetyScore || 0,
+        weight: weights[2],
+        badge: metrics.routeSafetyScore < 70 ? '주의' : '관리',
+        icon: icons.ShieldCheck,
+        color: metrics.routeSafetyScore < 70 ? 'rose' : 'sky',
+      },
+      {
+        id: 'wash-weather-protection',
+        title: '우천·분진 작업자 보호',
+        subtitle: `${weights[3]}% · 기상 위험 ${metrics.weatherRiskCount || 0}건`,
+        rawScore: metrics.weatherProtectionScore || 0,
+        weight: weights[3],
+        badge: metrics.weatherProtectionScore < 70 ? '주의' : '관리',
+        icon: icons.AlertTriangle,
+        color: metrics.weatherProtectionScore < 70 ? 'rose' : 'amber',
+      },
+    ],
+    complaint: [
+      {
+        id: 'complaint-resident-response',
+        title: '주민 영향 대응 상태',
+        subtitle: `처리율 ${Math.round(metrics.complaintResolutionRate || 0)}% · 미처리 ${metrics.unresolvedComplaintCount || 0}건`,
+        rawScore: residentResponseScore,
+        weight: 60,
+        badge: (metrics.complaintResolutionRate || 0) >= 80 ? '우수' : '관리',
+        icon: icons.Users,
+        color: (metrics.complaintResolutionRate || 0) >= 80 ? 'emerald' : 'amber',
+      },
+      {
+        id: 'complaint-work-route-safety',
+        title: '민원 발생 작업·동선 안전',
+        subtitle: `고위험 장비 ${metrics.highRiskEquipmentCount || 0}대 · 기상 위험 ${metrics.weatherRiskCount || 0}건`,
+        rawScore: complaintRouteSafetyScore,
+        weight: 40,
+        badge: complaintRouteSafetyScore < 70 ? '주의' : '관리',
+        icon: icons.ShieldCheck,
+        color: complaintRouteSafetyScore < 70 ? 'rose' : 'sky',
+      },
+    ],
+    work: [
+      {
+        id: 'work-education',
+        title: `${zoneName} 안전교육 이수율`,
+        subtitle: `${weights[0]}% · 이수 ${metrics.trainedWorkerCount || 0}/${metrics.workerCount || 0}명`,
+        rawScore: metrics.safetyEducationRate || 0,
+        weight: weights[0],
+        badge: metrics.safetyEducationRate >= 80 ? '우수' : metrics.workerCount ? '관리' : '대기',
+        icon: icons.Medal,
+        color: 'violet',
+      },
+      {
+        id: 'work-staffing',
+        title: `${zoneName} 필요 인력 충족률`,
+        subtitle: `${weights[1]}% · 배치 ${metrics.assignedWorkerCount || 0}/${metrics.requiredWorkerCount || metrics.workerCount || 0}명`,
+        rawScore: metrics.staffingRate || 0,
+        weight: weights[1],
+        badge: metrics.staffingRate >= 80 ? '우수' : '관리',
+        icon: icons.Users,
+        color: 'emerald',
+      },
+      {
+        id: 'work-weather-protection',
+        title: `${zoneName} 기상 위험 보호`,
+        subtitle: `${weights[2]}% · 기상 위험 ${metrics.weatherRiskCount || 0}건`,
+        rawScore: metrics.weatherProtectionScore || 0,
+        weight: weights[2],
+        badge: metrics.weatherProtectionScore < 70 ? '주의' : '관리',
+        icon: icons.AlertTriangle,
+        color: metrics.weatherProtectionScore < 70 ? 'rose' : 'amber',
+      },
+      {
+        id: 'work-route-safety',
+        title: `${zoneName} 장비 동선 안전`,
+        subtitle: `${weights[3]}% · 고위험 장비 ${metrics.highRiskEquipmentCount || 0}대 · 게이트 ${metrics.gateCount || 0}곳`,
+        rawScore: metrics.routeSafetyScore || 0,
+        weight: weights[3],
+        badge: metrics.routeSafetyScore < 70 ? '주의' : '관리',
+        icon: icons.ShieldCheck,
+        color: metrics.routeSafetyScore < 70 ? 'rose' : 'sky',
+      },
+    ],
+  }
+
+  return cardsByZone[zoneKind].map(buildScoreCard)
+}
+
+function buildGovernanceMetricCards({ metrics, icons, zoneKind, zoneName, weights }) {
+  const supportActive = isSupportMetricsActive(metrics, zoneKind)
+  const complaintHistoryScore = zoneKind === 'complaint' && !supportActive
+    ? 0
+    : clampScore(
+      (metrics.actionTrackingRate || 0) * 0.45
+        + (metrics.reportRate || 0) * 0.25
+        + (metrics.dataLinkRate || 0) * 0.2
+        + (100 - Math.min(60, (metrics.unresolvedComplaintCount || 0) * 15)) * 0.1,
+    )
+  const riskActionRecordScore = clampScore(
+    (metrics.actionTrackingRate || 0) * 0.65
+      + (metrics.checkScore || 0) * 0.35,
+  )
+
+  const cardsByZone = {
+    wash: [
+      {
+        id: 'wash-operation-log',
+        title: '세척장 운영 기록률',
+        subtitle: `${weights[0]}% · 선택일 관련 기록 ${Math.round(metrics.reportRate || 0)}%`,
         rawScore: metrics.reportRate || 0,
-        weight: ESG_METRIC_CARD_WEIGHTS[0],
-        source: '공사일보 · 일별 저장 현황',
+        weight: weights[0],
         badge: metrics.reportRate >= 80 ? '우수' : '관리',
         icon: icons.Gauge,
         color: 'violet',
-      }),
-      buildScoreCard({
-        id: 'action-done',
-        title: '공사일보 이행 완료율',
-        subtitle: `${ESG_METRIC_CARD_WEIGHTS[1]}% · 공사일보 진척률 평균`,
+      },
+      {
+        id: 'wash-action-complete',
+        title: '세척 조치 이행률',
+        subtitle: `${weights[1]}% · 공사일보 진척률 ${Math.round(metrics.actionTrackingRate || 0)}%`,
         rawScore: metrics.actionTrackingRate || 0,
-        weight: ESG_METRIC_CARD_WEIGHTS[1],
-        source: '공사일보 · todayProgress / 진행률 연동',
+        weight: weights[1],
         badge: metrics.actionTrackingRate >= 80 ? '우수' : '주의',
         icon: icons.ShieldCheck,
         color: 'emerald',
-      }),
-      buildScoreCard({
-        id: 'data-link',
-        title: '데이터 연동 완성도',
-        subtitle: `${ESG_METRIC_CARD_WEIGHTS[2]}% · 날씨·작업·인력·일보 연동 기준`,
+      },
+      {
+        id: 'wash-data-link',
+        title: '세척 데이터 연동 완성도',
+        subtitle: `${weights[2]}% · 날씨·장비·일보·인력 ${Math.round(metrics.dataLinkRate || 0)}%`,
         rawScore: metrics.dataLinkRate || 0,
-        weight: ESG_METRIC_CARD_WEIGHTS[2],
-        source: '대시보드 연동 · 4개 모듈 입력 상태',
+        weight: weights[2],
         badge: metrics.dataLinkRate >= 80 ? '우수' : '연동',
         icon: icons.Medal,
         color: 'sky',
-      }),
-      buildScoreCard({
-        id: 'missing-check',
-        title: '점검 누락 여부',
-        subtitle: `${ESG_METRIC_CARD_WEIGHTS[3]}% · 누락 ${Math.max(0, metrics.missingCheckCount || 0)}건`,
+      },
+      {
+        id: 'wash-missing-check',
+        title: '세척장 점검 누락 여부',
+        subtitle: `${weights[3]}% · 누락 추정 ${Math.max(0, metrics.missingCheckCount || 0)}건`,
         rawScore: metrics.checkScore || 0,
-        weight: ESG_METRIC_CARD_WEIGHTS[3],
-        source: '공사일보 + 기상관제 위험 매칭',
+        weight: weights[3],
         badge: metrics.missingCheckCount > 2 ? '위험' : '관리',
         icon: icons.AlertTriangle,
         color: metrics.missingCheckCount > 2 ? 'rose' : 'amber',
-      }),
-    ]
+      },
+    ],
+    complaint: [
+      {
+        id: 'complaint-resolution-rate',
+        title: '민원 접수·처리율',
+        subtitle: `접수 ${metrics.complaintCount || 0}건 · 처리 ${metrics.complaintResolvedCount || 0}건 · ${Math.round(metrics.complaintResolutionRate || 0)}%`,
+        rawScore: metrics.complaintResolutionRate || 0,
+        weight: 60,
+        badge: (metrics.complaintResolutionRate || 0) >= 80 ? '우수' : '관리',
+        icon: icons.Gauge,
+        color: (metrics.complaintResolutionRate || 0) >= 80 ? 'emerald' : 'amber',
+      },
+      {
+        id: 'complaint-action-history',
+        title: '민원 조치 이력·재발방지',
+        subtitle: `조치 기록 ${Math.round(metrics.actionTrackingRate || 0)}% · 미처리 ${metrics.unresolvedComplaintCount || 0}건`,
+        rawScore: complaintHistoryScore,
+        weight: 40,
+        badge: complaintHistoryScore >= 80 ? '우수' : '관리',
+        icon: icons.ShieldCheck,
+        color: complaintHistoryScore >= 80 ? 'emerald' : 'amber',
+      },
+    ],
+    work: [
+      {
+        id: 'work-daily-log',
+        title: `${zoneName} 작업일보 기록률`,
+        subtitle: `${weights[0]}% · 선택일 공사일보 ${Math.round(metrics.reportRate || 0)}%`,
+        rawScore: metrics.reportRate || 0,
+        weight: weights[0],
+        badge: metrics.reportRate >= 80 ? '우수' : '관리',
+        icon: icons.Gauge,
+        color: 'violet',
+      },
+      {
+        id: 'work-progress-done',
+        title: `${zoneName} 이행 완료율`,
+        subtitle: `${weights[1]}% · 공사일보 진척률 ${Math.round(metrics.actionTrackingRate || 0)}%`,
+        rawScore: metrics.actionTrackingRate || 0,
+        weight: weights[1],
+        badge: metrics.actionTrackingRate >= 80 ? '우수' : '주의',
+        icon: icons.ShieldCheck,
+        color: 'emerald',
+      },
+      {
+        id: 'work-risk-action-log',
+        title: `${zoneName} 위험 조치 기록`,
+        subtitle: `${weights[2]}% · 기상 위험 ${metrics.weatherRiskCount || 0}건 · 누락 ${Math.max(0, metrics.missingCheckCount || 0)}건`,
+        rawScore: riskActionRecordScore,
+        weight: weights[2],
+        badge: riskActionRecordScore >= 80 ? '우수' : '관리',
+        icon: icons.AlertTriangle,
+        color: riskActionRecordScore >= 80 ? 'sky' : 'amber',
+      },
+      {
+        id: 'work-data-link',
+        title: `${zoneName} 데이터 연동 완성도`,
+        subtitle: `${weights[3]}% · 날씨·작업·일보·인력 ${Math.round(metrics.dataLinkRate || 0)}%`,
+        rawScore: metrics.dataLinkRate || 0,
+        weight: weights[3],
+        badge: metrics.dataLinkRate >= 80 ? '우수' : '연동',
+        icon: icons.Medal,
+        color: 'sky',
+      },
+    ],
   }
 
-  return [
-    buildScoreCard({
-      id: 'carbon',
-      title: '탄소/장비부하',
-      subtitle: `${ESG_METRIC_CARD_WEIGHTS[0]}% · 탄소부하지수 ${metrics.carbonLoadIndex}pt`,
-      rawScore: metrics.carbonScore,
-      weight: ESG_METRIC_CARD_WEIGHTS[0],
-      source: '중장비 입출차 + 작업지시 · 장비 종류·대수',
-      badge: metrics.carbonScore >= 80 ? '우수' : '관리',
-      icon: icons.Leaf,
-      color: 'emerald',
-    }),
-    buildScoreCard({
-      id: 'wash-water',
-      title: '세척수 관리',
-      subtitle: `${ESG_METRIC_CARD_WEIGHTS[1]}% · 세척수 ${metrics.estimatedWashWaterLiters}L · 관리지수 ${metrics.washWaterDemandRisk}/10`,
-      rawScore: metrics.waterScore,
-      weight: ESG_METRIC_CARD_WEIGHTS[1],
-      source: '중장비 입출차 · 입차 장비 대수 + 우천·PM10 조건',
-      badge: metrics.washWaterDemandRisk >= 6 ? '주의' : '관리',
-      icon: icons.Droplets,
-      color: 'emerald',
-    }),
-    buildScoreCard({
-      id: 'fine-dust',
-      title: '미세먼지/분진',
-      subtitle: `${ESG_METRIC_CARD_WEIGHTS[2]}% · ${fineDustLabel} · 분진작업 ${metrics.dustWorkCount}건`,
-      rawScore: metrics.fineDustScore,
-      weight: ESG_METRIC_CARD_WEIGHTS[2],
-      source: '기상관제 PM10 + 작업지시 제목·상세 분진 키워드',
-      badge: metrics.fineDustRiskLevel >= 3 ? '주의' : '관리',
-      icon: icons.Factory,
-      color: 'emerald',
-    }),
-    buildScoreCard({
-      id: 'gate-idle',
-      title: '게이트 분산·공회전 저감',
-      subtitle: `${ESG_METRIC_CARD_WEIGHTS[3]}% · 최대 게이트 집중 ${metrics.gateConcentrationRate || 0}%`,
-      rawScore: metrics.idleReductionScore || 0,
-      weight: ESG_METRIC_CARD_WEIGHTS[3],
-      source: '작업지시 게이트 배정 · 장비 집중도',
-      badge: metrics.gateCongestionRisk >= 5 ? '주의' : '관리',
-      icon: icons.Zap,
-      color: metrics.gateCongestionRisk >= 5 ? 'rose' : 'amber',
-    }),
-  ]
+  return cardsByZone[zoneKind].map(buildScoreCard)
 }
 
 function buildScoreCard({ id, title, subtitle, rawScore, weight, badge, icon, color }) {

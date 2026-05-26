@@ -1,6 +1,8 @@
 import {
   fetchGateList,
   fetchGate,
+  fetchGateBlueprint,
+  saveGateBlueprint,
   createGate,
   updateGatePosition,
   updateGateVehicles,
@@ -23,6 +25,16 @@ export async function fetchHeavyEquipmentGate(gateId) {
 
 export async function createHeavyEquipmentGate(payload) {
   return createGate(payload)
+}
+
+export async function fetchHeavyEquipmentGateBlueprint(projectId) {
+  if (!projectId) return null
+  return fetchGateBlueprint(projectId)
+}
+
+export async function saveHeavyEquipmentGateBlueprint(projectId, payload) {
+  if (!projectId) throw new Error('현장 ID가 없어 도면을 저장할 수 없습니다.')
+  return saveGateBlueprint(projectId, payload)
 }
 
 export async function updateHeavyEquipmentGatePosition(gateId, payload) {
