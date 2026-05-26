@@ -345,27 +345,40 @@ function cloneOrder(o) {
   }
 }
 
+async function fetchInstructionSourcePlans(planType, targetDate) {
+  const response = await api.get('/work-plan', {
+    params: {
+      projectId: currentProjectId.value,
+      planType,
+      startDate: targetDate,
+      endDate: targetDate,
+    },
+  })
+  return unwrapApiData(response)
+}
+
+function findInstructionTasks(plans, targetDate, targetProcess) {
+  return plans.filter((p) => {
+    const planTrade = getTradeNameFromPlan(p)
+    const planStart = toDateString(p.startDate || p.start)
+    const planEnd = toDateString(p.effectiveEnd || p.endDate || p.end)
+    const matchTrade = tradeMatches(planTrade, targetProcess)
+    const matchDate = targetDate >= planStart && targetDate <= planEnd
+    return matchTrade && matchDate
+  })
+}
+
 async function openCreate() {
   const targetDate = filterDate.value
   const targetProcess = currentRole.value === ROLES.WORKER ? myProcess.value : filterProcess.value
 
   try {
-    const response = await api.get('/work-plan', {
-      params: { projectId: currentProjectId.value, planType: '주간' },
-    })
-    const plans = unwrapApiData(response)
-
-    availableTasks.value = plans.filter((p) => {
-      const planTrade = getTradeNameFromPlan(p)
-      const matchTrade = tradeMatches(planTrade, targetProcess)
-      const matchDate =
-        targetDate >= toDateString(p.startDate) && targetDate <= toDateString(p.endDate)
-      return matchTrade && matchDate
-    })
+    const weeklyPlans = await fetchInstructionSourcePlans('주간', targetDate)
+    availableTasks.value = findInstructionTasks(weeklyPlans, targetDate, targetProcess)
 
     if (availableTasks.value.length === 0) {
       alert(
-        `${targetDate} 일자에 등록된 [${targetProcess}] 세부 작업이 없습니다. 주간계획서를 먼저 작성해주세요.`,
+        `${targetDate} 일자에 등록된 [${targetProcess}] 일일 작업이 없습니다. 월간 세부계획에서 일일 계획을 먼저 작성해주세요.`,
       )
       return
     }
