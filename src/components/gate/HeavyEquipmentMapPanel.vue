@@ -404,8 +404,8 @@ onBeforeUnmount(() => {
 
             <div class="flex flex-col items-center gap-0.5 rounded-lg border border-forena-100 bg-white/95 px-2 py-1 text-[10px] font-bold shadow-sm">
               <span class="whitespace-nowrap">{{ gate.name }}</span>
-              <span class="whitespace-nowrap text-forena-500">
-                배정 {{ gate.plannedEquipmentCount }}대 · 현재 {{ gate.vehicles ?? 0 }}대
+              <span v-if="gate.plannedEquipmentCount > 0" class="whitespace-nowrap text-forena-500">
+                배정 {{ gate.plannedEquipmentCount }}대
               </span>
             </div>
           </button>
