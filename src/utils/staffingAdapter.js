@@ -106,3 +106,64 @@ export function buildZoneUpdateBody(title, tradeRows) {
   const tradeNeeds = Object.entries(merged).map(([trade, need]) => ({ trade, need }))
   return { title: String(title ?? '').trim(), tradeNeeds }
 }
+
+/** WorkTrade label(공정) → 공종 카테고리 — 백엔드 zone.tradeName 과 계정 trade 매칭용 */
+const STAFFING_TRADE_CATEGORY_MAP = {
+  형틀: '골조공사',
+  철근: '골조공사',
+  골조: '골조공사',
+  목공: '골조공사',
+  목수: '골조공사',
+  용접: '골조공사',
+  미장: '마감공사',
+  조적: '마감공사',
+  도장: '마감공사',
+  타일: '마감공사',
+  건축마감: '마감공사',
+  마감: '마감공사',
+  마감공사: '마감공사',
+  골조공사: '골조공사',
+  전기: '전기공사',
+  설비: '설비공사',
+  방수: '방수공사',
+  토공: '토공사',
+  조경: '조경공사',
+  포장: '포장공사',
+}
+
+export function resolveStaffingTradeCategory(raw) {
+  const name = String(raw ?? '').trim()
+  return STAFFING_TRADE_CATEGORY_MAP[name] ?? (name || '기타')
+}
+
+/** 백엔드 AuthAccessService.tradeMatches 와 동일한 느슨한 공종 매칭 */
+export function tradeMatchesStaffing(recordTrade, assignedTrade) {
+  const left = String(recordTrade ?? '').trim()
+  const right = String(assignedTrade ?? '').trim()
+  if (!right) return true
+  if (!left) return false
+  if (left === right || left.includes(right) || right.includes(left)) return true
+  const leftCat = resolveStaffingTradeCategory(left)
+  const rightCat = resolveStaffingTradeCategory(right)
+  if (leftCat === '기타' || rightCat === '기타') return false
+  return leftCat === rightCat || leftCat.includes(rightCat) || rightCat.includes(leftCat)
+}
+
+/** 계정 생성·수정 공종 드롭다운에서 제외할 라벨 (마일스톤 행 등) */
+const EXCLUDED_ACCOUNT_TRADE_NAMES = new Set([
+  '준공',
+  '착공',
+  '마일스톤',
+  '주요 마일스톤',
+  '주요마일스톤',
+  '핵심 마일스톤',
+  '핵심마일스톤',
+])
+
+export function sanitizeAccountTradeOptions(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((s) => String(s ?? '').trim())
+    .filter((t) => t && !EXCLUDED_ACCOUNT_TRADE_NAMES.has(t) && !t.includes('마일스톤'))
+    .filter((t, i, arr) => arr.indexOf(t) === i)
+    .sort((a, b) => a.localeCompare(b, 'ko'))
+}

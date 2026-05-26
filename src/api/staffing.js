@@ -62,6 +62,14 @@ export async function postStaffingSave(rosterDate, siteCode) {
   })
 }
 
+/** STAFFING board — 구역 트리 + 직종별 필요 + 배치 작업자 일괄 조회 */
+export async function getStaffingBoard(opts = {}) {
+  const params = {}
+  if (opts.rosterDate) params.rosterDate = opts.rosterDate
+  if (opts.siteCode != null && String(opts.siteCode).trim() !== '') params.siteCode = String(opts.siteCode).trim()
+  return await api.get(`${PATH}/board`, { params })
+}
+
 /** STAFFING_003 — 기본구역 트리 */
 export async function getStaffingZones(opts = {}) {
   const params = {}
