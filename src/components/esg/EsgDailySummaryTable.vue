@@ -1,7 +1,8 @@
 <script setup>
+import { computed } from 'vue'
 import { ArrowUpRight, Award, Medal, Trophy } from 'lucide-vue-next'
 
-defineProps({
+const props = defineProps({
   currentSite: {
     type: Object,
     required: true,
@@ -11,6 +12,30 @@ defineProps({
     default: () => [],
   },
 })
+
+
+function normalizeSortableNumber(value) {
+  if (value == null || value === '') return 0
+  const numberValue = Number(String(value).replace(/[^0-9.-]/g, ''))
+  return Number.isFinite(numberValue) ? numberValue : 0
+}
+
+const sortedSiteZones = computed(() => (
+  [...props.siteZones]
+    .sort((left, right) => {
+      const levelGap = normalizeSortableNumber(right.level) - normalizeSortableNumber(left.level)
+      if (levelGap !== 0) return levelGap
+
+      const scoreGap = normalizeSortableNumber(right.score) - normalizeSortableNumber(left.score)
+      if (scoreGap !== 0) return scoreGap
+
+      return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ko')
+    })
+    .map((zone, index) => ({
+      ...zone,
+      summaryRank: index + 1,
+    }))
+))
 
 function levelTone(level) {
   if (level === '경고' || level === '위험') return 'bg-rose-100 text-rose-800 border-rose-200'
@@ -59,14 +84,14 @@ function rankIcon(rank) {
         </thead>
         <tbody>
           <tr
-            v-for="zone in siteZones"
+            v-for="zone in sortedSiteZones"
             :key="zone.id"
             class="border-b border-forena-50 transition hover:bg-forena-50/40"
           >
             <td class="py-3 pr-4">
-              <span class="inline-flex items-center gap-1 border px-2 py-1 text-[11px] font-bold" :class="rankBadgeClass(zone.rank)">
-                <component :is="rankIcon(zone.rank)" class="h-3 w-3" />
-                {{ zone.rank }}위
+              <span class="inline-flex items-center gap-1 border px-2 py-1 text-[11px] font-bold" :class="rankBadgeClass(zone.summaryRank)">
+                <component :is="rankIcon(zone.summaryRank)" class="h-3 w-3" />
+                {{ zone.summaryRank }}위
               </span>
             </td>
             <td class="py-3 pr-4">
@@ -80,7 +105,7 @@ function rankIcon(rank) {
               </span>
             </td>
             <td class="py-3 pr-4 text-xs text-forena-600">
-              탄소 {{ zone.carbon }}kg · 세척수 {{ zone.metrics?.estimatedWashWaterLiters ?? 0 }}L · 리스크 {{ zone.risk }}건
+              탄소 {{ zone.carbon }}kg · 세척 관리 {{ zone.metrics?.washEquipmentCount ?? zone.equipmentCount ?? 0 }}대 · 리스크 {{ zone.risk }}건
             </td>
             <td class="py-3 text-right">
               <span class="rounded-full border px-2.5 py-1 text-[11px] font-bold" :class="levelTone(zone.status)">

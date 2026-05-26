@@ -24,7 +24,7 @@ import { getEsgDashboard, saveEsgSnapshot } from '@/api/esgDashboard.js'
 import { getProjectList } from '@/api/project.js'
 import { getReportsByDate } from '@/api/report.js'
 import { fetchWeatherDashboard } from '@/api/weatherControl.js'
-import { getStaffingWorkerPool } from '@/api/staffing.js'
+import { getStaffingWorkerPool, getStaffingZones } from '@/api/staffing.js'
 import { getGateEquipments } from '@/api/workOrder.js'
 import { fetchWorkPlansByProject } from '@/api/workplan.js'
 import { fetchWorkerList } from '@/api/worker.js'
@@ -88,6 +88,7 @@ const workPlansData = ref([])
 const reportsData = ref([])
 const workersData = ref([])
 const staffingWorkersData = ref([])
+const staffingZonesData = ref([])
 
 const selectedSiteId = computed(() => String(selectedProjectId.value ?? currentProject.value?.idx ?? ''))
 const currentProject = computed(() => {
@@ -170,6 +171,7 @@ const dashboardContext = computed(() => ({
   workOrders: filteredEquipments.value,
   workers: workersData.value,
   staffingWorkers: staffingWorkersData.value,
+  staffingZones: staffingZonesData.value,
   safetyDays: safetyDays.value,
   currentProjectId: currentProjectId.value,
   metricInputs: backendMetricInputs.value,
@@ -411,7 +413,7 @@ const riskActions = computed(() => {
     {
       id: 'stable',
       title: '현재 기상 조건은 평시 운용 범위',
-      detail: '장비 대기시간과 세척수·게이트 분산 관리 미션 중심으로 운영하면 됩니다.',
+      detail: '장비 대기시간과 세척 운영·게이트 분산 관리 미션 중심으로 운영하면 됩니다.',
       level: '양호',
     },
   ]
@@ -481,6 +483,7 @@ function clearOperationalData() {
   reportsData.value = []
   workersData.value = []
   staffingWorkersData.value = []
+  staffingZonesData.value = []
 }
 
 async function loadEsgDashboardMeta(useCurrentSelection = true) {
@@ -534,6 +537,23 @@ async function loadProjectFallback() {
   }
 }
 
+
+function resolveCurrentSiteCode() {
+  const candidates = [
+    authStore.siteCode,
+    backendCurrentProject.value?.siteCode,
+    backendCurrentProject.value?.projectCode,
+    backendCurrentProject.value?.code,
+    backendCurrentProject.value?.siteCd,
+    currentProject.value?.siteCode,
+    currentProject.value?.projectCode,
+    currentProject.value?.code,
+    currentProject.value?.siteCd,
+  ]
+
+  return candidates.find((value) => String(value ?? '').trim().length > 0) ?? undefined
+}
+
 async function loadDashboard() {
   try {
     const response = await fetchWeatherDashboard(reportDate.value)
@@ -576,9 +596,11 @@ async function loadReports() {
 }
 
 async function loadWorkers() {
-  const [workerResponse, staffingResponse] = await Promise.allSettled([
-    fetchWorkerList(reportDate.value),
-    getStaffingWorkerPool({ rosterDate: reportDate.value }),
+  const siteCode = resolveCurrentSiteCode()
+  const [workerResponse, staffingResponse, staffingZoneResponse] = await Promise.allSettled([
+    fetchWorkerList(siteCode, reportDate.value),
+    getStaffingWorkerPool({ siteCode, rosterDate: reportDate.value }),
+    getStaffingZones({ siteCode, rosterDate: reportDate.value }),
   ])
 
   workersData.value = workerResponse.status === 'fulfilled'
@@ -586,6 +608,9 @@ async function loadWorkers() {
     : []
   staffingWorkersData.value = staffingResponse.status === 'fulfilled'
     ? normalizeArray(staffingResponse.value?.rows ?? staffingResponse.value)
+    : []
+  staffingZonesData.value = staffingZoneResponse.status === 'fulfilled'
+    ? normalizeArray(staffingZoneResponse.value?.rows ?? staffingZoneResponse.value)
     : []
 }
 
