@@ -1,6 +1,7 @@
 import api from './index.js'
 
 const PATH = '/work-plan'
+const WRITE_TIMEOUT_MS = 60000
 
 const normalizeStatus = (status) => {
   if (!status) return '진행 예정'
@@ -102,7 +103,11 @@ const toReq = (plan) => ({
  * POST /work-plan
  */
 export const createWorkPlan = (plan) => {
-  return api.post(PATH, toReq(plan))
+  return api.post(PATH, toReq(plan), { timeout: WRITE_TIMEOUT_MS })
+}
+
+export const createWorkPlans = (plans) => {
+  return api.post(`${PATH}/bulk`, plans.map(toReq), { timeout: WRITE_TIMEOUT_MS })
 }
 
 /**
@@ -161,7 +166,7 @@ export const extendWorkPlan = (planId, payload) => {
  * @param {Array}  payload.items     - [{date, processName, zone, workers, equipment, note?}]
  */
 export const submitWeeklyWorkPlan = (payload) => {
-  return api.post(`${PATH}/weekly`, payload)
+  return api.post(`${PATH}/weekly`, payload, { timeout: WRITE_TIMEOUT_MS })
 }
 
 /**
