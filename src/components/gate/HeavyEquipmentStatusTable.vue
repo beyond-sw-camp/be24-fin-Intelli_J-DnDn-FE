@@ -1,8 +1,7 @@
 <script setup>
-import { computed } from 'vue'
 import { Truck } from 'lucide-vue-next'
 
-const props = defineProps({
+defineProps({
   equipments: {
     type: Array,
     default: () => [],
@@ -16,25 +15,6 @@ const props = defineProps({
     default: false,
   },
 })
-
-function normalizeEquipmentCount(value) {
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : 0
-}
-
-const sortedEquipments = computed(() => (
-  [...props.equipments].sort((left, right) => {
-    const countGap = normalizeEquipmentCount(right.count) - normalizeEquipmentCount(left.count)
-    if (countGap !== 0) return countGap
-
-    const leftGate = String(left.gate ?? '')
-    const rightGate = String(right.gate ?? '')
-    const gateGap = leftGate.localeCompare(rightGate, 'ko')
-    if (gateGap !== 0) return gateGap
-
-    return String(left.name ?? '').localeCompare(String(right.name ?? ''), 'ko')
-  })
-))
 </script>
 
 <template>
@@ -90,7 +70,7 @@ const sortedEquipments = computed(() => (
 
         <tbody class="divide-y divide-forena-50">
           <tr
-            v-for="equipment in sortedEquipments"
+            v-for="equipment in equipments"
             :key="equipment.id"
             class="transition-colors hover:bg-slate-50/80"
           >
