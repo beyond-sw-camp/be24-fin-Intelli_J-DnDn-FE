@@ -1,5 +1,4 @@
 <script setup>
-import { CalendarDays } from 'lucide-vue-next'
 import { WEATHER_CONTROL_TEXT } from '@/utils/weatherControlMapper.js'
 
 defineProps({
@@ -42,7 +41,6 @@ function updateReportDate(event) {
       </span>
 
       <label class="flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white pl-2.5">
-        <CalendarDays class="h-3.5 w-3.5 text-forena-400" />
         <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">기준 날짜</span>
         <input
           :value="reportDate"

@@ -84,6 +84,22 @@ function hasMetricInputForZone(metricInputs, zoneName) {
   ]))
 }
 
+
+function reportMatchesAny(report, keywords = []) {
+  const text = [
+    report?.title,
+    report?.location,
+    report?.process,
+    report?.issue,
+    report?.todayWork,
+    report?.tomorrowPlan,
+    report?.content,
+    report?.memo,
+  ].map((value) => String(value || '').toLowerCase()).join(' ')
+
+  return keywords.some((keyword) => text.includes(String(keyword || '').toLowerCase()))
+}
+
 function hasSupportZoneReport(reports, zoneName) {
   const reportList = Array.isArray(reports) ? reports : []
   if (zoneName === '세척장') {
