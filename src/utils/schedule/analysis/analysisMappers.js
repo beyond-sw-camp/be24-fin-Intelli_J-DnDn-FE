@@ -31,8 +31,15 @@ export function hasDailyReportProgress(item) {
 }
 
 export function inferRepresentativeTradeName(record) {
-  const explicit = String(record?.tradeName ?? '').trim()
-  if (explicit && explicit !== '기타' && explicit !== 'ETC') return explicit
+  const explicit = [
+    record?.tradeProcessTradeName,
+    record?.tradeProcess?.tradeName,
+    record?.tradeName,
+    record?.majorTradeName,
+  ]
+    .map((value) => String(value ?? '').trim())
+    .find((value) => value && value !== '기타' && value !== 'ETC')
+  if (explicit) return explicit
 
   const text = [record?.name, record?.tradeProcessName, record?.processName, record?.trade]
     .filter(Boolean)
@@ -121,7 +128,8 @@ export function mapDelayTaskItem(
     id: item.workPlanId,
     workPlanId: item.workPlanId,
     process:
-      inferRepresentativeTradeName(monthlyPlan || item) ||
+      [inferRepresentativeTradeName(item), inferRepresentativeTradeName(monthlyPlan)]
+        .find((name) => name && name !== '기타') ||
       item.process ||
       item.tradeName ||
       '세부 작업',

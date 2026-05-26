@@ -34,6 +34,21 @@ const TRADE_ENUM_MAP = {
   ETC: '기타',
 }
 
+const EXTRACTED_TRADE_NAME_MAP = {
+  공통: '공통',
+  토목기초: '토목/기초',
+  '토목/기초': '토목/기초',
+  건축: '건축',
+  MEP: 'MEP',
+  엠이피: 'MEP',
+  부대조경: '부대/조경',
+  '부대/조경': '부대/조경',
+  준공관리: '준공/관리',
+  '준공/관리': '준공/관리',
+  조경: '조경',
+  기계: '기계',
+}
+
 export function normalizeTradeName(value) {
   const raw = String(value || '').trim()
   if (!raw) return null
@@ -42,6 +57,13 @@ export function normalizeTradeName(value) {
   if (TRADE_ENUM_MAP[upper]) return TRADE_ENUM_MAP[upper]
 
   const compact = raw.replace(/\s+/g, '')
+  const compactWithoutSuffix = compact.replace(/공종$/, '')
+  const extractedTradeName =
+    EXTRACTED_TRADE_NAME_MAP[upper] ||
+    EXTRACTED_TRADE_NAME_MAP[compact] ||
+    EXTRACTED_TRADE_NAME_MAP[compactWithoutSuffix]
+  if (extractedTradeName) return extractedTradeName
+
   if (
     ['공통/가설', '공통가설', '가설공사'].includes(compact) ||
     /가설|현장개설|울타리|가설사무실|가설전기|가설수도/.test(raw)
@@ -94,13 +116,14 @@ export function normalizeTradeName(value) {
 export function getTradeNameFromRecord(record) {
   if (!record) return null
   return normalizeTradeName(
-    record.tradeName ||
+    record.tradeProcessTradeName ||
+      record.tradeProcess?.tradeName ||
+      record.tradeName ||
       record.majorTradeName ||
       record.tradeType ||
       record.trade ||
       record.category ||
       record.process ||
-      record.tradeProcess?.tradeName ||
       record.tradeProcess?.tradeType ||
       record.tradeProcess?.trade ||
       record.tradeProcess?.category ||
