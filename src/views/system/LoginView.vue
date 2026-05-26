@@ -7,7 +7,7 @@
       <header class="login-header">
         <img :src="leftLogoSrc" alt="DnDn" class="header-logo" />
         <div class="header-text">
-          <span class="header-brand">DnDn v2</span>
+          <span class="header-brand">DnDn</span>
           <span class="header-sub">현장 일정관리 시스템</span>
         </div>
       </header>
@@ -149,7 +149,7 @@
                 <p v-else-if="projects.length === 0" class="site-grid-status">
                   등록된 현장이 없습니다. 관리자에게 문의하세요.
                 </p>
-                <div v-else class="site-grid">
+                <div v-else class="site-grid" :class="{ 'site-grid--dense': projects.length > 6 }">
                   <button
                     v-for="site in projects"
                     :key="site.id"
@@ -623,8 +623,8 @@ input {
 /* ── 콘텐츠 영역: 두 탭 동일 높이 유지 (데스크톱) ── */
 .content-stage {
   position: relative;
-  height: 500px;
-  min-height: 500px;
+  height: 580px;
+  min-height: 580px;
   overflow: hidden;
 }
 .layout {
@@ -806,7 +806,7 @@ input {
   border-color: rgba(255, 255, 255, 0.06);
   box-shadow: 0 18px 38px rgba(0, 20, 40, 0.28);
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
 .site-info::before {
   content: '';
@@ -827,6 +827,8 @@ input {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  /* hover·선택 그림자가 잘리지 않도록 내부 스크롤 영역에 여백을 둔다 */
+  padding: 2px 0;
 }
 .site-grid-status {
   flex: 1;
@@ -848,20 +850,28 @@ input {
 .site-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(min-content, auto);
   gap: 10px;
   flex: 1;
   align-content: start;
   min-height: 0;
-  /* hover 시 카드가 1px 떠오르므로 윗행이 잘리지 않도록 살짝 여백 + scroll 패딩 */
-  padding-top: 3px;
+  /* hover·선택 상태 그림자/이동이 위·아래에서 잘리지 않도록 여백 */
+  padding: 8px 4px 10px;
+  overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.site-grid.site-grid--dense {
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 .site-card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 9px;
-  padding: 10px 12px;
-  min-height: 54px;
+  padding: 11px 12px;
+  min-height: 0;
+  height: auto;
   border-radius: 13px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.06);
@@ -886,6 +896,7 @@ input {
 .site-card-dot {
   width: 9px;
   height: 9px;
+  margin-top: 4px;
   border-radius: 999px;
   background: #94a3b8;
   flex-shrink: 0;
@@ -902,7 +913,9 @@ input {
 .site-card-text strong {
   font-size: 13.5px;
   font-weight: 700;
-  line-height: 1.25;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
 }
 .site-card-text small.site-card-meta {
   display: flex;
@@ -1083,7 +1096,7 @@ input {
   }
   .content-stage {
     height: auto;
-    min-height: 420px;
+    min-height: 480px;
   }
   .site-grid-wrap {
     min-height: 140px;

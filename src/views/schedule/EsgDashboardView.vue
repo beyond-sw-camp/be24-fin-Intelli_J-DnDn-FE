@@ -24,7 +24,7 @@ import { getEsgDashboard, saveEsgSnapshot } from '@/api/esgDashboard.js'
 import { getProjectList } from '@/api/project.js'
 import { getReportsByDate } from '@/api/report.js'
 import { fetchWeatherDashboard } from '@/api/weatherControl.js'
-import { getStaffingWorkerPool } from '@/api/staffing.js'
+import { getStaffingWorkerPool, getStaffingZones } from '@/api/staffing.js'
 import { getGateEquipments } from '@/api/workOrder.js'
 import { fetchWorkPlansByProject } from '@/api/workplan.js'
 import { fetchWorkerList } from '@/api/worker.js'
@@ -88,15 +88,22 @@ const workPlansData = ref([])
 const reportsData = ref([])
 const workersData = ref([])
 const staffingWorkersData = ref([])
+const staffingZonesData = ref([])
 
-const selectedSiteId = computed(() => String(selectedProjectId.value ?? currentProject.value?.idx ?? ''))
+const selectedSiteId = computed(() =>
+  String(selectedProjectId.value ?? currentProject.value?.idx ?? ''),
+)
 const currentProject = computed(() => {
-  return projects.value.find((project) => String(project.idx) === String(selectedProjectId.value))
-    ?? backendCurrentProject.value
-    ?? projects.value[0]
-    ?? null
+  return (
+    projects.value.find((project) => String(project.idx) === String(selectedProjectId.value)) ??
+    backendCurrentProject.value ??
+    projects.value[0] ??
+    null
+  )
 })
-const currentProjectId = computed(() => currentProject.value?.idx ?? selectedProjectId.value ?? null)
+const currentProjectId = computed(
+  () => currentProject.value?.idx ?? selectedProjectId.value ?? null,
+)
 const todayDateText = computed(() => getTodayDateText())
 const reportDateState = computed(() => {
   if (reportDate.value < todayDateText.value) return 'past'
@@ -115,8 +122,8 @@ const airQuality = computed(() => dashboard.value?.airQuality ?? null)
 const equipmentRisks = computed(() => normalizeArray(dashboard.value?.equipmentRisks))
 const planRisks = computed(() => normalizeArray(dashboard.value?.planRisks))
 
-const weatherRiskCount = computed(() =>
-  (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0)
+const weatherRiskCount = computed(
+  () => (equipmentRisks.value?.length ?? 0) + (planRisks.value?.length ?? 0),
 )
 
 const gateEquipmentsForCurrentProject = computed(() => {
@@ -156,9 +163,11 @@ const realMissionRate = computed(() => {
 })
 
 const safetyDays = computed(() => {
-  return backendCurrentProject.value?.safetyDays
-    ?? backendCurrentSnapshot.value?.safetyDays
-    ?? calculateSafetyDays(currentProject.value, reportDate.value)
+  return (
+    backendCurrentProject.value?.safetyDays ??
+    backendCurrentSnapshot.value?.safetyDays ??
+    calculateSafetyDays(currentProject.value, reportDate.value)
+  )
 })
 
 const dashboardContext = computed(() => ({
@@ -170,6 +179,7 @@ const dashboardContext = computed(() => ({
   workOrders: filteredEquipments.value,
   workers: workersData.value,
   staffingWorkers: staffingWorkersData.value,
+  staffingZones: staffingZonesData.value,
   safetyDays: safetyDays.value,
   currentProjectId: currentProjectId.value,
   metricInputs: backendMetricInputs.value,
@@ -237,7 +247,14 @@ const currentSiteSummary = computed(() => {
   }
 
   const dailyAverageScore = zones.length
-    ? Math.round((zones.reduce((sum, zone) => sum + Number(zone.dailyScore ?? zone.metrics?.totalScore ?? 0), 0) / zones.length) * 10) / 10
+    ? Math.round(
+        (zones.reduce(
+          (sum, zone) => sum + Number(zone.dailyScore ?? zone.metrics?.totalScore ?? 0),
+          0,
+        ) /
+          zones.length) *
+          10,
+      ) / 10
     : 0
   const cumulativeScore = normalizeCumulativeScore(snapshot?.totalScore ?? dailyAverageScore)
 
@@ -258,32 +275,64 @@ const currentSite = computed(() => {
     ...fallback,
     id: selectedSiteId.value || fallback?.id || 'current-site',
     projectId: currentProjectId.value,
-    name: backendCurrentProject.value?.name ?? fallback?.name ?? currentProject.value?.name ?? '현장명 미지정',
+    name:
+      backendCurrentProject.value?.name ??
+      fallback?.name ??
+      currentProject.value?.name ??
+      '현장명 미지정',
     shortName: fallback?.shortName ?? backendCurrentProject.value?.name ?? '현장',
-    address: backendCurrentProject.value?.location ?? fallback?.address ?? currentProject.value?.location ?? '',
+    address:
+      backendCurrentProject.value?.location ??
+      fallback?.address ??
+      currentProject.value?.location ??
+      '',
     snapshotSaved: displayCurrentSnapshot.value?.snapshotSaved ?? fallback?.snapshotSaved ?? false,
-    startDate: backendCurrentProject.value?.startDate ?? fallback?.startDate ?? currentProject.value?.startDate ?? null,
-    endDate: backendCurrentProject.value?.endDate ?? fallback?.endDate ?? currentProject.value?.endDate ?? null,
+    startDate:
+      backendCurrentProject.value?.startDate ??
+      fallback?.startDate ??
+      currentProject.value?.startDate ??
+      null,
+    endDate:
+      backendCurrentProject.value?.endDate ??
+      fallback?.endDate ??
+      currentProject.value?.endDate ??
+      null,
     ...currentSiteSummary.value,
   }
 })
 
 const activeScore = computed(() => selectedZone.value?.score ?? currentSite.value.score)
-const activeLevel = computed(() => normalizeFloorLevel(selectedZone.value?.level ?? currentSite.value.level ?? 0))
-const levelProgress = computed(() => getEsgFloorProgressByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT))
-const nextLevelPoint = computed(() => getNextEsgFloorPointByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT).toFixed(1))
-const activeFloorPoint = computed(() => normalizeFloorProgressPoint(activeScore.value, ESG_ZONE_FLOOR_POINT))
-const activeFloorScoreLabel = computed(() => formatEsgFloorProgressScore(activeLevel.value, activeScore.value, {
-  decimals: 1,
-  showMax: false,
-  floorPoint: ESG_ZONE_FLOOR_POINT,
-}))
-const buildingFloors = computed(() => Array.from({ length: Math.min(8, Math.max(1, activeLevel.value)) }, (_, index) => index + 1))
+const activeLevel = computed(() =>
+  normalizeFloorLevel(selectedZone.value?.level ?? currentSite.value.level ?? 0),
+)
+const levelProgress = computed(() =>
+  getEsgFloorProgressByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT),
+)
+const nextLevelPoint = computed(() =>
+  getNextEsgFloorPointByPoint(activeScore.value, ESG_ZONE_FLOOR_POINT).toFixed(1),
+)
+const activeFloorPoint = computed(() =>
+  normalizeFloorProgressPoint(activeScore.value, ESG_ZONE_FLOOR_POINT),
+)
+const activeFloorScoreLabel = computed(() =>
+  formatEsgFloorProgressScore(activeLevel.value, activeScore.value, {
+    decimals: 1,
+    showMax: false,
+    floorPoint: ESG_ZONE_FLOOR_POINT,
+  }),
+)
+const buildingFloors = computed(() =>
+  Array.from({ length: Math.min(8, Math.max(1, activeLevel.value)) }, (_, index) => index + 1),
+)
 
 const weatherImpact = computed(() => {
   const analysis = weatherAnalysis.value
   if (!analysis) {
-    return { label: '기상 데이터 연결 대기', tone: 'text-slate-700 bg-slate-100 border-slate-200', score: 0 }
+    return {
+      label: '기상 데이터 연결 대기',
+      tone: 'text-slate-700 bg-slate-100 border-slate-200',
+      score: 0,
+    }
   }
 
   let score = 0
@@ -294,17 +343,21 @@ const weatherImpact = computed(() => {
   if (analysis.coldRisk) score += 1
   if (analysis.fineDustRisk) score += 1
 
-  if (score >= 4) return { label: '통제 필요', tone: 'text-rose-700 bg-rose-50 border-rose-200', score }
-  if (score >= 2) return { label: '주의 관찰', tone: 'text-amber-700 bg-amber-50 border-amber-200', score }
+  if (score >= 4)
+    return { label: '통제 필요', tone: 'text-rose-700 bg-rose-50 border-rose-200', score }
+  if (score >= 2)
+    return { label: '주의 관찰', tone: 'text-amber-700 bg-amber-50 border-amber-200', score }
   return { label: '정상 운영', tone: 'text-emerald-700 bg-emerald-50 border-emerald-200', score }
 })
 
-const zoneMetricCards = computed(() => buildZoneMetricCards(
-  selectedZone.value,
-  activeEsgKey.value,
-  { AlertTriangle, Droplets, Factory, Gauge, HardHat, Leaf, Medal, ShieldCheck, Users, Zap },
-  { safetyDays: safetyDays.value },
-))
+const zoneMetricCards = computed(() =>
+  buildZoneMetricCards(
+    selectedZone.value,
+    activeEsgKey.value,
+    { AlertTriangle, Droplets, Factory, Gauge, HardHat, Leaf, Medal, ShieldCheck, Users, Zap },
+    { safetyDays: safetyDays.value },
+  ),
+)
 
 const missions = computed(() => buildMissions(selectedZone.value, currentSite.value))
 
@@ -320,7 +373,10 @@ const siteRankingItems = computed(() => {
       }
     })
 
-  if (isRankingEligibleSite(current) && !merged.find((site) => String(site.id) === String(current.id))) {
+  if (
+    isRankingEligibleSite(current) &&
+    !merged.find((site) => String(site.id) === String(current.id))
+  ) {
     merged.push(current)
   }
 
@@ -332,7 +388,9 @@ const siteRankingItems = computed(() => {
   })
 })
 const currentSiteRankIndex = computed(() => {
-  return siteRankingItems.value.findIndex((site) => String(site.id) === String(selectedSiteId.value))
+  return siteRankingItems.value.findIndex(
+    (site) => String(site.id) === String(selectedSiteId.value),
+  )
 })
 const currentSiteRank = computed(() => currentSiteRankIndex.value + 1)
 const upperRankingSite = computed(() => {
@@ -360,7 +418,8 @@ const rankingComparison = computed(() => {
 
   const upperSite = upperRankingSite.value
   const gapPoint = buildFloorGapLabel(
-    getSiteAccumulatedScore(upperSite ?? currentSite.value) - getSiteAccumulatedScore(currentSite.value),
+    getSiteAccumulatedScore(upperSite ?? currentSite.value) -
+      getSiteAccumulatedScore(currentSite.value),
   )
   return `${currentSiteRank.value - 1}위 ${upperSite?.name ?? '상위 현장'}까지 ${gapPoint} 차이입니다.`
 })
@@ -411,7 +470,7 @@ const riskActions = computed(() => {
     {
       id: 'stable',
       title: '현재 기상 조건은 평시 운용 범위',
-      detail: '장비 대기시간과 세척수·게이트 분산 관리 미션 중심으로 운영하면 됩니다.',
+      detail: '장비 대기시간과 세척 운영·게이트 분산 관리 미션 중심으로 운영하면 됩니다.',
       level: '양호',
     },
   ]
@@ -456,12 +515,7 @@ async function runDashboardLoad() {
     return
   }
 
-  await Promise.all([
-    loadDashboard(),
-    loadEquipments(),
-    loadReports(),
-    loadWorkers(),
-  ])
+  await Promise.all([loadDashboard(), loadEquipments(), loadReports(), loadWorkers()])
 
   if (gateEquipmentsForCurrentProject.value.length) {
     workPlansData.value = []
@@ -481,6 +535,7 @@ function clearOperationalData() {
   reportsData.value = []
   workersData.value = []
   staffingWorkersData.value = []
+  staffingZonesData.value = []
 }
 
 async function loadEsgDashboardMeta(useCurrentSelection = true) {
@@ -507,16 +562,25 @@ async function loadEsgDashboardMeta(useCurrentSelection = true) {
     backendCurrentProject.value = payload?.currentProject ?? baselinePayload?.currentProject ?? null
     backendCurrentSnapshot.value = payload?.currentSnapshot ?? null
     backendTodaySnapshot.value = baselinePayload?.currentSnapshot ?? null
-    backendCurrentZoneSnapshots.value = normalizeArray(payload?.currentZoneSnapshots ?? payload?.currentSnapshot?.zones)
+    backendCurrentZoneSnapshots.value = normalizeArray(
+      payload?.currentZoneSnapshots ?? payload?.currentSnapshot?.zones,
+    )
     projects.value = normalizeArray(payload?.projects ?? baselinePayload?.projects)
     backendRankings.value = normalizeArray(baselinePayload?.rankings ?? payload?.rankings)
-    backendMetricInputs.value = isFutureReportDate.value ? [] : normalizeArray(payload?.currentMetricInputs)
+    backendMetricInputs.value = isFutureReportDate.value
+      ? []
+      : normalizeArray(payload?.currentMetricInputs)
 
     if (!selectedProjectId.value) {
-      selectedProjectId.value = backendCurrentProject.value?.idx ?? authStore.projectId ?? projects.value[0]?.idx ?? null
+      selectedProjectId.value =
+        backendCurrentProject.value?.idx ?? authStore.projectId ?? projects.value[0]?.idx ?? null
     }
 
-    sites.value = buildProjectSiteItems(projects.value, backendRankings.value, selectedProjectId.value)
+    sites.value = buildProjectSiteItems(
+      projects.value,
+      backendRankings.value,
+      selectedProjectId.value,
+    )
   } catch {
     projects.value = await loadProjectFallback()
     backendCurrentZoneSnapshots.value = []
@@ -532,6 +596,22 @@ async function loadProjectFallback() {
   } catch {
     return []
   }
+}
+
+function resolveCurrentSiteCode() {
+  const candidates = [
+    authStore.siteCode,
+    backendCurrentProject.value?.siteCode,
+    backendCurrentProject.value?.projectCode,
+    backendCurrentProject.value?.code,
+    backendCurrentProject.value?.siteCd,
+    currentProject.value?.siteCode,
+    currentProject.value?.projectCode,
+    currentProject.value?.code,
+    currentProject.value?.siteCd,
+  ]
+
+  return candidates.find((value) => String(value ?? '').trim().length > 0) ?? undefined
 }
 
 async function loadDashboard() {
@@ -559,7 +639,9 @@ async function loadWorkPlans() {
   }
 
   try {
-    const response = await fetchWorkPlansByProject(currentProjectId.value, { includeAllTrades: true })
+    const response = await fetchWorkPlansByProject(currentProjectId.value, {
+      includeAllTrades: true,
+    })
     workPlansData.value = normalizeArray(response)
   } catch {
     workPlansData.value = []
@@ -576,17 +658,25 @@ async function loadReports() {
 }
 
 async function loadWorkers() {
-  const [workerResponse, staffingResponse] = await Promise.allSettled([
-    fetchWorkerList(reportDate.value),
-    getStaffingWorkerPool({ rosterDate: reportDate.value }),
+  const siteCode = resolveCurrentSiteCode()
+  const [workerResponse, staffingResponse, staffingZoneResponse] = await Promise.allSettled([
+    fetchWorkerList(siteCode, reportDate.value),
+    getStaffingWorkerPool({ siteCode, rosterDate: reportDate.value }),
+    getStaffingZones({ siteCode, rosterDate: reportDate.value }),
   ])
 
-  workersData.value = workerResponse.status === 'fulfilled'
-    ? normalizeArray(workerResponse.value?.rows ?? workerResponse.value)
-    : []
-  staffingWorkersData.value = staffingResponse.status === 'fulfilled'
-    ? normalizeArray(staffingResponse.value?.rows ?? staffingResponse.value)
-    : []
+  workersData.value =
+    workerResponse.status === 'fulfilled'
+      ? normalizeArray(workerResponse.value?.rows ?? workerResponse.value)
+      : []
+  staffingWorkersData.value =
+    staffingResponse.status === 'fulfilled'
+      ? normalizeArray(staffingResponse.value?.rows ?? staffingResponse.value)
+      : []
+  staffingZonesData.value =
+    staffingZoneResponse.status === 'fulfilled'
+      ? normalizeArray(staffingZoneResponse.value?.rows ?? staffingZoneResponse.value)
+      : []
 }
 
 async function persistCurrentSnapshot() {
@@ -606,7 +696,6 @@ async function persistCurrentSnapshot() {
     // ESG 스냅샷 저장 실패는 화면 표시를 막지 않는다.
   }
 }
-
 
 function resolveSummaryZoneStatus(score, risk) {
   const safeScore = normalizePositiveNumber(score, 0)
@@ -782,33 +871,41 @@ function zeroizeZoneScore(zone) {
 }
 
 function buildWorkPlanEquipmentRows(workPlans, targetDate) {
-  const scopedPlans = normalizeArray(workPlans).filter((plan) => isDateInPlanRange(
-    targetDate,
-    plan.startDate ?? plan.start,
-    plan.endDate ?? plan.end ?? plan.effectiveEnd,
-  ))
+  const scopedPlans = normalizeArray(workPlans).filter((plan) =>
+    isDateInPlanRange(
+      targetDate,
+      plan.startDate ?? plan.start,
+      plan.endDate ?? plan.end ?? plan.effectiveEnd,
+    ),
+  )
   const weeklyPlans = scopedPlans.filter((plan) => normalizePlanType(plan.planType) === 'WEEKLY')
   const monthlyPlans = scopedPlans.filter((plan) => normalizePlanType(plan.planType) === 'MONTHLY')
   const selectedPlans = weeklyPlans.length ? weeklyPlans : monthlyPlans
 
   return selectedPlans.flatMap((plan) => {
-    const equipmentEntries = parseEquipmentEntries(plan.equipmentDisplay ?? plan.equipmentText, plan.equipment)
+    const equipmentEntries = parseEquipmentEntries(
+      plan.equipmentDisplay ?? plan.equipmentText,
+      plan.equipment,
+    )
     if (!equipmentEntries.length) {
-      return [{
-        idx: `plan-${plan.idx ?? plan.id}-default`,
-        workOrderIdx: null,
-        workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
-        title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
-        tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
-        workDetail: firstText(plan.note, plan.name, ''),
-        workDate: targetDate,
-        workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
-        gateIdx: null,
-        equipmentName: '장비 미지정',
-        equipmentType: '중장비',
-        equipmentCount: 1,
-        statusLabel: plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
-      }]
+      return [
+        {
+          idx: `plan-${plan.idx ?? plan.id}-default`,
+          workOrderIdx: null,
+          workOrderRef: plan.idx ? `WP-${plan.idx}` : 'WP',
+          title: firstText(plan.name, plan.tradeProcessName, '작업 계획'),
+          tradeType: firstText(plan.trade, plan.tradeProcessName, ''),
+          workDetail: firstText(plan.note, plan.name, ''),
+          workDate: targetDate,
+          workLocation: firstText(plan.location, plan.zone, '작업구역 미지정'),
+          gateIdx: null,
+          equipmentName: '장비 미지정',
+          equipmentType: '중장비',
+          equipmentCount: 1,
+          statusLabel:
+            plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
+        },
+      ]
     }
 
     return equipmentEntries.map((equipment, index) => ({
@@ -824,7 +921,8 @@ function buildWorkPlanEquipmentRows(workPlans, targetDate) {
       equipmentName: equipment.name,
       equipmentType: equipment.name,
       equipmentCount: equipment.count,
-      statusLabel: plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
+      statusLabel:
+        plan.status === '진행 중' || plan.status === 'IN_PROGRESS' ? '작업중' : '입차예정',
     }))
   })
 }
@@ -906,7 +1004,12 @@ function formatTime(date) {
 }
 
 function unwrapPayload(payload) {
-  if (payload && typeof payload === 'object' && 'data' in payload && ('success' in payload || 'isSuccess' in payload)) {
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    'data' in payload &&
+    ('success' in payload || 'isSuccess' in payload)
+  ) {
     return payload.data
   }
   return payload
@@ -959,15 +1062,19 @@ function colorClass(color, type) {
 
 function levelTone(level) {
   if (level === '경고' || level === '위험') return 'bg-rose-100 text-rose-800 border-rose-200'
-  if (level === '주의' || level === '관리' || level === '대기') return 'bg-amber-100 text-amber-800 border-amber-200'
+  if (level === '주의' || level === '관리' || level === '대기')
+    return 'bg-amber-100 text-amber-800 border-amber-200'
   return 'bg-emerald-100 text-emerald-800 border-emerald-200'
 }
 
 onMounted(() => {
   loadAll()
-  refreshTimer = setInterval(() => {
-    loadAll()
-  }, 30 * 60 * 1000)
+  refreshTimer = setInterval(
+    () => {
+      loadAll()
+    },
+    30 * 60 * 1000,
+  )
 })
 
 onUnmounted(() => {
@@ -1000,16 +1107,22 @@ watch(
   },
 )
 
-watch(siteZones, (zones) => {
-  if (!zones.length) return
-  if (!zones.find((zone) => zone.id === selectedZoneId.value)) {
-    selectedZoneId.value = zones[0].id
-  }
-}, { immediate: true })
+watch(
+  siteZones,
+  (zones) => {
+    if (!zones.length) return
+    if (!zones.find((zone) => zone.id === selectedZoneId.value)) {
+      selectedZoneId.value = zones[0].id
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="min-h-screen space-y-5 bg-gradient-to-br from-slate-50 via-emerald-50/50 to-sky-50/50 p-5 pb-10">
+  <div
+    class="min-h-screen space-y-5 bg-gradient-to-br from-slate-50 via-emerald-50/50 to-sky-50/50 p-5 pb-10"
+  >
     <EsgHeroSection
       v-model:report-date="reportDate"
       :current-site="currentSite"
@@ -1021,7 +1134,9 @@ watch(siteZones, (zones) => {
       @refresh="loadAll"
     />
 
-    <section class="grid items-stretch gap-4 min-[1440px]:grid-cols-[340px_minmax(560px,1fr)_340px] min-[1720px]:grid-cols-[380px_minmax(0,1fr)_380px]">
+    <section
+      class="grid items-stretch gap-4 min-[1440px]:grid-cols-[340px_minmax(560px,1fr)_340px] min-[1720px]:grid-cols-[380px_minmax(0,1fr)_380px]"
+    >
       <EsgGrowthPanel
         :active-level="activeLevel"
         :active-score="activeScore"
@@ -1049,14 +1164,8 @@ watch(siteZones, (zones) => {
       />
     </section>
 
-    <EsgMissionSafetySection
-      :missions="missions"
-      :safety-days="safetyDays"
-    />
+    <EsgMissionSafetySection :missions="missions" :safety-days="safetyDays" />
 
-    <EsgDailySummaryTable
-      :current-site="currentSite"
-      :site-zones="siteZones"
-    />
+    <EsgDailySummaryTable :current-site="currentSite" :site-zones="siteZones" />
   </div>
 </template>

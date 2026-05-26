@@ -21,6 +21,7 @@ import {
   getMonthlyForecast,
   getRainBarClass,
   getRainNoteDetailed,
+  getWeatherAlertLabels,
   getRiskLevel,
   getSourceLabel,
   getThreeDayForecast,
@@ -53,12 +54,13 @@ const isFutureReportDate = computed(() => reportDate.value > todayDateText.value
 const hasWorkOrders = computed(() => workOrderEquipments.value.length > 0)
 
 const sourceLabel = computed(() => getSourceLabel(analysis.value?.sourceType))
+const weatherAlertLabels = computed(() => getWeatherAlertLabels(dashboard.value))
 const rainPercent = computed(() => calculateRainPercent(analysis.value, rain.value))
 const rainBarClass = computed(() => getRainBarClass(rainPercent.value))
-const rainNoteDetailed = computed(() => getRainNoteDetailed(rainPercent.value))
+const rainNoteDetailed = computed(() => getRainNoteDetailed(rainPercent.value, weatherAlertLabels.value))
 const fineDustValue = computed(() => getFineDustValue(analysis.value, airQuality.value))
 const fineDustTone = computed(() => getFineDustTone(fineDustValue.value, airQuality.value))
-const windTone = computed(() => getWindTone(analysis.value))
+const windTone = computed(() => getWindTone(analysis.value, weatherAlertLabels.value))
 const riskLevel = computed(() => getRiskLevel(analysis.value))
 
 const aiRiskItems = computed(() =>
@@ -196,7 +198,7 @@ watch(monthlyForecast, (weeks) => {
       @update:report-date="updateReportDate"
     />
 
-    <div class="grid shrink-0 gap-4 min-[1760px]:grid-cols-[520px_minmax(0,1fr)] min-[1760px]:items-stretch">
+    <div class="grid shrink-0 gap-4 min-[1440px]:grid-cols-[520px_minmax(0,1fr)] min-[1440px]:items-stretch">
       <div class="flex h-full flex-col gap-4">
         <WeatherSummaryCards
           :today="today"

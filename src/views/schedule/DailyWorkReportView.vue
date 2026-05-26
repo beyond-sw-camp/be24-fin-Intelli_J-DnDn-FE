@@ -7,6 +7,7 @@ import TaskSelectorModal from '@/components/schedule/dailyWorkReport/TaskSelecto
 import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import { useApprovedScheduleChanges } from '@/composables/schedule/dailyWorkReport/useApprovedScheduleChanges.js'
 import { useDailyWorkReports } from '@/composables/schedule/dailyWorkReport/useDailyWorkReports.js'
+import { isMilestoneScheduleRow } from '@/utils/scheduleMapper.js'
 import {
   ROLES,
   ALL_PROCESSES,
@@ -47,9 +48,10 @@ const { isTradeScope, assignedTrade, currentRoleMode } = useAuthScope(auth)
 const canSwitchRole = computed(() => auth.isAdminRole)
 
 const currentRole = ref(ROLES.WORKER)
-const myProcess = ref(ALL_PROCESSES[0])
+const tradeOptions = ref([])
+const myProcess = ref('')
 const processOptions = computed(() =>
-  isTradeScope.value && assignedTrade.value ? [assignedTrade.value] : ALL_PROCESSES,
+  isTradeScope.value && assignedTrade.value ? [assignedTrade.value] : tradeOptions.value,
 )
 
 const selectedDate = ref(todayStr())
@@ -75,13 +77,27 @@ const isToday = computed(() => selectedDate.value === todayStr())
 
 const activeTab = ref('today')
 
+function ensureSelectedProcess() {
+  if (isTradeScope.value && assignedTrade.value) {
+    myProcess.value = assignedTrade.value
+    return
+  }
+
+  if (!processOptions.value.length) {
+    myProcess.value = ''
+    return
+  }
+
+  if (!myProcess.value || !processOptions.value.includes(myProcess.value)) {
+    myProcess.value = processOptions.value[0]
+  }
+}
+
 watch(
   [currentRoleMode, assignedTrade],
   () => {
     currentRole.value = currentRoleMode.value
-    if (isTradeScope.value && assignedTrade.value) {
-      myProcess.value = assignedTrade.value
-    }
+    ensureSelectedProcess()
     if (currentRole.value === ROLES.WORKER) activeTab.value = 'today'
   },
   { immediate: true },
@@ -113,6 +129,7 @@ const {
 onMounted(() => {
   loadReportsForDate(selectedDate.value)
   loadApprovedScheduleChanges()
+  fetchTradeOptions()
   document.addEventListener('keydown', onKeydown)
 })
 
@@ -135,8 +152,37 @@ function statusMeta(s) {
 
 const visibleProcesses = computed(() => {
   if (currentRole.value === ROLES.WORKER) return [myProcess.value]
-  return processOptions.value.length ? processOptions.value : getAllTradeOptions()
+  return processOptions.value
 })
+
+async function fetchTradeOptions() {
+  if (!localStorage.getItem('accessToken')) {
+    tradeOptions.value = []
+    ensureSelectedProcess()
+    return
+  }
+  if (!auth.projectId && !auth.isAdminRole) {
+    tradeOptions.value = []
+    ensureSelectedProcess()
+    return
+  }
+
+  try {
+    const response = await api.get('/trade-process', {
+      params: { projectId: currentProjectId.value },
+    })
+    const data = Array.isArray(response) ? response : response?.data || []
+    const trades = data
+      .filter((p) => !isMilestoneScheduleRow(p))
+      .map((p) => p.tradeName || p.name)
+      .filter(Boolean)
+    tradeOptions.value = Array.from(new Set(trades))
+  } catch (e) {
+    console.warn('마스터 공정표 기준 공종 목록 조회 실패:', e)
+    tradeOptions.value = []
+  }
+  ensureSelectedProcess()
+}
 
 function reportsForDate(dateStr) {
   return reports.value.filter(
@@ -182,6 +228,13 @@ function canEdit(report) {
   return true
 }
 
+function isApprovedWorkOrder(order) {
+  const status = String(order?.statusCode || order?.status || '')
+    .trim()
+    .toUpperCase()
+  return status === 'APPROVED' || status === '승인 완료'
+}
+
 async function openCreate() {
   const targetDate = selectedDate.value
   const targetProcess = myProcess.value
@@ -193,8 +246,8 @@ async function openCreate() {
     availableTodayOrders.value = orders.filter(
       (o) =>
         tradeMatches(getTradeNameFromRecord(o), targetProcess) &&
-        o.dueDate === targetDate &&
-        o.statusCode === 'APPROVED',
+        toDateString(o.dueDate || o.date) === targetDate &&
+        isApprovedWorkOrder(o),
     )
 
     if (availableTodayOrders.value.length === 0) {

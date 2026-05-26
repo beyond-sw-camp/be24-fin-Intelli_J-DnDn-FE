@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Search,
@@ -21,6 +21,15 @@ import {
   deriveAttendanceTag,
   attendanceTagBadgeClass,
 } from '@/utils/workerUi'
+import {
+  WORKER_MANAGEMENT_TEXTS,
+  jobRankBadgeClass,
+  kpiTagCounts,
+  localTodayISODate,
+  parseISODateLocal,
+  employmentBadgeClass,
+  mapWorkerResToAttendance,
+} from '@/utils/deployment/workerManagementMappers'
 import { syncAllSites, fetchWorkerList, seedDemoAttendanceHistory, bulkOverrideAttendance } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
 
@@ -39,97 +48,14 @@ const BULK_STATUS_OPTIONS = [
 ]
 const selectedBulkStatus = ref('PRESENT')
 
-/** 상단 헤더 (근무자 관리) */
-const WM = {
-  pageTitle: '근무자 관리',
-  heroDesc:
-    '본사 직영과 협력사 소속 작업자를 동일 현장에서 관리할 수 있도록, 출입·근태 및 공수 현황을 조회하고 보정합니다.',
-  sectionAttendance: '작업자 근태 현황',
-  triggerSync: '전체 동기화',
-  triggerSyncLoading: '동기화 중...',
-  seedHistory: '이전 출결내역 불러오기',
-  seedHistoryLoading: '적용 중...',
-  bulkOverride: '일괄 적용',
-  bulkOverrideLoading: '적용 중...',
-}
-
-/** 출입·근태 테이블 구역 */
-const T = {
-  kicker: '현장 운영',
-  title: '출입 / 근태 관리',
-  desc: '작업자 출퇴근과 공수 산정 현황을 일일별로 조회하고 보정할 수 있습니다.',
-  breadcrumb: '현장 관리 / 출입·근태',
-  filterAffil: '공종 구분',
-  filterSearch: '작업자 이름',
-  filterSearchPh: '이름을 입력하세요',
-  colContact: '이름 / 연락처',
-  colAffil: '소속',
-  colEmployment: '상용 / 일용',
-  colRank: '직급',
-  colTrade: '공종',
-  colTime: '출·퇴근',
-  colStatus: '상태',
-  empty: '조회된 근태 내역이 없습니다.',
-  manSuffix: '공수',
-  colDetail: '상세보기',
-  listFilteredStats: '목록 집계',
-  employmentFilterHint: '고용',
-  attendanceFilterHint: '근태',
-  todayWorkerTotal: '금일 작업자',
-  countPeople: '명',
-}
-
-const JOB_RANK_SITE_DIRECTOR = '현장 총 책임자'
-const JOB_RANK_SECTION_LEADER = '공종 책임자'
-const JOB_RANK_FIELD_SUPERVISOR = '현장 관리자'
-const JOB_RANK_WORKER = '작업자'
-
-function jobRankBadgeClass(rank) {
-  if (rank === JOB_RANK_SITE_DIRECTOR) return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
-  if (rank === JOB_RANK_SECTION_LEADER) return 'bg-purple-50 text-purple-900 ring-1 ring-purple-200/80'
-  if (rank === JOB_RANK_FIELD_SUPERVISOR) return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
-  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
-}
+const WM = WORKER_MANAGEMENT_TEXTS
+const T = WORKER_MANAGEMENT_TEXTS
 
 /** 공종 구분: 서버에서 받은 현장+날짜 기준 전체 공종 목록 */
 const tradeFilterOptions = computed(() => {
   const trades = availableTradesFromServer.value
   return [{ value: '', label: '전체 공종' }, ...trades.map((t) => ({ value: t, label: t }))]
 })
-
-/** KPI 서버 카운트 → 프론트 태그 매핑 */
-function kpiTagCounts(kpi) {
-  if (!kpi) return { '출근 전': 0, 출근: 0, 지각: 0, 조퇴: 0, 퇴근: 0, 결근: 0 }
-  return {
-    '출근 전': kpi.pending ?? 0,
-    출근: kpi.present ?? 0,
-    지각: kpi.late ?? 0,
-    조퇴: kpi.earlyLeave ?? 0,
-    퇴근: kpi.leave ?? 0,
-    결근: kpi.absent ?? 0,
-  }
-}
-
-/** 브라우저 로컬 기준 YYYY-MM-DD (`toISOString` 은 UTC라 한국에서 하루 어긋날 수 있음) */
-function localTodayISODate() {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function parseISODateLocal(ymd) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd ?? '').trim())
-  if (!m) return null
-  const y = Number(m[1])
-  const mo = Number(m[2])
-  const d = Number(m[3])
-  const dt = new Date(y, mo - 1, d)
-  if (Number.isNaN(dt.getTime())) return null
-  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null
-  return dt
-}
 
 /** MANAGEMENT_001 동기화 시 서버에 넘기는 현장 코드 — 로그인한 계정의 siteCode 사용 */
 const SYNC_SITE_CODE = computed(() => authStore.siteCode)
@@ -217,97 +143,9 @@ function toggleListEmploymentFilter(kind) {
   listEmploymentFilter.value = listEmploymentFilter.value === kind ? '' : kind
 }
 
-function employmentBadgeClass(c) {
-  if (c === '상용') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
-  return 'bg-amber-50 text-amber-900 ring-1 ring-amber-200/80'
-}
-
 function goWorkerProfile(record, event) {
   event.stopPropagation()
   router.push({ name: 'siteWorkerProfile', params: { id: String(record.id) } })
-}
-
-/** API LocalTime → 표시용 HH:mm */
-function formatApiTime(t) {
-  if (t == null || t === '') return '-'
-  const s = String(t)
-  if (s === '-') return '-'
-  const m = /^(\d{1,2}):(\d{2})/.exec(s)
-  if (!m) return '-'
-  return `${m[1].padStart(2, '0')}:${m[2]}`
-}
-
-function mapJobRankFromApi(rank) {
-  const r = String(rank ?? '').toUpperCase()
-  if (r === 'SITE_DIRECTOR') return JOB_RANK_SITE_DIRECTOR
-  if (r === 'SECTION_LEADER') return JOB_RANK_SECTION_LEADER
-  if (r === 'FIELD_SUPERVISOR') return JOB_RANK_FIELD_SUPERVISOR
-  return JOB_RANK_WORKER
-}
-
-function buildAffiliationFromApi(row) {
-  const kind = String(row.affiliationKind ?? '').toUpperCase()
-  if (kind === 'DIRECT') {
-    return { affiliationType: '본사 소속', primaryContractor: '본사' }
-  }
-  const company = (row.partnerCompany && String(row.partnerCompany).trim()) || '협력사'
-  return {
-    affiliationType: `협력사 (${company})`,
-    primaryContractor: company,
-  }
-}
-
-function deriveStatusLabel(attendanceStatus, clockInStr, clockOutStr) {
-  const st = String(attendanceStatus ?? '').toUpperCase()
-  if (st === 'PENDING') return '출근 전'
-  if (st === 'ABSENT' || clockInStr === '-') return '결근'
-  if (st === 'EARLY_LEAVE') return '조퇴'
-  if (clockOutStr && clockOutStr !== '-') return '퇴근'
-  return '작업 중'
-}
-
-function estimateManDays(clockInStr, clockOutStr, statusUpper) {
-  if (statusUpper === 'PENDING') return 0
-  if (clockInStr === '-' || statusUpper === 'ABSENT') return 0
-  if (statusUpper === 'EARLY_LEAVE') return 0.5
-  if (clockOutStr && clockOutStr !== '-') return 1.0
-  return 0
-}
-
-/** Backend.md `WorkerDto.WorkerRes` JSON → 테이블 행 모양 */
-function mapWorkerResToAttendance(row) {
-  const clockInStr = formatApiTime(row.clockIn)
-  const clockOutStr = formatApiTime(row.clockOut)
-  const statusUpper = String(row.attendanceStatus ?? '').toUpperCase()
-  const { affiliationType, primaryContractor } = buildAffiliationFromApi(row)
-  const tradeLabel = displayWorkerTradeLine(row)
-
-  const manDays =
-    row.manDays != null && row.manDays !== ''
-      ? Number(row.manDays)
-      : estimateManDays(clockInStr, clockOutStr, statusUpper)
-
-  return {
-    id: row.idx,
-    name: row.name ?? '',
-    phone: row.phone ?? '—',
-    jobRank: mapJobRankFromApi(row.jobRank),
-    employmentClass: employmentKindDisplay(row.employmentKind),
-    affiliationType,
-    primaryContractor,
-    affiliationKindApi: row.affiliationKind,
-    partnerCompanyApi: row.partnerCompany,
-    affiliationSubLabel: tradeLabel,
-    site: row.site || '—',
-    clockIn: clockInStr,
-    clockOut: clockOutStr,
-    manDays,
-    attendanceStatus: statusUpper,
-    status: deriveStatusLabel(row.attendanceStatus, clockInStr, clockOutStr),
-    isClosed: false,
-    monthTotalMan: 0,
-    clockHistory: [],
-  }
 }
 
 /** MANAGEMENT_003 — 현재 필터+페이지 기준 목록 갱신 */
@@ -361,8 +199,69 @@ watch(searchNameInput, () => {
   }, 300)
 })
 
+// ─────────────────────────────────────────────────
+// SSE: 출퇴근 실시간 반영
+// ─────────────────────────────────────────────────
+
+/** @type {EventSource|null} */
+let sseSource = null
+
+function startSseSubscription() {
+  if (typeof EventSource === 'undefined') return
+
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  const siteCode = authStore.siteCode || ''
+  const url = `${baseUrl}/management/sse/attendance-stream?siteCode=${encodeURIComponent(siteCode)}`
+
+  sseSource = new EventSource(url, { withCredentials: true })
+
+  sseSource.addEventListener('attendance', (e) => {
+    try {
+      const payload = JSON.parse(e.data)
+      applySseAttendanceEvent(payload)
+    } catch (err) {
+      console.warn('[SSE] parse error', err)
+    }
+  })
+
+  sseSource.onerror = () => {
+    // 연결 오류 시 자동 재연결은 브라우저가 처리
+    console.warn('[SSE] connection error — browser will retry')
+  }
+}
+
+/**
+ * SSE 이벤트로 받은 출퇴근 정보를 현재 페이지 목록에 반영한다.
+ * workerIdx 가 일치하는 행만 갱신; 목록에 없으면 무시.
+ */
+function applySseAttendanceEvent(payload) {
+  const { workerIdx, action, time, attendanceStatus } = payload
+  if (!workerIdx) return
+
+  const idx = Number(workerIdx)
+  const row = attendanceList.value.find((r) => r.id === idx)
+  if (!row) return
+
+  if (action === 'CHECK_IN') {
+    row.clockIn = time || '-'
+    row.attendanceStatus = String(attendanceStatus ?? 'PRESENT').toUpperCase()
+  } else if (action === 'CHECK_OUT') {
+    row.clockOut = time || '-'
+    row.attendanceStatus = String(attendanceStatus ?? 'LEAVE').toUpperCase()
+  }
+  row.status = deriveStatusLabel(row.attendanceStatus, row.clockIn, row.clockOut)
+}
+
 onMounted(() => {
   refreshWorkerListFromApi().catch((e) => console.warn('[WorkerManagement] 초기 목록 로드 실패', e))
+  startSseSubscription()
+})
+
+onBeforeUnmount(() => {
+  if (sseSource) {
+    sseSource.close()
+    sseSource = null
+  }
 })
 
 async function onTriggerSync() {

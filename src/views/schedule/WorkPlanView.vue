@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CalendarPlus,
   ClipboardList,
+  LoaderCircle,
 } from 'lucide-vue-next'
 import { planStore } from '@/data/planStore'
 import { fetchTradeProcessList } from '@/api/tradeProcess.js'
@@ -83,6 +84,7 @@ const {
   uploadCategory,
   yearlyInputRef,
   monthlyInputRef,
+  isAnalyzingUpload,
   isUploadPopupOpen,
   uploadModalTrade,
   uploadModalType,
@@ -704,6 +706,19 @@ const {
       @fix-row="fixVerifyRow"
       @remove-row="removeVerifyRow"
     />
+
+    <div
+      v-if="isAnalyzingUpload"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4"
+    >
+      <div class="w-full max-w-sm rounded-2xl bg-white px-6 py-5 text-center shadow-xl">
+        <LoaderCircle class="mx-auto h-8 w-8 animate-spin text-flare-500" />
+        <p class="mt-3 text-sm font-bold text-forena-900">AI가 계획서를 분석 중입니다.</p>
+        <p class="mt-1 text-xs text-forena-500">
+          엑셀의 작업명, 기간, 공종 정보를 추출하고 있습니다.
+        </p>
+      </div>
+    </div>
 
     <WorkPlanWeeklyFormModal
       :show="showWeeklyForm"

@@ -2,6 +2,7 @@ import api from './index.js'
 
 const PATH = '/work-plan'
 const WRITE_TIMEOUT_MS = 60000
+const UPLOAD_TIMEOUT_MS = 300000
 
 const normalizeStatus = (status) => {
   if (!status) return '진행 예정'
@@ -31,6 +32,11 @@ const toPlan = (dto) => {
     tradeProcessId: dto.tradeProcessId ?? dto.trade_process_id ?? dto.tradeProcess?.idx ?? null,
 
     tradeProcessName: dto.tradeProcessName ?? dto.trade_process_name ?? null,
+    tradeProcessTradeName:
+      dto.tradeProcessTradeName ??
+      dto.trade_process_trade_name ??
+      dto.tradeProcess?.tradeName ??
+      null,
     parentWorkPlanId:
       dto.parentWorkPlanId ?? dto.parent_work_plan_id ?? dto.parentWorkPlan?.idx ?? null,
 
@@ -108,6 +114,40 @@ export const createWorkPlan = (plan) => {
 
 export const createWorkPlans = (plans) => {
   return api.post(`${PATH}/bulk`, plans.map(toReq), { timeout: WRITE_TIMEOUT_MS })
+}
+
+const toUploadExtractRow = (dto, index) => ({
+  id: dto.id ?? `${dto.tradeProcessId ?? 'unmatched'}-${index}`,
+  tradeProcessId: dto.tradeProcessId ?? dto.trade_process_id ?? null,
+  tradeProcessName: dto.tradeProcessName ?? dto.trade_process_name ?? '',
+  tradeProcessTradeName: dto.tradeProcessTradeName ?? dto.trade_process_trade_name ?? '',
+  name: dto.name ?? dto.tradeProcessName ?? '',
+  trade: dto.trade ?? '',
+  location: dto.location ?? '',
+  planType: dto.planType ?? '',
+  start: dto.startDate ?? dto.start ?? '',
+  end: dto.endDate ?? dto.end ?? '',
+  note: dto.note ?? '',
+  issue: dto.issue ?? null,
+})
+
+export const extractWorkPlanUpload = async ({ projectId, planType, trade, year, month, file }) => {
+  const formData = new FormData()
+  formData.append('projectId', projectId)
+  formData.append('planType', planType)
+  if (trade) formData.append('trade', trade)
+  if (year != null && year !== '') formData.append('year', year)
+  if (month != null && month !== '') formData.append('month', month)
+  formData.append('file', file)
+
+  const rows = await api.post(`${PATH}/upload`, formData, {
+    timeout: UPLOAD_TIMEOUT_MS,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  })
+
+  return Array.isArray(rows) ? rows.map(toUploadExtractRow) : []
 }
 
 /**

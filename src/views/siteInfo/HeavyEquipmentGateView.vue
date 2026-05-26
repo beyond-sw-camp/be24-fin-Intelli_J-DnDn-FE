@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import siteLayout from '@/assets/Firefly_Gemini Flash.png'
 import HeavyEquipmentGateDetail from '@/components/gate/HeavyEquipmentGateDetail.vue'
 import HeavyEquipmentHeader from '@/components/gate/HeavyEquipmentHeader.vue'
@@ -11,8 +12,10 @@ import {
   deleteHeavyEquipmentGate,
   fetchGateWorkOrderEquipments,
   fetchHeavyEquipmentGate,
+  fetchHeavyEquipmentGateBlueprint,
   fetchHeavyEquipmentGateList,
   removeHeavyEquipmentGateMachine,
+  saveHeavyEquipmentGateBlueprint,
   toggleHeavyEquipmentGateMachine,
   updateHeavyEquipmentGateManpower,
   updateHeavyEquipmentGatePosition,
@@ -40,6 +43,8 @@ import {
   mapWorkOrderEquipments,
 } from '@/utils/heavyEquipmentGateMapper.js'
 
+const { currentProjectId } = useCurrentProject()
+
 const gates = ref([])
 const selectedGateId = ref(null)
 const isAddMode = ref(false)
@@ -53,6 +58,7 @@ const blueprintInputRef = ref(null)
 const DEFAULT_BLUEPRINT_ASPECT_RATIO = '16 / 10'
 const customBlueprint = ref(null)
 const blueprintAspectRatio = ref(DEFAULT_BLUEPRINT_ASPECT_RATIO)
+const blueprintProjectId = computed(() => currentProjectId.value ?? 1)
 const blueprintZoom = ref(1)
 
 const activeBlueprint = computed(() => customBlueprint.value || siteLayout)
@@ -326,16 +332,49 @@ function applyBlueprintAspectRatio(imageSource) {
   image.src = imageSource
 }
 
-function loadBlueprintFromStorage() {
+const MAX_BLUEPRINT_FILE_SIZE = 10 * 1024 * 1024
+
+async function loadBlueprintFromServer() {
   try {
-    const saved = window.localStorage.getItem(BLUEPRINT_STORAGE_KEY)
-    if (saved) {
-      customBlueprint.value = saved
+    const saved = await fetchHeavyEquipmentGateBlueprint(blueprintProjectId.value)
+
+    if (saved?.dataUrl) {
+      customBlueprint.value = saved.dataUrl
       blueprintZoom.value = 1
-      applyBlueprintAspectRatio(saved)
+      applyBlueprintAspectRatio(saved.dataUrl)
+      return
+    }
+
+    customBlueprint.value = null
+    blueprintZoom.value = 1
+    applyBlueprintAspectRatio(siteLayout)
+  } catch (error) {
+    console.error('서버 저장 도면 조회 실패', error)
+    customBlueprint.value = null
+    blueprintZoom.value = 1
+    applyBlueprintAspectRatio(siteLayout)
+    return
+  }
+
+  try {
+    const legacySaved = window.localStorage.getItem(BLUEPRINT_STORAGE_KEY)
+    if (!legacySaved) return
+
+    customBlueprint.value = legacySaved
+    blueprintZoom.value = 1
+    applyBlueprintAspectRatio(legacySaved)
+
+    try {
+      await saveHeavyEquipmentGateBlueprint(blueprintProjectId.value, {
+        dataUrl: legacySaved,
+        originalFileName: 'legacy-blueprint',
+      })
+      window.localStorage.removeItem(BLUEPRINT_STORAGE_KEY)
+    } catch (error) {
+      console.error('기존 로컬 도면 서버 이전 실패', error)
     }
   } catch (error) {
-    console.error(error)
+    console.error('기존 로컬 도면 조회 실패', error)
   }
 }
 
@@ -353,14 +392,14 @@ function handleBlueprintUpload(event) {
     return
   }
 
-  if (file.size > 5 * 1024 * 1024) {
-    window.alert('5MB 이하 이미지만 업로드할 수 있습니다.')
+  if (file.size > MAX_BLUEPRINT_FILE_SIZE) {
+    window.alert('10MB 이하 이미지만 업로드할 수 있습니다.')
     event.target.value = ''
     return
   }
 
   const reader = new FileReader()
-  reader.onload = (readerEvent) => {
+  reader.onload = async (readerEvent) => {
     const dataUrl = readerEvent.target?.result
     if (typeof dataUrl !== 'string') return
 
@@ -369,25 +408,18 @@ function handleBlueprintUpload(event) {
     applyBlueprintAspectRatio(dataUrl)
 
     try {
-      window.localStorage.setItem(BLUEPRINT_STORAGE_KEY, dataUrl)
+      await saveHeavyEquipmentGateBlueprint(blueprintProjectId.value, {
+        dataUrl,
+        originalFileName: file.name,
+      })
+      window.localStorage.removeItem(BLUEPRINT_STORAGE_KEY)
     } catch (error) {
-      console.error(error)
+      console.error('도면 저장 실패', error)
+      window.alert('도면을 화면에는 반영했지만, 서버 저장에 실패했습니다. 잠시 후 다시 업로드해주세요.')
     }
   }
   reader.readAsDataURL(file)
   event.target.value = ''
-}
-
-function resetBlueprint() {
-  customBlueprint.value = null
-  blueprintZoom.value = 1
-  blueprintAspectRatio.value = DEFAULT_BLUEPRINT_ASPECT_RATIO
-
-  try {
-    window.localStorage.removeItem(BLUEPRINT_STORAGE_KEY)
-  } catch (error) {
-    console.error(error)
-  }
 }
 
 function zoomInBlueprint() {
@@ -404,7 +436,11 @@ function resetBlueprintZoom() {
 
 onMounted(() => {
   loadPageData()
-  loadBlueprintFromStorage()
+  loadBlueprintFromServer()
+})
+
+watch(currentProjectId, () => {
+  loadBlueprintFromServer()
 })
 
 watch(targetDate, () => {
@@ -446,7 +482,6 @@ watch(targetDate, () => {
         @marker-click="handleMarkerClick"
         @marker-drag-end="handleMarkerDragEnd"
         @marker-drag-start="handleMarkerDragStart"
-        @reset-blueprint="resetBlueprint"
         @reset-zoom="resetBlueprintZoom"
         @toggle-add-mode="toggleAddMode"
         @trigger-blueprint-upload="triggerBlueprintUpload"

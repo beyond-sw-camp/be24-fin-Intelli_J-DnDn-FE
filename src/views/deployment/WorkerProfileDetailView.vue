@@ -23,12 +23,21 @@ import {
 } from '@/api/worker.js'
 import {
   employmentKindDisplay,
-  pickWorkerTradeSubLabel,
   deriveAttendanceTag,
   attendanceTagBadgeClass,
-  formatWorkerZoneDisplay,
 } from '@/utils/workerUi'
-import { normalizeFatigueFromProfileApi } from '@/utils/fatigueUi'
+import {
+  buildWorkerProfile,
+  formatManDaysSum,
+  formatSanctionSummary,
+  jobRankBadgeClass,
+  localTodayISODate,
+  mapAttendanceRow,
+  normalizeApiDate,
+  sanitizeFilename,
+  unwrapWorkerDetailPayload,
+} from '@/utils/deployment/workerProfileMappers'
+import FatigueCriteriaModal from '@/components/deployment/worker/FatigueCriteriaModal.vue'
 
 const T = {
   title: '근무자 상세 프로필',
@@ -99,174 +108,6 @@ function closeFatigueCriteriaModal() {
 const activeWorkerIdx = ref(null)
 let suppressAttendanceMonthWatch = false
 
-function formatApiTime(t) {
-  if (t == null || t === '') return '-'
-  const s = String(t)
-  if (s === '-') return '-'
-  const m = /^(\d{1,2}):(\d{2})/.exec(s)
-  if (!m) return '-'
-  return `${m[1].padStart(2, '0')}:${m[2]}`
-}
-
-function normalizeApiDate(d) {
-  if (d == null) return ''
-  if (typeof d === 'string') return d.length >= 10 ? d.slice(0, 10) : d
-  if (Array.isArray(d) && d.length >= 3) {
-    const [y, mo, day] = d
-    return `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  }
-  return String(d)
-}
-
-// LocalDateTime 배열 [y,mo,day,h,min,...] 또는 문자열 → "YYYY-MM-DD HH:mm"
-function normalizeApiDateTime(dt) {
-  if (dt == null) return ''
-  if (typeof dt === 'string') {
-    // "2026-05-17T14:30:00" 또는 "2026-05-17 14:30:00"
-    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(dt)
-    return m ? `${m[1]} ${m[2]}` : dt.slice(0, 16)
-  }
-  if (Array.isArray(dt) && dt.length >= 5) {
-    const [y, mo, day, h, min] = dt
-    return `${y}-${String(mo).padStart(2, '0')}-${String(day).padStart(2, '0')} ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
-  }
-  return String(dt)
-}
-
-function formatRegisteredAt(raw) {
-  const s = normalizeApiDate(raw)
-  if (!s) return '—'
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s)
-  if (m) return `${m[1]}.${m[2]}.${m[3]}`
-  return s
-}
-
-function mapJobRankKo(rank) {
-  const r = String(rank ?? '').toUpperCase()
-  if (r === 'SITE_DIRECTOR') return '현장 총 책임자'
-  if (r === 'SECTION_LEADER') return '공종 책임자'
-  if (r === 'FIELD_SUPERVISOR') return '현장 관리자'
-  return '작업자'
-}
-
-function jobRankBadgeClass(rank) {
-  if (rank === '현장 총 책임자') return 'bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80'
-  if (rank === '공종 책임자') return 'bg-purple-50 text-purple-900 ring-1 ring-purple-200/80'
-  if (rank === '현장 관리자') return 'bg-sky-50 text-sky-900 ring-1 ring-sky-200/80'
-  return 'bg-slate-50 text-slate-800 ring-1 ring-slate-200/80'
-}
-
-/** 브라우저 로컬 기준 YYYY-MM-DD */
-function localTodayISODate() {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function mapAttendanceRow(a) {
-  const date = normalizeApiDate(a.date ?? a.workDate)
-  const zoneLine =
-    a.zoneDisplay != null && String(a.zoneDisplay).trim() !== ''
-      ? String(a.zoneDisplay).trim()
-      : formatWorkerZoneDisplay(a.zoneMain, a.zoneSub, a.zone)
-  return {
-    date,
-    clockIn: formatApiTime(a.clockIn),
-    clockOut: formatApiTime(a.clockOut),
-    manDays: a.manDays != null ? Number(a.manDays) : 0,
-    zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—',
-    site: '—',
-    attendanceStatus: a.attendanceStatus,
-  }
-}
-
-function mapDeploymentRow(d) {
-  // 실제 근무일(assignedAt)을 날짜로 표시 — confirmedAt(createdAt)은 사용하지 않음
-  const dateTime = normalizeApiDate(d.assignedAt)
-  const rawTrade = d.tradeName ?? d.assignedTrade
-  const trade =
-    rawTrade != null && String(rawTrade).trim() !== '' ? String(rawTrade).trim() : ''
-  const note = trade || '—'
-  const zoneLine =
-    d.zoneDisplay != null && String(d.zoneDisplay).trim() !== ''
-      ? String(d.zoneDisplay).trim()
-      : formatWorkerZoneDisplay(d.zoneMain, d.zoneSub, d.zone)
-  return { date: dateTime, zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—', note }
-}
-
-function mapSanctionRow(s) {
-  const date = normalizeApiDate(s.occurredAt)
-  const description = [s.reason, s.action].filter(Boolean).join(' — ') || '—'
-  return { type: s.type ?? '', date, description, active: s.active }
-}
-
-function mapAccidentRow(a) {
-  const date = normalizeApiDate(a.occurredAt)
-  const zoneLine =
-    a.zoneDisplay != null && String(a.zoneDisplay).trim() !== ''
-      ? String(a.zoneDisplay).trim()
-      : formatWorkerZoneDisplay(a.zoneMain, a.zoneSub, a.zone)
-  return {
-    date,
-    accidentType: (a.accidentType && String(a.accidentType).trim()) || '—',
-    zone: zoneLine !== '' && zoneLine !== '—' ? zoneLine : '—',
-    resolution: (a.resolution && String(a.resolution).trim()) || '—',
-  }
-}
-
-/** 제재·주의 한 줄 요약 (유형을 분리 카드로 두지 않음) */
-function formatSanctionSummary(s) {
-  const kind = (s.type && String(s.type).trim()) || ''
-  const body = (s.description && String(s.description).trim()) || '—'
-  if (!kind) return body
-  return `[${kind}] ${body}`
-}
-
-/** 구역 배치 이력에서 공종 힌트 (상세 API 에 공종 필드가 비어 있을 때) */
-function tradeHintFromDeployments(deployments) {
-  if (!Array.isArray(deployments) || deployments.length === 0) return ''
-  const sorted = [...deployments].sort((a, b) => {
-    const da = normalizeApiDate(a.assignedAt)
-    const db = normalizeApiDate(b.assignedAt)
-    return db.localeCompare(da)
-  })
-  const wt = sorted[0]?.assignedTrade
-  if (!wt || !String(wt).trim()) return ''
-  const first = String(wt).trim().split(/\s+/)[0]
-  return first || ''
-}
-
-function buildProfile(p, docs, deployments, attendanceRows, accidentsRows) {
-  let tradeText = pickWorkerTradeSubLabel(p)
-  if (!tradeText) tradeText = tradeHintFromDeployments(deployments)
-  const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
-  const metaAffiliationLine =
-    affiliationKindUpper === 'DIRECT' ? '직영' : tradeText || '—'
-  const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
-  const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
-
-  return {
-    id: p.idx,
-    name: p.name ?? '—',
-    metaAffiliationLine,
-    jobRank: mapJobRankKo(p.jobRank),
-    employmentKindLabel: employmentKindDisplay(p.employmentKind),
-    phone: p.phone ?? '—',
-    emergencyPhone: ePhone || '—',
-    emergencyRelation: rel || '—',
-    bloodType: p.bloodType ?? '—',
-    registeredAt: formatRegisteredAt(p.registeredAt),
-    site: p.site ?? '—',
-    documents: Array.isArray(docs) ? docs : [],
-    attendanceRows,
-    zoneHistory: Array.isArray(deployments) ? deployments.map(mapDeploymentRow) : [],
-    accidents: Array.isArray(accidentsRows) ? accidentsRows.map(mapAccidentRow) : [],
-    fatigue: normalizeFatigueFromProfileApi(p),
-  }
-}
-
 async function loadAttendanceMonth(workerIdx, y, m) {
   const ym = `${y}-${String(m).padStart(2, '0')}`
   const att = await fetchWorkerAttendance(workerIdx, ym)
@@ -274,19 +115,6 @@ async function loadAttendanceMonth(workerIdx, y, m) {
 }
 
 /** 상세 API 가 작업자 필드를 한 단 더 감싸 돌려주는 경우 */
-function unwrapWorkerDetailPayload(raw) {
-  if (!raw || typeof raw !== 'object') return raw
-  const inner =
-    raw.worker ??
-    raw.workerRes ??
-    raw.workerDto ??
-    (typeof raw.detail === 'object' && raw.detail ? raw.detail : null)
-  if (inner && typeof inner === 'object') {
-    return { ...raw, ...inner }
-  }
-  return raw
-}
-
 async function loadWorkerFromApi(workerIdx) {
   loading.value = true
   suppressAttendanceMonthWatch = true
@@ -309,7 +137,7 @@ async function loadWorkerFromApi(workerIdx) {
       attendanceCalYear.value,
       attendanceCalMonth.value,
     )
-    profile.value = buildProfile(p, docs, dep, att, accidents)
+    profile.value = buildWorkerProfile(p, docs, dep, att, accidents)
     activeWorkerIdx.value = workerIdx
   } catch (e) {
     console.warn('[WorkerProfile] 상세 로드 실패', e)
@@ -388,13 +216,6 @@ const attendanceMonthManSum = computed(() => {
   }, 0)
 })
 
-function formatManDaysSum(n) {
-  if (!Number.isFinite(n)) return '0'
-  if (n === 0) return '0'
-  const t = Math.round(n * 100) / 100
-  return Number.isInteger(t) ? String(t) : String(t)
-}
-
 const attendanceByDate = computed(() => {
   const p = profile.value
   if (!p?.attendanceRows?.length) return {}
@@ -456,12 +277,6 @@ function zoneForAttendanceDay(dateKey, row) {
 
 function goBack() {
   router.push({ name: 'siteWorkerManagement' })
-}
-
-function sanitizeFilename(s) {
-  return String(s)
-    .replace(/[/\\?%*:|"<>]/g, '_')
-    .slice(0, 120)
 }
 
 async function downloadDocument(doc) {
@@ -897,75 +712,10 @@ const todayAttendanceChip = computed(() => {
     </button>
   </div>
 
-  <Teleport to="body">
-    <div
-      v-if="fatigueCriteriaModalOpen && profile?.fatigue"
-      class="fixed inset-0 z-[95] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="fatigue-modal-title"
-    >
-      <button
-        type="button"
-        class="absolute inset-0 bg-forena-900/40 backdrop-blur-[1px]"
-        :aria-label="T.fatigueModalClose"
-        @click="closeFatigueCriteriaModal"
-      />
-      <div
-        class="relative z-10 flex max-h-[min(85vh,680px)] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-forena-100 bg-white shadow-xl ring-1 ring-black/5"
-      >
-        <div class="flex shrink-0 items-center justify-between gap-3 border-b border-forena-100 px-4 py-3">
-          <h3 id="fatigue-modal-title" class="text-sm font-bold text-forena-900 sm:text-base">
-            {{ T.fatigueModalTitle }}
-          </h3>
-          <button
-            type="button"
-            class="rounded-lg p-1.5 text-slate-500 transition hover:bg-forena-50 hover:text-forena-900"
-            :aria-label="T.fatigueModalClose"
-            @click="closeFatigueCriteriaModal"
-          >
-            <X class="h-5 w-5" />
-          </button>
-        </div>
-        <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4">
-          <div class="overflow-x-auto rounded-xl border border-forena-100">
-            <table class="w-full min-w-[280px] text-left text-xs sm:text-sm">
-              <thead class="border-b border-forena-100 bg-forena-50/80 text-[10px] font-bold uppercase tracking-wide text-forena-600">
-                <tr>
-                  <th class="px-2.5 py-2 sm:px-3">{{ T.fatigueModalColItem }}</th>
-                  <th class="w-[4.5rem] whitespace-nowrap px-2 py-2 text-right tabular-nums sm:w-[5rem]">
-                    {{ T.fatigueModalColPoints }}
-                  </th>
-                  <th class="min-w-[8rem] px-2.5 py-2 sm:px-3">{{ T.fatigueModalColRule }}</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-forena-100 text-forena-800">
-                <tr v-for="row in profile.fatigue.breakdownRows" :key="row.key">
-                  <td class="align-top px-2.5 py-2 font-semibold sm:px-3">{{ row.label }}</td>
-                  <td class="align-top px-2 py-2 text-right font-bold tabular-nums text-forena-900">
-                    {{ row.points }}점
-                  </td>
-                  <td class="align-top px-2.5 py-2 text-[11px] leading-snug text-slate-600 sm:px-3 sm:text-xs">
-                    {{ row.desc }}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p class="mt-3 text-[11px] leading-relaxed text-slate-500">
-            {{ T.fatigueModalFooterNote }}
-          </p>
-        </div>
-        <div class="flex shrink-0 justify-end border-t border-forena-100 bg-forena-50/40 px-4 py-3">
-          <button
-            type="button"
-            class="rounded-xl bg-gradient-to-r from-forena-700 to-forena-900 px-4 py-2 text-xs font-bold text-white sm:text-sm"
-            @click="closeFatigueCriteriaModal"
-          >
-            {{ T.fatigueModalClose }}
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+  <FatigueCriteriaModal
+    :open="fatigueCriteriaModalOpen"
+    :fatigue="profile?.fatigue"
+    :T="T"
+    @close="closeFatigueCriteriaModal"
+  />
 </template>

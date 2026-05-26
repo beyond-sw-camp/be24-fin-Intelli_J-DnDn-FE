@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Map as MapIcon, RefreshCw, RotateCcw, Truck, Upload } from 'lucide-vue-next'
+import { AlertCircle, Map as MapIcon, RefreshCw, Truck, Upload } from 'lucide-vue-next'
 import { clampPercent } from '@/utils/heavyEquipmentGateMapper.js'
 
 const props = defineProps({
@@ -55,7 +55,6 @@ const emit = defineEmits({
   'marker-click': (payload) => typeof payload.gateId === 'number' && payload.event instanceof MouseEvent,
   'marker-drag-end': (payload) => Boolean(payload.gate) && typeof payload.x === 'number' && typeof payload.y === 'number',
   'marker-drag-start': (payload) => Boolean(payload.gate) && payload.event instanceof DragEvent,
-  'reset-blueprint': () => true,
   'reset-zoom': () => true,
   'toggle-add-mode': () => true,
   'trigger-blueprint-upload': () => true,
@@ -316,16 +315,6 @@ onBeforeUnmount(() => {
       >
         <Upload class="h-4 w-4" />
         도면 업로드
-      </button>
-
-      <button
-        v-if="customBlueprint"
-        type="button"
-        class="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-rose-100 bg-white px-3 py-2 text-xs font-bold text-rose-600 shadow-sm transition hover:bg-rose-50"
-        @click.stop="emit('reset-blueprint')"
-      >
-        <RotateCcw class="h-4 w-4" />
-        기본 도면
       </button>
 
       <span class="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-xl border border-forena-100 bg-white px-3 text-xs font-bold text-forena-700 shadow-sm">

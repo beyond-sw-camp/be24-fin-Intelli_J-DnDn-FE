@@ -1,5 +1,5 @@
 <script setup>
-import { CalendarDays, Factory, Leaf, RefreshCw, ShieldCheck, Trophy } from 'lucide-vue-next'
+import { Factory, Leaf, RefreshCw, ShieldCheck, Trophy } from 'lucide-vue-next'
 import {
   ESG_SITE_FLOOR_POINT,
   ESG_ZONE_FLOOR_POINT,
@@ -70,9 +70,8 @@ const emit = defineEmits({
           <label class="flex items-center gap-3 rounded-xl bg-white/10 px-4 py-3 ring-1 ring-white/15">
             <div>
               <p class="text-[10px] font-bold text-emerald-100">기준 일자</p>
-              <input v-model="reportDate" type="date" class="mt-1 bg-transparent text-sm font-black text-white focus:outline-none" />
+              <input v-model="reportDate" type="date" class="esg-date-input mt-1 bg-transparent text-sm font-black text-white focus:outline-none" />
             </div>
-            <CalendarDays class="h-4 w-4 text-emerald-100" />
           </label>
           <button
             type="button"
@@ -124,3 +123,16 @@ const emit = defineEmits({
     </div>
   </section>
 </template>
+
+
+<style scoped>
+.esg-date-input {
+  appearance: none;
+}
+
+.esg-date-input::-webkit-calendar-picker-indicator {
+  display: none;
+  opacity: 0;
+  -webkit-appearance: none;
+}
+</style>

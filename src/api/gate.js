@@ -10,6 +10,23 @@ export const fetchGateList = () => {
   return api.get(PATH)
 }
 
+
+/**
+ * 공사현장별 도면 조회
+ * GET /gate/blueprint?projectId={projectId}
+ */
+export const fetchGateBlueprint = (projectId) => {
+  return api.get(`${PATH}/blueprint`, { params: { projectId } })
+}
+
+/**
+ * 공사현장별 도면 저장
+ * PUT /gate/blueprint?projectId={projectId}
+ */
+export const saveGateBlueprint = (projectId, payload) => {
+  return api.put(`${PATH}/blueprint`, payload, { params: { projectId } })
+}
+
 /**
  * 게이트 단일 조회
  * GET /gate/{gateId}
