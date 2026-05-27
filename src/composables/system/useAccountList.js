@@ -147,11 +147,12 @@ export function useAccountList() {
     return String(p.name || '').trim() || '—'
   })
 
-  const sortedProjectOptions = computed(() =>
-    [...projectOptions.value].sort((a, b) =>
+  const sortedProjectOptions = computed(() => {
+    const list = Array.isArray(projectOptions.value) ? projectOptions.value : []
+    return [...list].sort((a, b) =>
       parseProjectLabel(a.name).title.localeCompare(parseProjectLabel(b.name).title, 'ko'),
-    ),
-  )
+    )
+  })
 
   function ensureValidProjectRoute() {
     const idx = projectIdxParam.value
@@ -177,8 +178,18 @@ export function useAccountList() {
     router.push({ name: 'hrAccountsSite', params: { projectIdx: String(n) } })
   }
 
+  function normalizeAccountList(raw) {
+    if (Array.isArray(raw)) return raw.slice()
+    if (raw && typeof raw === 'object' && Array.isArray(raw.data)) return raw.data.slice()
+    return []
+  }
+
+  const accountRows = computed(() =>
+    Array.isArray(accounts.value) ? accounts.value : [],
+  )
+
   const fieldAccounts = computed(() =>
-    accounts.value.filter((a) => classify(a) === 'field' && entityBelongsToSelectedSite(a)),
+    accountRows.value.filter((a) => classify(a) === 'field' && entityBelongsToSelectedSite(a)),
   )
 
   /** 현장 총 책임자만 상단 블록 (본사 직영·공종별 목록에서는 제외) */
@@ -203,11 +214,11 @@ export function useAccountList() {
       if (!map.has(label)) map.set(label, [])
       map.get(label).push(acc)
     }
-    const pairs = [...map.entries()]
+    const pairs = [...map.entries()].map(([label, rows]) => [label, Array.isArray(rows) ? rows : []])
     pairs.sort((a, b) => {
       if (a[0] === T.tradeUnassigned) return 1
       if (b[0] === T.tradeUnassigned) return -1
-      return a[0].localeCompare(b[0], 'ko')
+      return String(a[0]).localeCompare(String(b[0]), 'ko')
     })
     return pairs
   })
@@ -564,7 +575,7 @@ export function useAccountList() {
     loading.value = true
     try {
       const list = await getAdminAccounts()
-      accounts.value = Array.isArray(list) ? list.slice() : []
+      accounts.value = normalizeAccountList(list)
     } catch (e) {
       pushToast(e?.message || '계정 목록을 불러오지 못했습니다.', 'danger')
     } finally {
@@ -576,7 +587,7 @@ export function useAccountList() {
     loadingRequests.value = true
     try {
       const list = await getAdminAccountRequests()
-      accountRequests.value = Array.isArray(list) ? list.slice() : []
+      accountRequests.value = normalizeAccountList(list)
     } catch (e) {
       pushToast(e?.message || '요청 목록을 불러오지 못했습니다.', 'danger')
       accountRequests.value = []

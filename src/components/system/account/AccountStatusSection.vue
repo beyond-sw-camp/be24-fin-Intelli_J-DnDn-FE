@@ -28,7 +28,7 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
 
     <div class="border-t border-forena-100/70 bg-white px-4 pb-px pt-3 sm:px-5">
       <div
-        v-if="directorFieldAccounts.length"
+        v-if="(directorFieldAccounts ?? []).length"
         class="mb-5 overflow-hidden rounded-xl border border-slate-200/80"
       >
         <div
@@ -36,13 +36,13 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
         >
           <span class="text-sm font-bold text-forena-900">{{ T.sectionSiteDirectorAccounts }}</span>
           <span class="shrink-0 text-[11px] font-semibold tabular-nums text-forena-600">
-            ({{ directorFieldAccounts.length }})
+            ({{ (directorFieldAccounts ?? []).length }})
           </span>
         </div>
         <div class="overflow-x-auto border-t border-slate-200/70">
           <AccountFieldTable
             :T="T"
-            :rows="directorFieldAccounts"
+            :rows="directorFieldAccounts ?? []"
             :thead-class="accountStatusTheadClass"
             row-key-prefix="dir-"
             :show-empty="false"
@@ -67,7 +67,7 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
           @click="workerAffiliationTab = 'hq'"
         >
           {{ T.workerSubTabHQ }}
-          <span class="ml-1 tabular-nums opacity-90">({{ hqFieldAccounts.length }})</span>
+          <span class="ml-1 tabular-nums opacity-90">({{ (hqFieldAccounts ?? []).length }})</span>
         </button>
         <button
           type="button"
@@ -80,14 +80,14 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
           @click="workerAffiliationTab = 'trade'"
         >
           {{ T.workerSubTabByTrade }}
-          <span class="ml-1 tabular-nums opacity-90">({{ tradeFieldAccounts.length }})</span>
+          <span class="ml-1 tabular-nums opacity-90">({{ (tradeFieldAccounts ?? []).length }})</span>
         </button>
       </div>
 
       <template v-if="workerAffiliationTab === 'hq'">
         <AccountFieldTable
           :T="T"
-          :rows="hqFieldAccounts"
+          :rows="hqFieldAccounts ?? []"
           :thead-class="accountStatusTheadClass"
           @edit="emit('edit', $event)"
           @activate="emit('activate', $event)"
@@ -96,10 +96,10 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
       </template>
 
       <div v-else class="divide-y divide-slate-200/70">
-        <div v-if="!tradeGroupedRows.length" class="px-4 py-10 text-center text-sm text-slate-400">
+        <div v-if="!(tradeGroupedRows ?? []).length" class="px-4 py-10 text-center text-sm text-slate-400">
           표시할 계정이 없습니다.
         </div>
-        <div v-for="[tradeLabel, tradeRows] in tradeGroupedRows" :key="'trade-' + tradeLabel">
+        <div v-for="[tradeLabel, tradeRows] in tradeGroupedRows ?? []" :key="'trade-' + tradeLabel">
           <button
             type="button"
             class="flex w-full items-center justify-between bg-slate-200/55 px-4 py-2.5 text-left text-sm font-bold text-forena-900 transition hover:bg-slate-200/75"
@@ -118,14 +118,14 @@ const emit = defineEmits(['edit', 'activate', 'deactivate', 'toggle-trade-accord
               />
               <span class="truncate">{{ tradeLabel }}</span>
               <span class="text-[11px] font-semibold tabular-nums text-forena-600">
-                ({{ tradeRows.length }})
+                ({{ (tradeRows ?? []).length }})
               </span>
             </div>
           </button>
           <div v-show="tradeAccordionOpen[tradeLabel]" class="bg-white">
             <AccountFieldTable
               :T="T"
-              :rows="tradeRows"
+              :rows="tradeRows ?? []"
               :thead-class="accountStatusTheadClass"
               :show-empty="false"
               @edit="emit('edit', $event)"
