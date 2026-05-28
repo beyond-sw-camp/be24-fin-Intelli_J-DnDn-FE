@@ -73,8 +73,6 @@
 <details open>
 <summary><h2>02. 🛠️ 기술 스택</h2></summary>
 
-DnDn은 Vue.js 기반 프론트엔드와 Spring Boot 기반 백엔드 API를️ 기술 스택</h2></summary>
-
 ### Frontend
 
 | 분류 | 기술 |
