@@ -1,5 +1,91 @@
 # be24-fin-Intelli_J-DnDn-FE
 
+﻿<p align="center">
+  <img src="https://github.com/user-attachments/assets/a20ebab8-eb53-4c7f-9ef3-36533e00f3d2" width="100%"/>
+  <h3 align="center">24시간 운영되는 DnDn24</h3>
+  <p align="center">관리자와 작업자들을 가장 효율적으로 연결하는 건설현장 플랫폼 DnDn을 소개합니다.</p>
+</p>
+
+---
+
+## 👥 팀원
+
+<div align="center">
+
+| **김민규** | **이한별** | **전민주** | **전성훈** | **최승우** |
+| :---: | :---: | :---: | :---: | :---: |
+| <img src="https://avatars.githubusercontent.com/u/244694024?v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/245795542?s=64&v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/153381713?s=64&v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/140137784?s=64&v=4" width="120" style="border-radius:50%"/> |
+| [@luel1018](https://github.com/luel1018) | [@sole0724](https://github.com/sole0724) | [@minju0077](https://github.com/minju0077) | [@1jshun](https://github.com/1jshun) | [@sw-oo](https://github.com/sw-oo) |
+
+</div>
+
+---
+
+## 📌 목차 (Table of Contents)
+### 1. [🔗 바로가기]
+### 2. [🔨 기술 스택]
+### 3. [⚙️ 시스템 아키텍처]
+### 4. [📘 프로젝트 소개]
+### 5. [💻 시나리오]
+
+---
+
+## 🔗 바로가기
+
+| 구분             | 링크                                                                              |
+|:---------------|:----------------------------------------------------------------------------------|
+| **🌐 홈페이지**    | [www.dndn24.kro.kr](https://www.dndn24.kro.kr)                                |
+| **📖 API 명세서** | [Swagger UI]                   |
+| **📖 상세 설명**   | [DnDn WIKI] |
+---
+
+## 🔨️ 기술 스택
+
+### 💻 Development
+| Layer | Technologies |
+| :--- | :--- |
+| **Backend** | ![Java](https://img.shields.io/badge/Java-007396?style=flat-square&logo=java&logoColor=white) ![Spring](https://img.shields.io/badge/Spring-6DB33F?style=flat-square&logo=spring&logoColor=white) ![Spring Security](https://img.shields.io/badge/Spring_Security-6DB33F?style=flat-square&logo=spring-security&logoColor=white) ![JPA](https://img.shields.io/badge/JPA-6DB33F?style=flat-square&logo=hibernate&logoColor=white) |
+| **Frontend** | ![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) ![Vue.js](https://img.shields.io/badge/Vue.js-4FC08D?style=flat-square&logo=vue.js&logoColor=white) |
+| **Database** | ![MariaDB](https://img.shields.io/badge/MariaDB-003545?style=flat-square&logo=mariadb&logoColor=white) ![Longhorn](https://img.shields.io/badge/Longhorn-FFB000?style=flat-square&logo=linux-foundation&logoColor=white) |
+| **External API** | ![AWS S3](https://img.shields.io/badge/AWS_S3-569A31?style=flat-square&logo=amazons3&logoColor=white) ![Portone](https://img.shields.io/badge/Portone-FF6000?style=flat-square&logo=webmoney&logoColor=white) ![OAuth2](https://img.shields.io/badge/OAuth2-EB5424?style=flat-square&logo=auth0&logoColor=white) |
+
+### 🚀 Infrastructure & DevOps
+| Category | Technologies |
+| :--- | :--- |
+| **Orchestration** | ![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white) ![Helm](https://img.shields.io/badge/Helm-0F1628?style=flat-square&logo=helm&logoColor=white) |
+| **CI/CD** | ![Jenkins](https://img.shields.io/badge/Jenkins-D24939?style=flat-square&logo=jenkins&logoColor=white) ![Docker](https://img.shields.io/badge/Docker_Registry-2496ED?style=flat-square&logo=docker&logoColor=white) |
+| **Deployment** | ![Canary](https://img.shields.io/badge/Canary_Deployment-9cf?style=flat-square) ![BlueGreen](https://img.shields.io/badge/Blue--Green_Deployment-brightgreen?style=flat-square) |
+| **Gateway** | ![Nginx Ingress](https://img.shields.io/badge/Nginx_Ingress-009639?style=flat-square&logo=nginx&logoColor=white) |
+| **Monitoring** | ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white) ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat-square&logo=grafana&logoColor=white) ![Jaeger](https://img.shields.io/badge/Jaeger-60D0E4?style=flat-square&logo=jaegertracing&logoColor=white) |
+| **Tools** | ![Git](https://img.shields.io/badge/Git-F05032?style=flat-square&logo=git&logoColor=white) ![Postman](https://img.shields.io/badge/Postman-FF6C37?style=flat-square&logo=postman&logoColor=white) ![Swagger](https://img.shields.io/badge/Swagger-85EA2D?style=flat-square&logo=swagger&logoColor=black) |
+
+---
+
+## ⚙️ 시스템 아키텍처
+
+---
+
+## 📘 프로젝트 소개
+
+DnDn은 작업자들의 상태 및 기타 사항을 반영하여 사고 없이 작업구역에 적절히 자동으로 배치하며, 수많은 사람들을 생성·관리하는 웹 서비스입니다.
+
+사용자는 보다 더 자동화 된 웹 서비스로 편하게 인원들을 관리/조회 할 수 있으며 네~.
+
+또한 기업은 본 서비스를 통해 구직자의 디지털 명함과 포트폴리오를 확인함으로써 지원자의 핵심 역량을 신속하게 파악하고, 이를 기반으로 채용 및 인재 컨택 과정에 활용할 수 있습니다.
+
+---
+
+
+## 🎥 시연
+
+###  **🧑‍🦱 프론트엔드 시연 영상**
+
+###  **🧑‍🦱 백엔드 API 명세서**
+
+---
+
+
+
 
 ### 🛠 무중단 배포 전략 (Blue/Green)
 
