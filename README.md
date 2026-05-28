@@ -14,10 +14,12 @@
 
 | **김민규** | **이한별** | **전민주** | **전성훈** | **최승우** |
 | :---: | :---: | :---: | :---: | :---: |
-| <img src="https://avatars.githubusercontent.com/u/244694024?v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/244694024?v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/245795542?s=64&v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/153381713?s=64&v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/140137784?s=64&v=4" width="120" style="border-radius:50%"/> |
-| [@luel1018](https://github.com/luel1018) | [@sole0724](https://github.com/sole0724) | [@minju0077](https://github.com/minju0077) | [@1jshun](https://github.com/1jshun) | [@sw-oo](https://github.com/sw-oo) |
+| <img src="https://avatars.githubusercontent.com/u/244694024?v=4" width="120" style="border-radius:50%"/> | <img src="https://github.com/user-attachments/assets/6ef50d1f-c6b5-4946-acb5-847bd5e552a0" width="120" style="border-radius:50%"/> | <img src="https://github.com/user-attachments/assets/f675522f-6f1f-4644-87fa-b9b0443b975f" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/153381713?s=64&v=4" width="120" style="border-radius:50%"/> | <img src="https://avatars.githubusercontent.com/u/140137784?s=64&v=4" width="120" style="border-radius:50%"/> |
+| [@luel1018](https://github.com/luel1018) | [@sole0724](https://github.com/sole0714) | [@minju0077](https://github.com/minju0077) | [@1jshun](https://github.com/1jshun) | [@sw-oo](https://github.com/sw-oo) |
 
 </div>
+
+
 
 ---
 
@@ -63,7 +65,8 @@
 
 ## ⚙️ 시스템 아키텍처
 
----
+---<img width="1611" height="1181" alt="dndn 시스템 아키텍처 drawio" src="https://github.com/user-attachments/assets/faf39b0b-aacf-454a-8e34-906e92b36e78" />
+
 
 ## 📘 프로젝트 소개
 
