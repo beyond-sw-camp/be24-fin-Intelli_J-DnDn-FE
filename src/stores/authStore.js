@@ -171,6 +171,9 @@ export const useAuthStore = defineStore('auth', () => {
   /** @type {import('vue').Ref<string>} */
   const trade = ref(saved?.trade || '')
 
+  /** @type {import('vue').Ref<boolean>} */
+  const projectActive = ref(saved?.projectActive !== false)
+
   const isAuthenticated = ref(Boolean(saved?.isAuthenticated))
 
   /** 본사·대시보드만 보기(구 viewer 데모) */
@@ -197,6 +200,7 @@ export const useAuthStore = defineStore('auth', () => {
       projectId: projectId.value,
       siteCode: siteCode.value,
       trade: trade.value,
+      projectActive: projectActive.value,
       isAuthenticated: isAuthenticated.value,
       stayOnLogin: stayOnLogin.value,
       isUpload: isUpload.value,
@@ -267,6 +271,11 @@ export const useAuthStore = defineStore('auth', () => {
   function setProjectIdAndSiteCode(pid, sc) {
     projectId.value = normalizeProjectId(pid)
     siteCode.value = String(sc ?? '').trim()
+    persistAuth()
+  }
+
+  function setProjectActive(value) {
+    projectActive.value = value !== false
     persistAuth()
   }
 
@@ -345,6 +354,7 @@ export const useAuthStore = defineStore('auth', () => {
     projectId.value = null
     siteCode.value = ''
     trade.value = ''
+    projectActive.value = true
     localStorage.removeItem('accessToken')
     localStorage.removeItem(AUTH_STORAGE_KEY)
   }
@@ -357,6 +367,7 @@ export const useAuthStore = defineStore('auth', () => {
     projectId,
     siteCode,
     trade,
+    projectActive,
     roleLabel,
     isAdminRole,
     isAuthenticated,
@@ -367,6 +378,7 @@ export const useAuthStore = defineStore('auth', () => {
     markInitialUploadComplete,
     setProjectId,
     setProjectIdAndSiteCode,
+    setProjectActive,
     loginDemo,
     logout,
     persistAuth,

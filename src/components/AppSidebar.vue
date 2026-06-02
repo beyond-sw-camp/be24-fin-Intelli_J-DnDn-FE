@@ -111,7 +111,8 @@ function mapProjectRow(raw) {
   if (!Number.isFinite(numIdx)) return null
   const rawName = typeof raw?.name === 'string' ? raw.name.trim() : ''
   const name = rawName || `현장 #${numIdx}`
-  return { id: numIdx, name }
+  const active = raw?.active !== false
+  return { id: numIdx, name, active }
 }
 
 async function loadProjectList() {
@@ -135,24 +136,26 @@ async function loadProjectList() {
  * 프로젝트 목록을 받아온 뒤 자동으로 siteCode를 채워 API 호출이 정상 동작하게 합니다.
  * - projectId 없음 → 첫 번째 현장 자동 선택
  * - projectId 있지만 siteCode 없음 → 프로젝트명에서 [코드] 추출 후 적용
+ * - 모든 역할에서 현장 활성화 여부 동기화
  */
 function autoSyncSiteCode() {
-  if (!canSwitchSites.value || projectList.value.length === 0) return
+  if (projectList.value.length === 0) return
   const currentPid = Number(auth.projectId)
   const hasValidProject = Number.isFinite(currentPid) && currentPid > 0
 
-  if (!hasValidProject) {
+  if (canSwitchSites.value && !hasValidProject) {
     onSelectProject(projectList.value[0])
     return
   }
 
-  if (!auth.siteCode) {
-    const found = projectList.value.find((p) => p.id === currentPid)
-    if (found) {
+  const found = projectList.value.find((p) => p.id === currentPid)
+  if (found) {
+    if (canSwitchSites.value && !auth.siteCode) {
       const m = /^\[([^\]]+)\]/.exec(String(found.name || '').trim())
       const derivedSiteCode = m ? m[1].trim() : ''
       auth.setProjectIdAndSiteCode(found.id, derivedSiteCode)
     }
+    auth.setProjectActive(found.active ?? true)
   }
 }
 
@@ -187,6 +190,7 @@ function onSelectProject(project) {
   const m = /^\[([^\]]+)\]/.exec(String(project.name || '').trim())
   const newSiteCode = m ? m[1].trim() : ''
   auth.setProjectIdAndSiteCode(project.id, newSiteCode)
+  auth.setProjectActive(project.active ?? true)
 }
 
 function onLogout() {
@@ -244,6 +248,10 @@ const L = {
 const sidebarSiteTitle = computed(
   () =>
     currentProjectName.value || (projectListLoading.value ? L.brandLoading : L.brandPlaceholder),
+)
+
+const isCurrentProjectInactive = computed(
+  () => Boolean(auth.projectId) && !auth.projectActive,
 )
 
 const scheduleNavAll = [
@@ -575,6 +583,15 @@ function linkClassCollapsed(item) {
           </div>
         </Teleport>
       </div>
+    </div>
+
+    <!-- 비활성 현장 안내 배너 -->
+    <div
+      v-if="sidebarExpanded && isCurrentProjectInactive"
+      class="mx-1 mt-2 shrink-0 rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2"
+    >
+      <p class="text-xs font-bold text-amber-700">비활성화된 현장</p>
+      <p class="mt-0.5 text-[11px] leading-snug text-amber-600">읽기 전용 상태입니다. 데이터 수정이 제한됩니다.</p>
     </div>
 
     <!-- 네비 영역과 동일한 구분선 -->
