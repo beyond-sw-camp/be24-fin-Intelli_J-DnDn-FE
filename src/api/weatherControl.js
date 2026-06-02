@@ -9,11 +9,11 @@ export async function fetchWeatherDashboard(reportDate) {
   })
 }
 
-export async function fetchWeatherWorkOrderEquipments(reportDate) {
-  const response = await getGateEquipments(reportDate)
+export async function fetchWeatherWorkOrderEquipments(reportDate, projectId) {
+  const response = await getGateEquipments(reportDate, projectId, { includeNoEquipment: true })
   return Array.isArray(response) ? response : []
 }
 
-export async function fetchWeatherAiAnalysis(reportDate) {
-  return analyzeWeatherRisk(reportDate)
+export async function fetchWeatherAiAnalysis(reportDate, projectId) {
+  return analyzeWeatherRisk(reportDate, projectId)
 }

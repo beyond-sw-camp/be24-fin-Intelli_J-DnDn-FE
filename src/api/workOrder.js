@@ -35,8 +35,10 @@ export const approveWorkOrder = async (workOrderId) => {
 }
 
 /* 중장비 입출차 현황 페이지용 — 게이트별 투입 장비 목록 조회*/
-export const getGateEquipments = async (targetDate = null) => {
+export const getGateEquipments = async (targetDate = null, projectId = null, options = {}) => {
   const params = {}
   if (targetDate) params.targetDate = targetDate
+  if (projectId) params.projectId = projectId
+  if (options.includeNoEquipment) params.includeNoEquipment = true
   return await api.get(`${BASE_URL}/gate-equipments`, { params })
 }

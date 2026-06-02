@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useCurrentProject } from '@/composables/useCurrentProject.js'
 import WeatherControlHeader from '@/components/weather/WeatherControlHeader.vue'
 import WeatherSummaryCards from '@/components/weather/WeatherSummaryCards.vue'
 import WeatherLiveChecklist from '@/components/weather/WeatherLiveChecklist.vue'
@@ -34,6 +35,8 @@ import {
   toWeatherRiskItem,
 } from '@/utils/weatherControlMapper.js'
 
+const { currentProjectId } = useCurrentProject()
+
 const reportDate = ref(getTodayDateText())
 const loading = ref(false)
 const dashboard = ref(null)
@@ -54,7 +57,7 @@ const isFutureReportDate = computed(() => reportDate.value > todayDateText.value
 const hasWorkOrders = computed(() => workOrderEquipments.value.length > 0)
 
 const sourceLabel = computed(() => getSourceLabel(analysis.value?.sourceType))
-const weatherAlertLabels = computed(() => getWeatherAlertLabels(dashboard.value))
+const weatherAlertLabels = computed(() => getWeatherAlertLabels(dashboard.value, analysis.value))
 const rainPercent = computed(() => calculateRainPercent(analysis.value, rain.value))
 const rainBarClass = computed(() => getRainBarClass(rainPercent.value))
 const rainNoteDetailed = computed(() => getRainNoteDetailed(rainPercent.value, weatherAlertLabels.value))
@@ -131,7 +134,7 @@ async function loadWorkOrders() {
   }
 
   try {
-    workOrderEquipments.value = await fetchWeatherWorkOrderEquipments(reportDate.value)
+    workOrderEquipments.value = await fetchWeatherWorkOrderEquipments(reportDate.value, currentProjectId.value)
   } catch (error) {
     console.error('작업지시 장비 조회 실패:', error)
     workOrderEquipments.value = []
@@ -145,7 +148,7 @@ async function loadWeatherAiAnalysis() {
   }
 
   try {
-    aiAnalysisResult.value = await fetchWeatherAiAnalysis(reportDate.value)
+    aiAnalysisResult.value = await fetchWeatherAiAnalysis(reportDate.value, currentProjectId.value)
   } catch (error) {
     console.error('기상 AI 분석 실패:', error)
     aiAnalysisResult.value = null
@@ -175,6 +178,10 @@ onMounted(() => {
 })
 
 watch(reportDate, () => {
+  loadPageData()
+})
+
+watch(currentProjectId, () => {
   loadPageData()
 })
 

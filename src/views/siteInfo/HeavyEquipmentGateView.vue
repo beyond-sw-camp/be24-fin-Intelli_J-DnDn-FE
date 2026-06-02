@@ -147,7 +147,7 @@ async function loadTodayEquipments() {
   isEquipmentLoading.value = true
 
   try {
-    workOrderEquipments.value = await fetchGateWorkOrderEquipments(targetDate.value)
+    workOrderEquipments.value = await fetchGateWorkOrderEquipments(targetDate.value, blueprintProjectId.value)
   } catch (error) {
     console.error('작업지시서 장비 조회 실패', error)
     workOrderEquipments.value = []
@@ -175,9 +175,6 @@ async function loadPageData() {
   await Promise.all([loadGates(), loadTodayEquipments()])
 }
 
-function updateTargetDate(value) {
-  targetDate.value = value
-}
 
 async function updateManpower(delta) {
   if (!selectedGate.value) return
@@ -441,9 +438,6 @@ onMounted(() => {
 
 watch(currentProjectId, () => {
   loadBlueprintFromServer()
-})
-
-watch(targetDate, () => {
   loadTodayEquipments()
 })
 </script>
@@ -454,7 +448,6 @@ watch(targetDate, () => {
       :target-date="targetDate"
       :equipment-count="todayEquipments.length"
       :total-assigned-equipment-count="totalAssignedEquipmentCount"
-      @update:target-date="updateTargetDate"
     />
 
     <input

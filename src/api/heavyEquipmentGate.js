@@ -65,7 +65,7 @@ export async function deleteHeavyEquipmentGate(gateId) {
   return deleteGate(gateId)
 }
 
-export async function fetchGateWorkOrderEquipments(targetDate) {
-  const response = await getGateEquipments(targetDate)
+export async function fetchGateWorkOrderEquipments(targetDate, projectId) {
+  const response = await getGateEquipments(targetDate, projectId)
   return Array.isArray(response) ? response : []
 }

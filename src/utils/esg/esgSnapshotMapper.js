@@ -159,7 +159,15 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
 }
 
 function selectSiteScoreZones(zones) {
-  return normalizeList(zones)
+  const workZones = normalizeList(zones).filter((zone) => {
+    const zoneType = String(zone?.zoneType ?? '').trim().toLowerCase()
+    const zoneName = String(zone?.name ?? zone?.zoneName ?? '').trim()
+    if (zoneType === 'support' || zoneType === 'outdoor') return false
+    if (['세척장', '민원 구역', '민원구역'].includes(zoneName)) return false
+    return zoneType === 'work' || Number(zone?.equipmentCount ?? zone?.metrics?.totalEquipmentCount ?? 0) > 0
+  })
+
+  return workZones
 }
 
 export function calculateSafetyDays(project, reportDate) {

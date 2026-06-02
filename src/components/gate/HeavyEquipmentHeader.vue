@@ -15,14 +15,6 @@ defineProps({
     default: 0,
   },
 })
-
-const emit = defineEmits({
-  'update:targetDate': (value) => typeof value === 'string',
-})
-
-function updateTargetDate(event) {
-  emit('update:targetDate', event.target.value)
-}
 </script>
 
 <template>
@@ -33,16 +25,10 @@ function updateTargetDate(event) {
     </div>
 
     <div class="flex flex-wrap items-center gap-2">
-      <label class="flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white pl-2.5">
+      <span class="inline-flex items-center gap-1.5 rounded-lg border border-forena-200 bg-white px-3 py-1.5 text-xs font-bold text-forena-700">
         <CalendarDays class="h-3.5 w-3.5 text-forena-400" />
-        <span class="text-[11px] font-bold uppercase tracking-wide text-forena-400">기준 날짜</span>
-        <input
-          :value="targetDate"
-          type="date"
-          class="rounded-r-lg border-0 border-l border-forena-100 bg-white px-3 py-1.5 text-xs font-bold text-forena-700 outline-none focus:bg-forena-50"
-          @change="updateTargetDate"
-        />
-      </label>
+        금일 기준 {{ targetDate }}
+      </span>
 
       <span
         class="inline-flex h-fit items-center rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-bold text-sky-700"

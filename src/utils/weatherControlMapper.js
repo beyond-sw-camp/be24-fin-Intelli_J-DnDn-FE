@@ -168,7 +168,7 @@ export function getRiskLevel(analysis) {
   if (!analysis) return { label: '데이터 없음', tone: 'text-slate-600 bg-slate-100 border-slate-200' }
 
   let score = 0
-  if (analysis.hasRain || (analysis.precipitationProbability ?? 0) >= 60) score += 2
+  if (hasMeaningfulRain(analysis) || (analysis.precipitationProbability ?? 0) >= 60) score += 2
   if (analysis.windRisk || (analysis.maxWindSpeed ?? 0) >= 8) score += 2
   if (analysis.hasSnow) score += 2
   if (analysis.heatRisk) score += 1
@@ -187,6 +187,17 @@ export function normalizeText(value) {
 export function includesAny(text, keywords) {
   const normalized = normalizeText(text)
   return keywords.some((keyword) => normalized.includes(normalizeText(keyword)))
+}
+
+function toSafeNumber(value, defaultValue = 0) {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : defaultValue
+}
+
+function hasMeaningfulRain(analysis, rainPercent = null) {
+  if (!analysis) return false
+  const rain = toSafeNumber(rainPercent ?? analysis?.precipitationProbability, 0)
+  return Boolean(analysis?.hasRain) && rain >= 20
 }
 
 const LEVEL_ORDER = { 경고: 0, 위험: 0, 제한: 0, 주의: 1, 보통: 2, 양호: 3 }
@@ -216,11 +227,42 @@ function cleanAlertLabel(value) {
   return text
 }
 
-export function getWeatherAlertLabels(dashboard) {
+function shouldKeepWeatherAlertLabel(label, analysis = null) {
+  if (!label) return false
+  if (!analysis) return true
+
+  const rain = Number(analysis?.precipitationProbability ?? 0)
+  const wind = Number(analysis?.maxWindSpeed ?? 0)
+  const fineDust = Number(analysis?.fineDustValue ?? 0)
+
+  if (includesAny(label, ['호우', '우천', '비'])) {
+    return hasMeaningfulRain(analysis, rain) || rain >= 40
+  }
+  if (includesAny(label, ['강풍'])) {
+    return wind >= 8
+  }
+  if (includesAny(label, ['대설', '눈'])) {
+    return Boolean(analysis?.hasSnow)
+  }
+  if (includesAny(label, ['폭염'])) {
+    return Boolean(analysis?.heatRisk) || Number(analysis?.maxTemperature ?? 0) >= 33
+  }
+  if (includesAny(label, ['한파'])) {
+    return Boolean(analysis?.coldRisk) || Number(analysis?.minTemperature ?? 99) <= -5
+  }
+  if (includesAny(label, ['미세먼지', '황사'])) {
+    return fineDust >= 80
+  }
+
+  return true
+}
+
+export function getWeatherAlertLabels(dashboard, analysis = null) {
   const alerts = Array.isArray(dashboard?.alerts) ? dashboard.alerts : []
   const labels = alerts
     .map((alert) => cleanAlertLabel(`${alert?.title || ''} ${alert?.message || ''}`))
     .filter(Boolean)
+    .filter((label) => shouldKeepWeatherAlertLabel(label, analysis))
 
   return [...new Set(labels)]
 }
@@ -357,7 +399,7 @@ export function buildEquipmentRisksFromWorkOrders(analysis, equipments) {
       })
     }
 
-    if ((analysis.hasRain || rain >= 60 || analysis.hasSnow) && includesAny(name, ['굴착', '덤프', '트럭', 'dump', 'truck', 'dump_truck', '펌프', '지게차', '카고', '로더'])) {
+    if ((hasMeaningfulRain(analysis, rain) || rain >= 60 || analysis.hasSnow) && includesAny(name, ['굴착', '덤프', '트럭', 'dump', 'truck', 'dump_truck', '펌프', '지게차', '카고', '로더'])) {
       result.push({
         badge: 'AI',
         title: `${name} 진입 동선 점검`,
@@ -483,6 +525,7 @@ export function buildPlanRisksFromWorkOrders(analysis, equipments) {
   const rain = analysis.precipitationProbability ?? 0
   const wind = analysis.maxWindSpeed ?? 0
   const fineDust = analysis.fineDustValue ?? 0
+  const effectiveHasRain = hasMeaningfulRain(analysis, rain)
   const grouped = new Map()
 
   equipments.forEach((equipment) => {
@@ -502,7 +545,7 @@ export function buildPlanRisksFromWorkOrders(analysis, equipments) {
     const workText = `${order.title} ${order.workLocation} ${order.workDetail}`
     const targetText = workText
 
-    if ((analysis.hasRain || rain >= 60) && includesAny(workText, ['콘크리트', '타설', '도장', '방수', '외부', '굴착', '철근', '벽체', '부대토목', 'landscape', '조경', '운반', '자재'])) {
+    if ((effectiveHasRain || rain >= 60) && includesAny(workText, ['콘크리트', '타설', '도장', '방수', '외부', '굴착', '철근', '벽체', '부대토목', 'landscape', '조경', '운반', '자재'])) {
       const detail = buildRainPlanRiskDetail(order, targetText)
       result.push({
         badge: 'AI',
@@ -547,7 +590,8 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions =
   const rain = analysis.precipitationProbability ?? 0
   const wind = analysis.maxWindSpeed ?? 0
   const fineDust = analysis.fineDustValue ?? 0
-  const alertLabels = getWeatherAlertLabels(dashboard)
+  const alertLabels = getWeatherAlertLabels(dashboard, analysis)
+  const effectiveHasRain = hasMeaningfulRain(analysis, rain)
   const hasHeavyRainWarning = hasWeatherAlert(alertLabels, ['호우'])
   const hasStrongWindWarning = hasWeatherAlert(alertLabels, ['강풍'])
   const nowHour = new Date().getHours()
@@ -588,7 +632,7 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions =
     })
   }
 
-  if (hasHeavyRainWarning || rain >= 60 || analysis.hasRain) {
+  if (hasHeavyRainWarning || rain >= 60 || effectiveHasRain) {
     actions.push({
       id: 'rain-drain-main',
       icon: 'umbrella',
@@ -661,7 +705,7 @@ export function generateLiveRiskActions(analysis, dashboard, aiLiveRiskActions =
     })
   }
 
-  return mergeLiveRiskActions(actions).slice(0, 6)
+  return mergeLiveRiskActions(actions, aiLiveRiskActions).slice(0, 6)
 }
 
 export function getThreeDayForecast(forecastDays, selectedDateText) {

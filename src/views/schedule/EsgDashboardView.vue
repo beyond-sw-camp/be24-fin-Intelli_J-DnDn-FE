@@ -26,7 +26,6 @@ import { getReportsByDate } from '@/api/report.js'
 import { fetchWeatherDashboard } from '@/api/weatherControl.js'
 import { getStaffingWorkerPool, getStaffingZones } from '@/api/staffing.js'
 import { getGateEquipments } from '@/api/workOrder.js'
-import { fetchWorkPlansByProject } from '@/api/workplan.js'
 import { fetchWorkerList } from '@/api/worker.js'
 import { useAuthStore } from '@/stores/authStore.js'
 import EsgDailySummaryTable from '@/components/esg/EsgDailySummaryTable.vue'
@@ -84,6 +83,7 @@ const backendMetricInputs = ref([])
 const sites = ref([])
 
 const equipmentsData = ref([])
+const equipmentScopeProjectId = ref(null)
 const workPlansData = ref([])
 const reportsData = ref([])
 const workersData = ref([])
@@ -135,11 +135,11 @@ const gateEquipmentsForCurrentProject = computed(() => {
       return String(equipment.siteIdx) === String(currentProjectId.value)
     }
 
-    if (authStore.projectId != null && currentProjectId.value != null) {
-      return String(authStore.projectId) === String(currentProjectId.value)
+    if (equipmentScopeProjectId.value != null && currentProjectId.value != null) {
+      return String(equipmentScopeProjectId.value) === String(currentProjectId.value)
     }
 
-    return false
+    return Boolean(currentProjectId.value)
   })
 })
 
@@ -148,12 +148,7 @@ const workPlanEquipmentsForCurrentProject = computed(() => {
   return buildWorkPlanEquipmentRows(workPlansData.value, reportDate.value)
 })
 
-const filteredEquipments = computed(() => {
-  if (gateEquipmentsForCurrentProject.value.length) {
-    return gateEquipmentsForCurrentProject.value
-  }
-  return workPlanEquipmentsForCurrentProject.value
-})
+const filteredEquipments = computed(() => gateEquipmentsForCurrentProject.value)
 
 const realMissionRate = computed(() => {
   const equipments = filteredEquipments.value
@@ -186,17 +181,24 @@ const dashboardContext = computed(() => ({
 }))
 
 const siteZones = computed(() => {
-  if (isPastReportDate.value && backendCurrentZoneSnapshots.value.length) {
-    return buildSnapshotZones(backendCurrentZoneSnapshots.value)
-  }
-
-  const zones = buildDashboardZones(filteredEquipments.value, dashboardContext.value)
+  const runtimeZones = buildDashboardZones(filteredEquipments.value, dashboardContext.value)
 
   if (isFutureReportDate.value) {
-    return zones.map((zone) => zeroizeZoneScore(zone))
+    return rankVisibleZones(runtimeZones.map((zone) => zeroizeZoneScore(zone)))
   }
 
-  return mergeRuntimeZonesWithSnapshot(zones, backendCurrentZoneSnapshots.value)
+  if (isPastReportDate.value) {
+    if (backendCurrentZoneSnapshots.value.length) {
+      return buildSnapshotZones(backendCurrentZoneSnapshots.value)
+    }
+    return rankVisibleZones(runtimeZones)
+  }
+
+  if (backendCurrentZoneSnapshots.value.length) {
+    return mergeRuntimeZonesWithSnapshot(runtimeZones, backendCurrentZoneSnapshots.value)
+  }
+
+  return rankVisibleZones(runtimeZones)
 })
 
 const selectedZone = computed(() => {
@@ -246,13 +248,14 @@ const currentSiteSummary = computed(() => {
     }
   }
 
-  const dailyAverageScore = zones.length
+  const scoreTargetZones = selectSiteScoreZones(zones)
+  const dailyAverageScore = scoreTargetZones.length
     ? Math.round(
-        (zones.reduce(
+        (scoreTargetZones.reduce(
           (sum, zone) => sum + Number(zone.dailyScore ?? zone.metrics?.totalScore ?? 0),
           0,
         ) /
-          zones.length) *
+          scoreTargetZones.length) *
           10,
       ) / 10
     : 0
@@ -516,21 +519,17 @@ async function runDashboardLoad() {
   }
 
   await Promise.all([loadDashboard(), loadEquipments(), loadReports(), loadWorkers()])
-
-  if (gateEquipmentsForCurrentProject.value.length) {
-    workPlansData.value = []
-  } else {
-    await loadWorkPlans()
-  }
+  workPlansData.value = []
 
   await persistCurrentSnapshot()
-  // 오늘 날짜: persistCurrentSnapshot 저장 후 서버에 반영된 스냅샷을 반영하기 위해 재조회
+  // 저장 후 서버 기준 누적점수/층수와 구역 스냅샷을 다시 반영한다.
   await loadEsgDashboardMeta(false)
   lastUpdatedAt.value = formatTime(new Date())
 }
 
 function clearOperationalData() {
   equipmentsData.value = []
+  equipmentScopeProjectId.value = null
   workPlansData.value = []
   reportsData.value = []
   workersData.value = []
@@ -624,28 +623,33 @@ async function loadDashboard() {
 }
 
 async function loadEquipments() {
+  if (!currentProjectId.value) {
+    equipmentsData.value = []
+    equipmentScopeProjectId.value = null
+    return
+  }
+
+  const scopedProjectId = currentProjectId.value
+
   try {
-    const response = await getGateEquipments(reportDate.value)
+    const response = await getGateEquipments(reportDate.value, scopedProjectId)
+
+    if (String(scopedProjectId) !== String(currentProjectId.value)) {
+      equipmentsData.value = []
+      equipmentScopeProjectId.value = null
+      return
+    }
+
+    equipmentScopeProjectId.value = scopedProjectId
     equipmentsData.value = normalizeArray(response)
   } catch {
     equipmentsData.value = []
+    equipmentScopeProjectId.value = null
   }
 }
 
 async function loadWorkPlans() {
-  if (!currentProjectId.value) {
-    workPlansData.value = []
-    return
-  }
-
-  try {
-    const response = await fetchWorkPlansByProject(currentProjectId.value, {
-      includeAllTrades: true,
-    })
-    workPlansData.value = normalizeArray(response)
-  } catch {
-    workPlansData.value = []
-  }
+  workPlansData.value = []
 }
 
 async function loadReports() {
@@ -708,16 +712,18 @@ function resolveSummaryZoneStatus(score, risk) {
 }
 
 function buildSnapshotZones(zoneSnapshots) {
-  return normalizeArray(zoneSnapshots).map((snapshot, index) => {
+  return rankVisibleZones(normalizeArray(zoneSnapshots).map((snapshot, index) => {
     const score = normalizePositiveNumber(snapshot.totalScore, 0)
     const metrics = buildSnapshotMetrics(snapshot)
+    const dailyScore = normalizePositiveNumber(metrics.totalScore, 0)
 
     return {
       id: `snapshot-zone-${snapshot.idx ?? index}`,
       siteId: String(snapshot.projectId ?? currentProjectId.value ?? ''),
       name: firstText(snapshot.zoneName, `관리구역 ${index + 1}`),
-      type: firstText(snapshot.zoneType, '저장된 ESG 작업구역'),
+      type: firstText(resolveSnapshotJsonText(snapshot, 'type'), snapshot.zoneType, '저장된 ESG 작업구역'),
       score,
+      dailyScore,
       level: snapshot.level ?? resolveEsgFloor(score, ESG_ZONE_FLOOR_POINT),
       rank: index + 1,
       carbon: normalizePositiveNumber(snapshot.carbonKg, 0),
@@ -725,15 +731,15 @@ function buildSnapshotZones(zoneSnapshots) {
       risk: normalizePositiveNumber(snapshot.riskCount, 0),
       missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
       lead: 0,
-      status: resolveSummaryZoneStatus(score, normalizePositiveNumber(snapshot.riskCount, 0)),
+      status: resolveSummaryZoneStatus(dailyScore, normalizePositiveNumber(snapshot.riskCount, 0)),
       equipmentCount: normalizePositiveNumber(snapshot.equipmentCount, 0),
       highRiskEquipmentCount: normalizePositiveNumber(snapshot.highRiskEquipmentCount, 0),
-      equipmentSummary: '',
-      gateSummary: '',
+      equipmentSummary: resolveSnapshotJsonText(snapshot, 'equipmentSummary'),
+      gateSummary: resolveSnapshotJsonText(snapshot, 'gateSummary'),
       zoneType: snapshot.zoneType ?? 'work',
       metrics,
     }
-  })
+  }))
 }
 
 function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
@@ -745,14 +751,20 @@ function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
   const runtimeZones = normalizeArray(zones).map((zone) => {
     const zoneName = String(zone.name || '').trim()
     const snapshot = cumulativeByName.get(zoneName)
-    const dailyScore = normalizePositiveNumber(zone.score ?? zone.metrics?.totalScore, 0)
-    const cumulativeScore = normalizeCumulativeScore(snapshot?.totalScore ?? dailyScore)
+    const dailyScore = calculateDailyScore(zone)
+    const resetProgress = shouldResetProgressForRuntimeZone(zone, dailyScore)
+    const cumulativeScore = resetProgress
+      ? 0
+      : normalizeCumulativeScore(snapshot?.totalScore ?? zone.score ?? dailyScore)
 
     return {
       ...zone,
       dailyScore,
       score: cumulativeScore,
-      level: snapshot?.level ?? resolveEsgFloor(cumulativeScore, ESG_ZONE_FLOOR_POINT),
+      level: resetProgress
+        ? 0
+        : snapshot?.level ?? resolveEsgFloor(cumulativeScore, ESG_ZONE_FLOOR_POINT),
+      status: resetProgress ? '대기' : zone.status,
     }
   })
 
@@ -761,12 +773,59 @@ function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
   )
   const snapshotOnlyZones = buildSnapshotZones(snapshots)
     .filter((zone) => !runtimeZoneNames.has(String(zone.name || '').trim()))
-    .map((zone) => ({
-      ...zone,
-      dailyScore: normalizePositiveNumber(zone.metrics?.totalScore, 0),
-    }))
+    .map((zone) => {
+      const dailyScore = calculateDailyScore(zone)
+      const resetProgress = shouldResetProgressForRuntimeZone(zone, dailyScore)
+
+      return resetProgress
+        ? zeroizeZoneScore({ ...zone, dailyScore: 0, score: 0, level: 0 })
+        : {
+            ...zone,
+            dailyScore,
+          }
+    })
 
   return rankVisibleZones([...runtimeZones, ...snapshotOnlyZones])
+}
+
+function calculateDailyScore(zone) {
+  const metrics = zone?.metrics ?? {}
+  const environmentScore = normalizePositiveNumber(metrics.environmentScore, 0)
+  const socialScore = normalizePositiveNumber(metrics.socialScore, 0)
+  const governanceScore = normalizePositiveNumber(metrics.governanceScore, 0)
+
+  return Math.round((environmentScore * 0.5 + socialScore * 0.3 + governanceScore * 0.2) * 10) / 10
+}
+
+function shouldResetProgressForRuntimeZone(zone, dailyScore = calculateDailyScore(zone)) {
+  if (!zone) return true
+
+  const zoneType = String(zone.zoneType ?? '').trim().toLowerCase()
+  const zoneName = String(zone.name ?? zone.zoneName ?? '').trim()
+  const resettableZone =
+    zoneType === 'support' ||
+    zoneType === 'outdoor' ||
+    ['세척장', '민원 구역', '민원구역'].includes(zoneName)
+
+  if (!resettableZone) return false
+
+  const metrics = zone.metrics ?? {}
+  const hasOperationalData =
+    dailyScore > 0 ||
+    metrics.supportOperationActive === true ||
+    normalizePositiveNumber(zone.equipmentCount ?? metrics.totalEquipmentCount, 0) > 0 ||
+    normalizePositiveNumber(zone.highRiskEquipmentCount ?? metrics.highRiskEquipmentCount, 0) > 0 ||
+    normalizePositiveNumber(zone.risk ?? metrics.operatingRisk ?? metrics.weatherRiskCount, 0) > 0 ||
+    normalizePositiveNumber(zone.missionRate ?? metrics.missionRate, 0) > 0 ||
+    normalizePositiveNumber(metrics.reportCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.complaintCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.complaintResolvedCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.workerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.assignedWorkerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.requiredWorkerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.trainedWorkerCount, 0) > 0
+
+  return !hasOperationalData
 }
 
 function rankVisibleZones(zones) {
@@ -781,14 +840,69 @@ function rankVisibleZones(zones) {
 }
 
 function buildSnapshotMetrics(snapshot) {
-  const environmentScore = normalizePositiveNumber(snapshot.environmentScore, 0)
-  const socialScore = normalizePositiveNumber(snapshot.socialScore, 0)
-  const governanceScore = normalizePositiveNumber(snapshot.governanceScore, 0)
-  const totalScore = normalizePositiveNumber(snapshot.totalScore, 0)
+  const storedMetrics = readSnapshotMetrics(snapshot)
+  const environmentScore = normalizePositiveNumber(snapshot.environmentScore, storedMetrics.environmentScore ?? 0)
+  const socialScore = normalizePositiveNumber(snapshot.socialScore, storedMetrics.socialScore ?? 0)
+  const governanceScore = normalizePositiveNumber(snapshot.governanceScore, storedMetrics.governanceScore ?? 0)
+  const calculatedDailyScore = Math.round(
+    (environmentScore * 0.5 + socialScore * 0.3 + governanceScore * 0.2) * 10,
+  ) / 10
+  const totalScore = calculatedDailyScore
 
   return {
-    totalEquipmentCount: normalizePositiveNumber(snapshot.equipmentCount, 0),
-    highRiskEquipmentCount: normalizePositiveNumber(snapshot.highRiskEquipmentCount, 0),
+    ...storedMetrics,
+    totalEquipmentCount: normalizePositiveNumber(storedMetrics.totalEquipmentCount, snapshot.equipmentCount ?? 0),
+    highRiskEquipmentCount: normalizePositiveNumber(storedMetrics.highRiskEquipmentCount, snapshot.highRiskEquipmentCount ?? 0),
+    weatherRiskCount: normalizePositiveNumber(storedMetrics.weatherRiskCount, snapshot.riskCount ?? 0),
+    missionRate: normalizePositiveNumber(storedMetrics.missionRate, snapshot.missionRate ?? 0),
+    estimatedCarbonKg: normalizePositiveNumber(storedMetrics.estimatedCarbonKg, snapshot.carbonKg ?? 0),
+    powerSavingKwh: normalizePositiveNumber(storedMetrics.powerSavingKwh, snapshot.powerSavingKwh ?? 0),
+    safetyDays: safetyDays.value,
+    environmentScore,
+    socialScore,
+    governanceScore,
+    totalScore,
+    operatingRisk: normalizePositiveNumber(storedMetrics.operatingRisk, snapshot.riskCount ?? 0),
+  }
+}
+
+function readSnapshotJson(snapshot) {
+  if (!snapshot?.snapshotJson) return {}
+  try {
+    return JSON.parse(snapshot.snapshotJson)
+  } catch {
+    return {}
+  }
+}
+
+function readSnapshotMetrics(snapshot) {
+  const parsed = readSnapshotJson(snapshot)
+  return parsed && typeof parsed.metrics === 'object' && parsed.metrics !== null ? parsed.metrics : {}
+}
+
+function resolveSnapshotJsonText(snapshot, key) {
+  const parsed = readSnapshotJson(snapshot)
+  return firstText(parsed?.[key])
+}
+
+function isSiteScoreZone(zone) {
+  const zoneType = String(zone?.zoneType ?? '').trim().toLowerCase()
+  if (zoneType === 'support' || zoneType === 'outdoor') return false
+  const name = String(zone?.name ?? '').trim()
+  if (['세척장', '민원 구역', '민원구역'].includes(name)) return false
+  return zoneType === 'work' || Number(zone?.equipmentCount ?? zone?.metrics?.totalEquipmentCount ?? 0) > 0
+}
+
+function selectSiteScoreZones(zones) {
+  return normalizeArray(zones).filter(isSiteScoreZone)
+}
+
+function zeroizeZoneScore(zone) {
+  const metrics = {
+    ...(zone.metrics ?? {}),
+    supportOperationActive: false,
+    totalEquipmentCount: 0,
+    highRiskEquipmentCount: 0,
     washTargetCount: 0,
     workLocationCount: 0,
     gateCount: 0,
@@ -796,52 +910,23 @@ function buildSnapshotMetrics(snapshot) {
     maxGateEquipmentCount: 0,
     gateConcentrationRate: 0,
     gateCongestionRisk: 0,
-    idleReductionScore: environmentScore,
     dustWorkCount: 0,
-    weatherRiskCount: normalizePositiveNumber(snapshot.riskCount, 0),
-    missionRate: normalizePositiveNumber(snapshot.missionRate, 0),
-    rainPercent: 0,
-    windSpeed: 0,
-    fineDustValue: 0,
-    fineDustRiskLevel: 0,
-    carbonLoadIndex: 0,
-    estimatedCarbonKg: normalizePositiveNumber(snapshot.carbonKg, 0),
-    carbonScore: environmentScore,
-    estimatedWashWaterLiters: 0,
-    washWaterDemandRisk: 0,
-    waterScore: environmentScore,
-    fineDustScore: environmentScore,
-    powerPeakRisk: 0,
-    powerSavingKwh: normalizePositiveNumber(snapshot.powerSavingKwh, 0),
-    powerScore: environmentScore,
-    staffingRate: socialScore,
-    safetyEducationRate: socialScore,
-    weatherProtectionScore: socialScore,
-    routeSafetyScore: socialScore,
-    reportRate: governanceScore,
-    actionTrackingRate: governanceScore,
-    dataLinkRate: governanceScore,
-    missingCheckCount: 0,
-    checkScore: governanceScore,
-    safetyDays: safetyDays.value,
+    weatherRiskCount: 0,
+    operatingRisk: 0,
     workerCount: 0,
     assignedWorkerCount: 0,
+    requiredWorkerCount: 0,
     trainedWorkerCount: 0,
-    environmentScore,
-    socialScore,
-    governanceScore,
-    totalScore,
-    operatingRisk: normalizePositiveNumber(snapshot.riskCount, 0),
-  }
-}
-
-function zeroizeZoneScore(zone) {
-  const metrics = {
-    ...(zone.metrics ?? {}),
+    complaintCount: 0,
+    complaintResolvedCount: 0,
+    unresolvedComplaintCount: 0,
+    complaintResolutionRate: 0,
+    complaintRisk: 0,
     carbonScore: 0,
     waterScore: 0,
     fineDustScore: 0,
     powerScore: 0,
+    idleReductionScore: 0,
     staffingRate: 0,
     safetyEducationRate: 0,
     weatherProtectionScore: 0,
@@ -1099,10 +1184,12 @@ watch(
     backendTodaySnapshot.value = null
     backendMetricInputs.value = []
     equipmentsData.value = []
+    equipmentScopeProjectId.value = null
     workPlansData.value = []
     reportsData.value = []
     workersData.value = []
     staffingWorkersData.value = []
+    staffingZonesData.value = []
     loadAll()
   },
 )
