@@ -72,7 +72,7 @@ export function buildProjectSiteItems(projects = [], rankings = [], currentProje
 }
 
 export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBreakdown, safetyDays }) {
-  const zones = normalizeList(siteZones)
+  const zones = normalizeList(siteZones).filter(shouldPersistSnapshotZone)
   const scores = normalizeList(esgBreakdown)
   const scoreTargets = selectSiteScoreZones(zones)
   const targetCount = scoreTargets.length
@@ -156,6 +156,49 @@ export function buildSnapshotPayload({ reportDate, currentSite, siteZones, esgBr
       },
     }),
   }
+}
+
+function shouldPersistSnapshotZone(zone) {
+  if (!isSupportLikeSnapshotZone(zone)) return true
+  return hasActiveSnapshotData(zone)
+}
+
+function isSupportLikeSnapshotZone(zone) {
+  const zoneType = String(zone?.zoneType ?? zone?.type ?? '').trim().toLowerCase()
+  const zoneName = String(zone?.name ?? zone?.zoneName ?? '').trim()
+  return (
+    zoneType === 'support' ||
+    zoneType === 'outdoor' ||
+    ['세척장', '민원 구역', '민원구역'].includes(zoneName)
+  )
+}
+
+function hasActiveSnapshotData(zone) {
+  const metrics = zone?.metrics ?? {}
+  const environmentScore = Number(metrics.environmentScore ?? 0)
+  const socialScore = Number(metrics.socialScore ?? 0)
+  const governanceScore = Number(metrics.governanceScore ?? 0)
+  const dailyScore = Number(zone?.dailyScore ?? metrics.totalScore ?? 0)
+  const cumulativeScore = Number(zone?.score ?? 0)
+
+  return (
+    metrics.supportOperationActive === true ||
+    environmentScore > 0 ||
+    socialScore > 0 ||
+    governanceScore > 0 ||
+    dailyScore > 0 ||
+    cumulativeScore > 0 ||
+    Number(zone?.equipmentCount ?? metrics.totalEquipmentCount ?? 0) > 0 ||
+    Number(zone?.highRiskEquipmentCount ?? metrics.highRiskEquipmentCount ?? 0) > 0 ||
+    Number(zone?.risk ?? metrics.operatingRisk ?? metrics.weatherRiskCount ?? 0) > 0 ||
+    Number(zone?.missionRate ?? metrics.missionRate ?? 0) > 0 ||
+    Number(metrics.complaintCount ?? 0) > 0 ||
+    Number(metrics.complaintResolvedCount ?? 0) > 0 ||
+    Number(metrics.workerCount ?? 0) > 0 ||
+    Number(metrics.assignedWorkerCount ?? 0) > 0 ||
+    Number(metrics.requiredWorkerCount ?? 0) > 0 ||
+    Number(metrics.trainedWorkerCount ?? 0) > 0
+  )
 }
 
 function selectSiteScoreZones(zones) {

@@ -45,6 +45,27 @@ export function normalizeGateKey(value) {
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
+
+export function getNextAvailableGateNumber(gates = []) {
+  const usedNumbers = new Set()
+
+  gates.forEach((gate) => {
+    const matched = String(gate?.name || '').match(/\d+/)
+    const numberValue = matched ? Number(matched[0]) : Number(gate?.businessKey ?? gate?.idx)
+
+    if (Number.isInteger(numberValue) && numberValue > 0) {
+      usedNumbers.add(numberValue)
+    }
+  })
+
+  let nextNumber = 1
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber += 1
+  }
+
+  return nextNumber
+}
+
 export function getGateBusinessKey(gate) {
   if (!gate) return null
 

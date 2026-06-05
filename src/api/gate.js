@@ -6,8 +6,10 @@ const PATH = '/gate'
  * 게이트 목록 조회
  * GET /gate
  */
-export const fetchGateList = () => {
-  return api.get(PATH)
+export const fetchGateList = (projectId = null) => {
+  return api.get(PATH, {
+    params: projectId ? { projectId } : {},
+  })
 }
 
 
@@ -39,8 +41,10 @@ export const fetchGate = (gateId) => {
  * 게이트 등록
  * POST /gate
  */
-export const createGate = (payload) => {
-  return api.post(PATH, payload)
+export const createGate = (payload, projectId = null) => {
+  return api.post(PATH, payload, {
+    params: projectId ? { projectId } : {},
+  })
 }
 
 /**

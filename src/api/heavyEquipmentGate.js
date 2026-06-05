@@ -14,8 +14,8 @@ import {
 } from '@/api/gate'
 import { getGateEquipments } from '@/api/workOrder'
 
-export async function fetchHeavyEquipmentGateList() {
-  const response = await fetchGateList()
+export async function fetchHeavyEquipmentGateList(projectId = null) {
+  const response = await fetchGateList(projectId)
   return Array.isArray(response) ? response : []
 }
 
@@ -23,8 +23,8 @@ export async function fetchHeavyEquipmentGate(gateId) {
   return fetchGate(gateId)
 }
 
-export async function createHeavyEquipmentGate(payload) {
-  return createGate(payload)
+export async function createHeavyEquipmentGate(payload, projectId = null) {
+  return createGate(payload, projectId)
 }
 
 export async function fetchHeavyEquipmentGateBlueprint(projectId) {

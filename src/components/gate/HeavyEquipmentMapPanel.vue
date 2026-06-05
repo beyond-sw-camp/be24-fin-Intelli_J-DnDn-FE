@@ -296,28 +296,28 @@ onBeforeUnmount(() => {
   <div class="lg:col-span-2 relative flex h-[var(--gate-panel-height)] min-h-0 flex-col overflow-hidden rounded-3xl border border-forena-100 shadow-card">
     <div
       data-map-toolbar
-      class="absolute right-4 top-4 z-20 flex max-w-[calc(100%-9rem)] flex-wrap items-center justify-end gap-2"
+      class="absolute right-4 top-4 z-20 flex max-w-[calc(100%-9rem)] flex-wrap items-center justify-end gap-2 [overflow-wrap:normal]"
     >
       <button
         type="button"
-        class="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-xs font-bold shadow-sm transition-all"
+        class="inline-flex min-w-[118px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap break-keep rounded-xl border px-3 py-2 text-[11px] font-bold leading-none shadow-sm transition-all sm:min-w-[126px] sm:gap-2 sm:text-xs"
         :class="isAddMode ? 'border-flare-300 bg-flare-100 text-flare-700 ring-2 ring-flare-200 animate-pulse' : 'border-forena-100 bg-white text-forena-700 hover:bg-forena-50'"
         @click.stop="emit('toggle-add-mode')"
       >
-        <MapIcon class="h-4 w-4" />
-        게이트 추가 모드
+        <MapIcon class="h-4 w-4 shrink-0" />
+        <span class="whitespace-nowrap break-keep">게이트 추가 모드</span>
       </button>
 
       <button
         type="button"
-        class="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-forena-100 bg-white px-3 py-2 text-xs font-bold text-forena-700 shadow-sm transition hover:bg-forena-50"
+        class="inline-flex min-w-[104px] shrink-0 items-center justify-center gap-1.5 whitespace-nowrap break-keep rounded-xl border border-forena-100 bg-white px-3 py-2 text-[11px] font-bold leading-none text-forena-700 shadow-sm transition hover:bg-forena-50 sm:min-w-[112px] sm:gap-2 sm:text-xs"
         @click.stop="emit('trigger-blueprint-upload')"
       >
-        <Upload class="h-4 w-4" />
-        도면 업로드
+        <Upload class="h-4 w-4 shrink-0" />
+        <span class="whitespace-nowrap break-keep">도면 업로드</span>
       </button>
 
-      <span class="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-xl border border-forena-100 bg-white px-3 text-xs font-bold text-forena-700 shadow-sm">
+      <span class="inline-flex h-8 shrink-0 items-center whitespace-nowrap break-keep rounded-xl border border-forena-100 bg-white px-3 text-[11px] font-bold leading-none text-forena-700 shadow-sm sm:text-xs">
         총 {{ gates.length }}개
       </span>
     </div>
