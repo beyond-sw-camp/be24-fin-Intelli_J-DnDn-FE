@@ -211,7 +211,14 @@ export function useSiteRegister() {
       return
     }
     if (!isValidSiteCode(code)) {
-      window.alert('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.')
+      window.alert('현장 코드는 XX-X 형식의 영문 대문자만 사용할 수 있습니다. (예: GN-A)')
+      return
+    }
+    const duplicate = rows.value.some(
+      (row) => row.code !== '—' && String(row.code).trim().toUpperCase() === code,
+    )
+    if (duplicate) {
+      window.alert('이미 사용 중인 현장 코드입니다.')
       return
     }
     if (form.startDate && form.endDate && form.endDate < form.startDate) {
@@ -276,7 +283,17 @@ export function useSiteRegister() {
       return
     }
     if (!isValidSiteCode(code)) {
-      pushToast('현장 코드는 영문 대문자/숫자/하이픈 조합 1~20자로 입력해 주세요.', 'warning')
+      pushToast('현장 코드는 XX-X 형식의 영문 대문자만 사용할 수 있습니다. (예: GN-A)', 'warning')
+      return
+    }
+    const duplicate = rows.value.some(
+      (row) =>
+        row.idx !== editSiteForm.idx &&
+        row.code !== '—' &&
+        String(row.code).trim().toUpperCase() === code,
+    )
+    if (duplicate) {
+      pushToast('이미 사용 중인 현장 코드입니다.', 'warning')
       return
     }
     if (

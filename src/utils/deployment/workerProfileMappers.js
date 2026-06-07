@@ -1,4 +1,4 @@
-import { formatWorkerZoneDisplay, employmentKindDisplay, pickWorkerTradeSubLabel } from '@/utils/workerUi'
+import { formatWorkerZoneDisplay, employmentKindDisplay, pickWorkerTradeSubLabel, displayWorkerTradeLine } from '@/utils/workerUi'
 import { normalizeFatigueFromProfileApi } from '@/utils/fatigueUi'
 
 export function formatApiTime(t) {
@@ -137,8 +137,7 @@ export function tradeHintFromDeployments(deployments) {
 export function buildWorkerProfile(p, docs, deployments, attendanceRows, accidentsRows) {
   let tradeText = pickWorkerTradeSubLabel(p)
   if (!tradeText) tradeText = tradeHintFromDeployments(deployments)
-  const affiliationKindUpper = String(p.affiliationKind ?? '').toUpperCase()
-  const metaAffiliationLine = affiliationKindUpper === 'DIRECT' ? '직영' : tradeText || '—'
+  const metaAffiliationLine = tradeText || displayWorkerTradeLine(p) || '—'
   const rel = p.emergencyRelation ? String(p.emergencyRelation).trim() : ''
   const ePhone = p.emergencyPhone ? String(p.emergencyPhone).trim() : ''
 

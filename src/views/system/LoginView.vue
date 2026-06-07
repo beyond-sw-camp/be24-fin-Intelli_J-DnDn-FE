@@ -448,6 +448,14 @@ const handleLogin = async () => {
     // 서버가 응답을 돌려줬다면(자격 오류 / 권한 미일치 등) 그 메시지를 그대로 표시하고 종료.
     // 데모(로컬) 폴백은 네트워크 오류처럼 응답 자체가 없는 경우에만 사용한다.
     if (err?.responseAvailable) {
+      if (err?.responseCode === 3014) {
+        errorMessage.value = '비활성화된 계정입니다.'
+        return
+      }
+      if (err?.responseCode === 3010) {
+        errorMessage.value = '아이디나 비밀번호를 확인하세요.'
+        return
+      }
       errorMessage.value = err?.message || '로그인에 실패했습니다.'
       return
     }
@@ -465,7 +473,7 @@ const handleLogin = async () => {
   }
 
   if (!didLogin) {
-    errorMessage.value = '아이디 또는 비밀번호가 올바르지 않습니다.'
+    errorMessage.value = '아이디나 비밀번호를 확인하세요.'
     return
   }
 

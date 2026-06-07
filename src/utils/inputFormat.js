@@ -40,18 +40,22 @@ export function isValidLoginId(value) {
 }
 
 export function formatSiteCode(value) {
-  return String(value ?? '')
+  const letters = String(value ?? '')
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z0-9-]/g, '')
-    .replace(/-{2,}/g, '-')
-    .slice(0, 20)
+    .replace(/[^A-Z]/g, '')
+    .slice(0, 3)
+
+  if (letters.length <= 2) {
+    return letters
+  }
+  return `${letters.slice(0, 2)}-${letters.slice(2)}`
 }
 
 export function isValidSiteCode(value, { required = true } = {}) {
   const code = formatSiteCode(value)
   if (!code) return !required
-  return /^[A-Z0-9](?:[A-Z0-9-]{0,18}[A-Z0-9])?$/.test(code)
+  return /^[A-Z]{2}-[A-Z]$/.test(code)
 }
 
 export function formatEmailInput(value) {

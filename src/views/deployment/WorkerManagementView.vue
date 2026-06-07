@@ -352,6 +352,8 @@ async function onBulkOverride() {
               {{ isBulkLoading ? WM.bulkOverrideLoading : WM.bulkOverride }}
             </button>
           </div>
+          <!-- 개발용 동기화 버튼 — 운영 화면에서는 숨김 -->
+          <template v-if="false">
           <button
             type="button"
             :disabled="isSeedLoading"
@@ -376,6 +378,7 @@ async function onBulkOverride() {
             />
             {{ isTriggerLoading ? WM.triggerSyncLoading : WM.triggerSync }}
           </button>
+          </template>
       </div>
     </div>
 
