@@ -43,7 +43,7 @@ const emit = defineEmits({
       v-if="selectedGate"
       class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-forena-100 bg-white shadow-card ring-1 ring-forena-50"
     >
-      <div class="flex shrink-0 items-center justify-between gap-4 border-b border-forena-100 bg-forena-50/50 px-6 py-4">
+      <div class="flex shrink-0 flex-col items-stretch gap-3 border-b border-forena-100 bg-forena-50/50 px-5 py-4 xl:flex-row xl:items-center xl:justify-between xl:gap-4 xl:px-6">
         <div class="flex min-w-0 items-center gap-3">
           <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white shadow-sm">
             <span class="text-sm font-black text-forena-900">{{ selectedGate.businessKey }}</span>
@@ -51,13 +51,13 @@ const emit = defineEmits({
           <div class="min-w-0">
             <h3 class="truncate text-lg font-bold text-forena-900">{{ selectedGate.name }}</h3>
             <div class="mt-1 space-y-0.5 text-xs font-semibold leading-tight text-slate-500">
-              <p class="whitespace-nowrap">작업지시 배정 {{ selectedGate.plannedEquipmentCount }}대</p>
-              <p class="whitespace-nowrap">현재 진입 {{ selectedGate.vehicles ?? 0 }}대</p>
+              <p class="whitespace-nowrap break-keep">작업지시 배정 {{ selectedGate.plannedEquipmentCount }}대</p>
+              <p class="whitespace-nowrap break-keep">현재 진입 {{ selectedGate.vehicles ?? 0 }}대</p>
             </div>
           </div>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2.5">
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <div class="flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-1.5 py-1">
             <button
               type="button"
@@ -66,7 +66,7 @@ const emit = defineEmits({
             >
               -
             </button>
-            <span class="flex h-11 min-w-12 shrink-0 flex-col items-center justify-center rounded-full bg-amber-50 px-2 text-center leading-none text-amber-900 shadow-inner">
+            <span class="flex h-11 min-w-[52px] shrink-0 flex-col items-center justify-center rounded-full bg-amber-50 px-2 text-center leading-none text-amber-900 shadow-inner">
               <span class="whitespace-nowrap text-[10px] font-bold">현재</span>
               <span class="mt-0.5 whitespace-nowrap text-sm font-black">{{ selectedGate.vehicles }}대</span>
             </span>
@@ -80,7 +80,7 @@ const emit = defineEmits({
           </div>
 
           <span
-            class="inline-flex h-10 min-w-[52px] shrink-0 items-center justify-center whitespace-nowrap break-keep rounded-full border px-3 text-xs font-black leading-none"
+            class="inline-flex h-10 min-w-[58px] shrink-0 items-center justify-center whitespace-nowrap break-keep rounded-full border px-3 text-[11px] font-black leading-none sm:text-xs"
             :class="selectedGate.statusColor"
           >
             {{ selectedGate.displayCongestionLabel }}

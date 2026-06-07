@@ -39,6 +39,7 @@ import {
   getNoticeMessage,
   getPlannedEquipmentCount,
   getStatusColor,
+  getNextAvailableGateNumber,
   getTodayDateText,
   mapWorkOrderEquipments,
 } from '@/utils/heavyEquipmentGateMapper.js'
@@ -130,7 +131,7 @@ async function loadGates() {
   isLoading.value = true
 
   try {
-    gates.value = await fetchHeavyEquipmentGateList()
+    gates.value = await fetchHeavyEquipmentGateList(blueprintProjectId.value)
 
     if (gates.value.length && !selectedGateId.value) {
       selectedGateId.value = gates.value[0].idx
@@ -237,14 +238,17 @@ async function removeMachine(machineId) {
 }
 
 async function addCustomGate({ x, y }) {
-  const nextSeq = gates.value.length + 1
+  const nextSeq = getNextAvailableGateNumber(gates.value)
 
   try {
-    const created = await createHeavyEquipmentGate({
-      name: `Gate ${nextSeq}`,
-      x,
-      y,
-    })
+    const created = await createHeavyEquipmentGate(
+      {
+        name: `Gate ${nextSeq}`,
+        x,
+        y,
+      },
+      blueprintProjectId.value,
+    )
 
     await loadGates()
     selectedGateId.value =
@@ -437,6 +441,8 @@ onMounted(() => {
 })
 
 watch(currentProjectId, () => {
+  selectedGateId.value = null
+  loadGates()
   loadBlueprintFromServer()
   loadTodayEquipments()
 })

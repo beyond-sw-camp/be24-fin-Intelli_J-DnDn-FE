@@ -87,20 +87,64 @@ const GATES = ref([])
 const GATE_CAPACITY = 6
 
 async function fetchGates() {
+  if (!currentProjectId.value) {
+    GATES.value = []
+    syncEditingGateDefaults()
+    return
+  }
+
   try {
-    const response = await api.get('/gate')
-    const data = Array.isArray(response) ? response : response?.data || []
+    const response = await api.get('/gate', { params: { projectId: currentProjectId.value } })
+    const payload = response?.data?.data ?? response?.data ?? response ?? []
+    const data = Array.isArray(payload) ? payload : []
+
     GATES.value = data.map((g) => ({
       gateIdx: g.gateIdx || g.idx,
       gateName: g.gateName || g.name || `${g.idx || ''}번 게이트`,
       currentCount: g.currentCount || g.vehicles || 0,
       status: (g.currentCount || 0) >= GATE_CAPACITY ? '혼잡' : '원활',
     }))
+    syncEditingGateDefaults()
   } catch (error) {
-    GATES.value = [
-      { gateIdx: 1, gateName: '1번 게이트', currentCount: 0, status: '원활' },
-      { gateIdx: 2, gateName: '2번 게이트', currentCount: 0, status: '원활' },
-    ]
+    console.error('게이트 목록 조회 실패:', error)
+    GATES.value = []
+    syncEditingGateDefaults()
+  }
+}
+
+function getDefaultGateIdx() {
+  return GATES.value[0]?.gateIdx ?? null
+}
+
+function normalizeGateSelection(value) {
+  if (value == null || value === '') return null
+  const parsed = typeof value === 'string' ? parseInt(value.replace(/\D/g, ''), 10) : Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function syncEditingGateDefaults() {
+  if (!editing.value) return
+
+  const defaultGateIdx = getDefaultGateIdx()
+  const gateIds = new Set(GATES.value.map((gate) => Number(gate.gateIdx)))
+
+  const normalizeExistingGate = (value) => {
+    const normalized = normalizeGateSelection(value)
+    if (normalized == null) return defaultGateIdx
+    return gateIds.has(normalized) ? normalized : defaultGateIdx
+  }
+
+  if (editing.value.equipmentInput) {
+    editing.value.equipmentInput.gateIn = normalizeExistingGate(editing.value.equipmentInput.gateIn)
+    editing.value.equipmentInput.gateOut = normalizeExistingGate(editing.value.equipmentInput.gateOut)
+  }
+
+  if (Array.isArray(editing.value.equipment)) {
+    editing.value.equipment = editing.value.equipment.map((equipment) => ({
+      ...equipment,
+      gateIn: normalizeExistingGate(equipment.gateIn),
+      gateOut: normalizeExistingGate(equipment.gateOut),
+    }))
   }
 }
 
@@ -321,7 +365,7 @@ function blankOrder() {
     workTime: '',
     workers: 0,
     equipment: [],
-    equipmentInput: { name: '', count: 1, gateIn: 1, gateOut: 1 },
+    equipmentInput: { name: '', count: 1, gateIn: getDefaultGateIdx(), gateOut: getDefaultGateIdx() },
     workDetail: '',
     safety: '',
     notes: '',
@@ -338,7 +382,7 @@ function cloneOrder(o) {
   return {
     ...o,
     equipment: o.equipment.map((e) => ({ ...e })),
-    equipmentInput: { name: '', count: 1, gateIn: 1, gateOut: 1 },
+    equipmentInput: { name: '', count: 1, gateIn: getDefaultGateIdx(), gateOut: getDefaultGateIdx() },
     files: o.files.map((f) => ({ ...f })),
     photos: (o.photos || []).map((p) => ({ ...p })),
     history: [...(o.history || [])],
@@ -422,8 +466,8 @@ async function selectTaskForOrder(task) {
       id: `eq_${Date.now()}_${i}`,
       name: ENUM_TO_KOR_MAP[eq.equipmentName] || eq.equipmentName || '굴삭기',
       count: eq.equipmentCount || 1,
-      gateIn: 1,
-      gateOut: 1,
+      gateIn: getDefaultGateIdx(),
+      gateOut: getDefaultGateIdx(),
     }))
   } catch (e) {
     console.warn('특정 작업 장비 조회 실패', e)
@@ -468,10 +512,10 @@ function addEquipment() {
     id: `eq_${Date.now()}`,
     name: inp.name.trim(),
     count: inp.count,
-    gateIn: inp.gateIn,
-    gateOut: inp.gateOut,
+    gateIn: normalizeGateSelection(inp.gateIn),
+    gateOut: normalizeGateSelection(inp.gateOut),
   })
-  editing.value.equipmentInput = { name: '', count: 1, gateIn: 1, gateOut: 1 }
+  editing.value.equipmentInput = { name: '', count: 1, gateIn: getDefaultGateIdx(), gateOut: getDefaultGateIdx() }
 }
 
 function removeEquipment(idx) {
@@ -521,10 +565,9 @@ async function submitOrder() {
   }
 
   const equipmentList = r.equipment.map((eq) => {
-    const safeGateIdx =
-      typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
+    const safeGateIdx = normalizeGateSelection(eq.gateIn)
     return {
-      gateIdx: safeGateIdx || 1,
+      gateIdx: safeGateIdx,
       equipmentName: eq.name,
       equipmentCount: eq.count,
     }
@@ -605,10 +648,9 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
         workerCount: order.workers || 0,
         statusCode: statusCodeStr,
         equipments: order.equipment.map((eq) => {
-          const safeGateIdx =
-            typeof eq.gateIn === 'string' ? parseInt(eq.gateIn.replace(/\D/g, ''), 10) : eq.gateIn
+          const safeGateIdx = normalizeGateSelection(eq.gateIn)
           return {
-            gateIdx: safeGateIdx || 1,
+            gateIdx: safeGateIdx,
             equipmentName: eq.name,
             equipmentCount: eq.count || 1,
           }
@@ -636,6 +678,7 @@ async function updateOrderStatus(newStatus, statusCodeStr) {
 }
 
 function gateName(id) {
+  if (id == null || id === '') return '게이트 미배정'
   return GATES.value.find((g) => g.gateIdx === id)?.gateName || id
 }
 function onKeydown(e) {
@@ -685,6 +728,7 @@ function statusCodeFromLabel(status) {
 
 function workOrderSliceParams(append = false) {
   const params = {
+    projectId: currentProjectId.value || undefined,
     size: WORK_ORDER_SLICE_SIZE,
     targetDate: filterDate.value || undefined,
     statusCode: statusCodeFromLabel(filterStatus.value) || undefined,
@@ -770,8 +814,8 @@ async function fetchWorkOrders({ append = false } = {}) {
           id: `eq_${eq.idx}`,
           name: ENUM_TO_KOR_MAP[eq.equipmentName] || eq.equipmentName,
           count: eq.equipmentCount,
-          gateIn: `G${eq.gateIdx}`,
-          gateOut: `G${eq.gateIdx}`,
+          gateIn: eq.gateIdx ?? getDefaultGateIdx(),
+          gateOut: eq.gateIdx ?? getDefaultGateIdx(),
         })),
       }
     })
@@ -788,6 +832,13 @@ async function fetchWorkOrders({ append = false } = {}) {
     isLoadingWorkOrders.value = false
   }
 }
+
+watch(currentProjectId, () => {
+  fetchGates()
+  fetchTradeOptions()
+  fetchWorkOrders()
+})
+
 </script>
 
 <template>

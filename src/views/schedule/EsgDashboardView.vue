@@ -687,11 +687,14 @@ async function persistCurrentSnapshot() {
   if (reportDateState.value !== 'today') return
   if (!currentProjectId.value || !siteZones.value.length) return
 
+  const persistableSiteZones = getPersistableSiteZones(siteZones.value)
+  if (!persistableSiteZones.length) return
+
   try {
     const payload = buildSnapshotPayload({
       reportDate: reportDate.value,
       currentSite: currentSite.value,
-      siteZones: siteZones.value,
+      siteZones: persistableSiteZones,
       esgBreakdown: esgBreakdown.value,
       safetyDays: safetyDays.value,
     })
@@ -699,6 +702,28 @@ async function persistCurrentSnapshot() {
   } catch {
     // ESG 스냅샷 저장 실패는 화면 표시를 막지 않는다.
   }
+}
+
+function getPersistableSiteZones(zones) {
+  return normalizeArray(zones).filter((zone) => !isInactiveResettableZone(zone))
+}
+
+function isInactiveResettableZone(zone) {
+  if (!isResettableSupportLikeZone(zone)) return false
+  return !hasActiveSnapshotZone(zone)
+}
+
+function isResettableSupportLikeZone(zone) {
+  if (!zone) return false
+
+  const zoneType = String(zone.zoneType ?? zone.type ?? '').trim().toLowerCase()
+  const zoneName = String(zone.name ?? zone.zoneName ?? '').trim()
+
+  return (
+    zoneType === 'support' ||
+    zoneType === 'outdoor' ||
+    ['세척장', '민원 구역', '민원구역'].includes(zoneName)
+  )
 }
 
 function resolveSummaryZoneStatus(score, risk) {
@@ -748,11 +773,24 @@ function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
     snapshots.map((snapshot) => [String(snapshot.zoneName || '').trim(), snapshot]),
   )
 
+  const snapshotZonesByName = new Map(
+    buildSnapshotZones(snapshots).map((zone) => [String(zone.name || '').trim(), zone]),
+  )
+
   const runtimeZones = normalizeArray(zones).map((zone) => {
     const zoneName = String(zone.name || '').trim()
     const snapshot = cumulativeByName.get(zoneName)
+    const snapshotZone = snapshotZonesByName.get(zoneName)
     const dailyScore = calculateDailyScore(zone)
     const resetProgress = shouldResetProgressForRuntimeZone(zone, dailyScore)
+
+    if (resetProgress && hasActiveSnapshotZone(snapshotZone)) {
+      return {
+        ...snapshotZone,
+        rank: zone.rank ?? snapshotZone.rank,
+      }
+    }
+
     const cumulativeScore = resetProgress
       ? 0
       : normalizeCumulativeScore(snapshot?.totalScore ?? zone.score ?? dailyScore)
@@ -771,18 +809,21 @@ function mergeRuntimeZonesWithSnapshot(zones, zoneSnapshots) {
   const runtimeZoneNames = new Set(
     runtimeZones.map((zone) => String(zone.name || '').trim()).filter(Boolean),
   )
-  const snapshotOnlyZones = buildSnapshotZones(snapshots)
+
+  const snapshotOnlyZones = Array.from(snapshotZonesByName.values())
     .filter((zone) => !runtimeZoneNames.has(String(zone.name || '').trim()))
     .map((zone) => {
       const dailyScore = calculateDailyScore(zone)
       const resetProgress = shouldResetProgressForRuntimeZone(zone, dailyScore)
 
-      return resetProgress
-        ? zeroizeZoneScore({ ...zone, dailyScore: 0, score: 0, level: 0 })
-        : {
-            ...zone,
-            dailyScore,
-          }
+      if (resetProgress && !hasActiveSnapshotZone(zone)) {
+        return zeroizeZoneScore({ ...zone, dailyScore: 0, score: 0, level: 0 })
+      }
+
+      return {
+        ...zone,
+        dailyScore,
+      }
     })
 
   return rankVisibleZones([...runtimeZones, ...snapshotOnlyZones])
@@ -826,6 +867,37 @@ function shouldResetProgressForRuntimeZone(zone, dailyScore = calculateDailyScor
     normalizePositiveNumber(metrics.trainedWorkerCount, 0) > 0
 
   return !hasOperationalData
+}
+
+function hasActiveSnapshotZone(zone) {
+  if (!zone) return false
+
+  const metrics = zone.metrics ?? {}
+  const zoneName = String(zone.name ?? zone.zoneName ?? '').trim()
+  const zoneType = String(zone.zoneType ?? zone.type ?? '').trim().toLowerCase()
+  const isSupportLikeZone =
+    zoneType === 'support' ||
+    zoneType === 'outdoor' ||
+    ['세척장', '민원 구역', '민원구역'].includes(zoneName)
+
+  if (!isSupportLikeZone) return false
+
+  return (
+    metrics.supportOperationActive === true ||
+    calculateDailyScore(zone) > 0 ||
+    normalizePositiveNumber(zone.score, 0) > 0 ||
+    normalizePositiveNumber(zone.equipmentCount ?? metrics.totalEquipmentCount, 0) > 0 ||
+    normalizePositiveNumber(zone.highRiskEquipmentCount ?? metrics.highRiskEquipmentCount, 0) > 0 ||
+    normalizePositiveNumber(zone.risk ?? metrics.operatingRisk ?? metrics.weatherRiskCount, 0) > 0 ||
+    normalizePositiveNumber(zone.missionRate ?? metrics.missionRate, 0) > 0 ||
+    normalizePositiveNumber(metrics.reportCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.complaintCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.complaintResolvedCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.workerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.assignedWorkerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.requiredWorkerCount, 0) > 0 ||
+    normalizePositiveNumber(metrics.trainedWorkerCount, 0) > 0
+  )
 }
 
 function rankVisibleZones(zones) {
@@ -1069,10 +1141,24 @@ function normalizePositiveNumber(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback
 }
 
+function normalizeProjectId(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 function resolveInitialProjectId() {
-  const routeProjectId = Number(route.query.projectId)
-  if (Number.isFinite(routeProjectId)) return routeProjectId
-  return authStore.projectId ?? null
+  // 로그인 방식과 관계없이 authStore.projectId를 공통 ESG 화면의 기준값으로 사용한다.
+  // 본사/관리자는 선택한 현장 ID가, 현장 계정은 로그인 시 매핑된 고정 현장 ID가 저장된다.
+  const authProjectId = normalizeProjectId(authStore.projectId)
+  if (authProjectId) return authProjectId
+
+  // 새로고침 직후 저장값이 아직 복원되지 않은 예외 상황에서만 URL 값을 보조로 사용한다.
+  return (
+    normalizeProjectId(route.query.projectId) ??
+    normalizeProjectId(route.query.projectIdx) ??
+    normalizeProjectId(route.query.siteId) ??
+    null
+  )
 }
 
 function getTodayDateText() {
