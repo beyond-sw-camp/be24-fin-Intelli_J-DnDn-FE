@@ -33,33 +33,51 @@ export function parseProjectDisplayName(rawName = '') {
 }
 
 export function buildProjectSiteItems(projects = [], rankings = [], currentProjectId = null, fallbackSite = null) {
+  const projectList = normalizeList(projects)
+  const rankingList = normalizeList(rankings)
+  const projectMap = new Map(
+    projectList.map((item) => [String(item.idx ?? item.projectId ?? item.id), item]),
+  )
   const rankingMap = new Map(
-    normalizeList(rankings).map((item) => [String(item.projectId ?? item.idx ?? item.id), item]),
+    rankingList.map((item) => [String(item.projectId ?? item.idx ?? item.id), item]),
   )
 
-  const projectItems = normalizeList(projects).map((project, index) => {
-    const projectId = project.idx ?? project.projectId ?? project.id
+  // 서버 rankings는 본사와 현장 계정에 동일하게 내려오는 전체 현장 순위 데이터다.
+  // 계정 권한에 따라 범위가 달라지는 projects가 아니라 rankings를 우선 기준으로 사용한다.
+  const sourceItems = rankingList.length ? rankingList : projectList
+  const siteItems = sourceItems.map((item, index) => {
+    const projectId = item.projectId ?? item.idx ?? item.id
+    const project = projectMap.get(String(projectId)) ?? {}
     const ranking = rankingMap.get(String(projectId)) ?? {}
-    const parsed = parseProjectDisplayName(project.name ?? ranking.projectName)
-    const totalScore = Number(ranking.totalScore ?? ranking.score ?? 0)
-    const hasSnapshot = Boolean(ranking.snapshotSaved ?? ranking.hasSnapshot ?? totalScore > 0)
+    const parsed = parseProjectDisplayName(ranking.name ?? project.name ?? '')
+    const displayName = String(ranking.name ?? project.name ?? parsed.displayName ?? '').trim()
+    const totalScore = Number(ranking.score ?? ranking.totalScore ?? project.score ?? 0)
+    const hasSnapshot = Boolean(
+      ranking.snapshotSaved ?? ranking.hasSnapshot ?? project.snapshotSaved ?? totalScore > 0,
+    )
 
     return {
       id: String(projectId),
       projectId,
-      siteCode: parsed.siteCode,
-      name: parsed.displayName,
-      shortName: parsed.shortName,
-      address: project.location ?? ranking.address ?? '',
+      siteCode: String(ranking.code ?? project.code ?? parsed.siteCode ?? '').trim(),
+      name: displayName || '현장명 미지정',
+      shortName:
+        String(ranking.shortName ?? project.shortName ?? '').trim() ||
+        buildShortSiteName(displayName || '현장'),
+      address: ranking.location ?? project.location ?? ranking.address ?? project.address ?? '',
       contractor: ranking.contractor ?? project.contractor ?? '',
       manager: ranking.manager ?? project.manager ?? '',
       score: normalizeCumulativeScore(totalScore),
-      level: normalizeFloorLevel(ranking.level ?? resolveEsgFloor(totalScore, ESG_SITE_FLOOR_POINT)),
-      carbon: Math.round(Number(ranking.carbonKg ?? ranking.carbon ?? 0)),
-      powerSaving: Math.round(Number(ranking.powerSavingKwh ?? ranking.powerSaving ?? 0)),
-      riskCount: Math.round(Number(ranking.riskCount ?? 0)),
-      missionRate: Math.round(Number(ranking.missionRate ?? 0)),
-      trend: Number(ranking.trend ?? 0),
+      level: normalizeFloorLevel(
+        ranking.level ?? project.level ?? resolveEsgFloor(totalScore, ESG_SITE_FLOOR_POINT),
+      ),
+      carbon: Math.round(Number(ranking.carbonKg ?? ranking.carbon ?? project.carbonKg ?? 0)),
+      powerSaving: Math.round(
+        Number(ranking.powerSavingKwh ?? ranking.powerSaving ?? project.powerSavingKwh ?? 0),
+      ),
+      riskCount: Math.round(Number(ranking.riskCount ?? project.riskCount ?? 0)),
+      missionRate: Math.round(Number(ranking.missionRate ?? project.missionRate ?? 0)),
+      trend: Number(ranking.trend ?? project.trend ?? 0),
       accent: ['emerald', 'sky', 'violet', 'amber'][index % 4],
       snapshotSaved: hasSnapshot,
       startDate: project.startDate ?? ranking.startDate ?? null,
@@ -67,7 +85,7 @@ export function buildProjectSiteItems(projects = [], rankings = [], currentProje
     }
   })
 
-  if (projectItems.length) return projectItems
+  if (siteItems.length) return siteItems
   return fallbackSite ? [fallbackSite] : []
 }
 

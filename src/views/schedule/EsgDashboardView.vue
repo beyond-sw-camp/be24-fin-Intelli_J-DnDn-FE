@@ -1141,10 +1141,24 @@ function normalizePositiveNumber(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback
 }
 
+function normalizeProjectId(value) {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 function resolveInitialProjectId() {
-  const routeProjectId = Number(route.query.projectId)
-  if (Number.isFinite(routeProjectId)) return routeProjectId
-  return authStore.projectId ?? null
+  // 로그인 방식과 관계없이 authStore.projectId를 공통 ESG 화면의 기준값으로 사용한다.
+  // 본사/관리자는 선택한 현장 ID가, 현장 계정은 로그인 시 매핑된 고정 현장 ID가 저장된다.
+  const authProjectId = normalizeProjectId(authStore.projectId)
+  if (authProjectId) return authProjectId
+
+  // 새로고침 직후 저장값이 아직 복원되지 않은 예외 상황에서만 URL 값을 보조로 사용한다.
+  return (
+    normalizeProjectId(route.query.projectId) ??
+    normalizeProjectId(route.query.projectIdx) ??
+    normalizeProjectId(route.query.siteId) ??
+    null
+  )
 }
 
 function getTodayDateText() {

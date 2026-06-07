@@ -138,21 +138,44 @@ async function loadProjectList() {
  * - projectId 있지만 siteCode 없음 → 프로젝트명에서 [코드] 추출 후 적용
  * - 모든 역할에서 현장 활성화 여부 동기화
  */
+function extractSiteCodeFromProjectName(name) {
+  const m = /^\[([^\]]+)\]/.exec(String(name || '').trim())
+  return m ? m[1].trim() : ''
+}
+
 function autoSyncSiteCode() {
   if (projectList.value.length === 0) return
+
   const currentPid = Number(auth.projectId)
   const hasValidProject = Number.isFinite(currentPid) && currentPid > 0
 
+  // 관리자/본사는 기존처럼 현장을 직접 전환한다.
   if (canSwitchSites.value && !hasValidProject) {
     onSelectProject(projectList.value[0])
     return
   }
 
+  // 현장 계정은 백엔드가 siteCode 기준으로 필터링해 내려준 단일 현장을 그대로 고정한다.
+  // 이전 세션 또는 새로고침 과정에서 projectId가 비어 있어도, 현장 선택 UI를 열지 않고 현재 현장으로 동기화한다.
+  if (!canSwitchSites.value) {
+    const assignedProject = hasValidProject
+      ? projectList.value.find((p) => p.id === currentPid)
+      : projectList.value[0]
+
+    if (assignedProject) {
+      const derivedSiteCode = extractSiteCodeFromProjectName(assignedProject.name) || auth.siteCode
+      if (Number(auth.projectId) !== assignedProject.id || (!auth.siteCode && derivedSiteCode)) {
+        auth.setProjectIdAndSiteCode(assignedProject.id, derivedSiteCode)
+      }
+      auth.setProjectActive(assignedProject.active ?? true)
+    }
+    return
+  }
+
   const found = projectList.value.find((p) => p.id === currentPid)
   if (found) {
-    if (canSwitchSites.value && !auth.siteCode) {
-      const m = /^\[([^\]]+)\]/.exec(String(found.name || '').trim())
-      const derivedSiteCode = m ? m[1].trim() : ''
+    if (!auth.siteCode) {
+      const derivedSiteCode = extractSiteCodeFromProjectName(found.name)
       auth.setProjectIdAndSiteCode(found.id, derivedSiteCode)
     }
     auth.setProjectActive(found.active ?? true)
@@ -187,8 +210,7 @@ function onSelectProject(project) {
   closeSiteMenu()
   if (!project || !Number.isFinite(project.id)) return
   if (Number(auth.projectId) === project.id) return
-  const m = /^\[([^\]]+)\]/.exec(String(project.name || '').trim())
-  const newSiteCode = m ? m[1].trim() : ''
+  const newSiteCode = extractSiteCodeFromProjectName(project.name)
   auth.setProjectIdAndSiteCode(project.id, newSiteCode)
   auth.setProjectActive(project.active ?? true)
 }
